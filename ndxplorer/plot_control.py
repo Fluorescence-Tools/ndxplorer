@@ -224,6 +224,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.spinBoxYmax = SpinBox()
         self.spinBoxZmin = SpinBox()
         self.spinBoxZmax = SpinBox()
+
         uic.loadUi(ui_file, self)
         self.horizontalLayout.addWidget(self.spinBoxXmin)
         self.horizontalLayout.addWidget(self.spinBoxXmax)
@@ -395,6 +396,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     def update(self):
         super(SurfacePlotWidget, self).update()
         self.actionUpdatePlots.blockSignals(True)
+        self.actionUpdate_axis_scales.blockSignals(True)
         pn = self.parent.data_source.parameter_names
         self.comboBoxSelX.clear()
         self.comboBoxSelY.clear()
@@ -403,6 +405,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.comboBoxSelY.addItems(pn)
         self.comboBoxSelZ.addItems(pn)
         self.actionUpdatePlots.blockSignals(False)
+        self.actionUpdate_axis_scales.blockSignals(False)
         self.actionUpdatePlots.trigger()
 
     def onClearSelection(self):
