@@ -15,7 +15,7 @@ def compute_values(
         constants,  # type: Dict[str, float]
         equations,  # type: List[Dict[str, str]]
         equation_json_fn=None,  # type: str
-        engine='numexpr'
+        engine='python'
 ):
     # type: (pd.DataFrame, Dict[str, float], List[Dict[str, str]], str, str) -> None
     c = constants

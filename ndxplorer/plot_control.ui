@@ -64,163 +64,8 @@
         <property name="spacing">
          <number>0</number>
         </property>
-        <item row="6" column="8">
-         <widget class="QToolButton" name="toolButtonSetYAxis">
-          <property name="enabled">
-           <bool>true</bool>
-          </property>
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="toolTip">
-           <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Update default axis range.&lt;/p&gt;&lt;p&gt;To save current default axis settings use the Settings-&amp;gt;Save Menu.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-          </property>
-          <property name="text">
-           <string>u</string>
-          </property>
-         </widget>
-        </item>
-        <item row="4" column="0">
-         <widget class="QLabel" name="label_8">
-          <property name="text">
-           <string>y</string>
-          </property>
-         </widget>
-        </item>
-        <item row="4" column="2">
-         <widget class="QComboBox" name="comboBoxSelY">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="editable">
-           <bool>true</bool>
-          </property>
-         </widget>
-        </item>
-        <item row="3" column="0">
-         <widget class="QLabel" name="label">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="text">
-           <string>x</string>
-          </property>
-         </widget>
-        </item>
-        <item row="3" column="2">
-         <widget class="QComboBox" name="comboBoxSelX">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="editable">
-           <bool>true</bool>
-          </property>
-         </widget>
-        </item>
-        <item row="3" column="3">
-         <widget class="QSpinBox" name="spinBoxBin1DX">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="toolTip">
-           <string>Number of 1D bins</string>
-          </property>
-          <property name="minimum">
-           <number>1</number>
-          </property>
-          <property name="maximum">
-           <number>999</number>
-          </property>
-          <property name="value">
-           <number>81</number>
-          </property>
-         </widget>
-        </item>
-        <item row="4" column="3">
-         <widget class="QSpinBox" name="spinBoxBin1DY">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="toolTip">
-           <string>Number of 1D bins.</string>
-          </property>
-          <property name="minimum">
-           <number>1</number>
-          </property>
-          <property name="maximum">
-           <number>999</number>
-          </property>
-          <property name="value">
-           <number>81</number>
-          </property>
-         </widget>
-        </item>
-        <item row="5" column="2" colspan="6">
-         <layout class="QHBoxLayout" name="horizontalLayout">
-          <property name="spacing">
-           <number>0</number>
-          </property>
-         </layout>
-        </item>
-        <item row="6" column="2" colspan="6">
-         <layout class="QHBoxLayout" name="horizontalLayout_2">
-          <property name="spacing">
-           <number>0</number>
-          </property>
-         </layout>
-        </item>
-        <item row="3" column="7">
-         <widget class="QCheckBox" name="checkBoxAutoScaleX">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="toolTip">
-           <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;If checked the axis is changed and no default scale is defined the axis scale is updated.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-          </property>
-          <property name="text">
-           <string/>
-          </property>
-          <property name="checked">
-           <bool>false</bool>
-          </property>
-         </widget>
-        </item>
-        <item row="3" column="8">
-         <widget class="QToolButton" name="toolButtonAutoX">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="text">
-           <string>r</string>
-          </property>
-         </widget>
-        </item>
-        <item row="4" column="5">
-         <widget class="QCheckBox" name="checkBoxNormY">
+        <item row="3" column="5">
+         <widget class="QCheckBox" name="checkBoxNormX">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
             <horstretch>0</horstretch>
@@ -232,6 +77,26 @@
           </property>
           <property name="text">
            <string/>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="0">
+         <widget class="QLabel" name="label_3">
+          <property name="text">
+           <string>y</string>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="0">
+         <widget class="QLabel" name="label_2">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="text">
+           <string>x</string>
           </property>
          </widget>
         </item>
@@ -257,35 +122,6 @@
           </property>
          </widget>
         </item>
-        <item row="4" column="6">
-         <widget class="QCheckBox" name="checkBoxLogY">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="toolTip">
-           <string>Logarithmic axis</string>
-          </property>
-          <property name="text">
-           <string/>
-          </property>
-         </widget>
-        </item>
-        <item row="4" column="7">
-         <widget class="QCheckBox" name="checkBoxAutoScaleY">
-          <property name="toolTip">
-           <string>If checked the axis is changed and no default scale is defined the axis scale is updated.</string>
-          </property>
-          <property name="text">
-           <string/>
-          </property>
-          <property name="checked">
-           <bool>false</bool>
-          </property>
-         </widget>
-        </item>
         <item row="3" column="6">
          <widget class="QCheckBox" name="checkBoxLogX">
           <property name="sizePolicy">
@@ -302,8 +138,8 @@
           </property>
          </widget>
         </item>
-        <item row="3" column="5">
-         <widget class="QCheckBox" name="checkBoxNormX">
+        <item row="4" column="6">
+         <widget class="QCheckBox" name="checkBoxLogY">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
             <horstretch>0</horstretch>
@@ -311,7 +147,7 @@
            </sizepolicy>
           </property>
           <property name="toolTip">
-           <string>Normalized density</string>
+           <string>Logarithmic axis</string>
           </property>
           <property name="text">
            <string/>
@@ -340,8 +176,91 @@
           </property>
          </widget>
         </item>
-        <item row="5" column="0">
-         <widget class="QLabel" name="label_2">
+        <item row="4" column="7">
+         <widget class="QCheckBox" name="checkBoxAutoScaleY">
+          <property name="toolTip">
+           <string>If checked the axis is changed and no default scale is defined the axis scale is updated.</string>
+          </property>
+          <property name="text">
+           <string/>
+          </property>
+          <property name="checked">
+           <bool>false</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="7">
+         <widget class="QCheckBox" name="checkBoxAutoScaleX">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="toolTip">
+           <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;If checked the axis is changed and no default scale is defined the axis scale is updated.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+          </property>
+          <property name="text">
+           <string/>
+          </property>
+          <property name="checked">
+           <bool>false</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="5">
+         <widget class="QCheckBox" name="checkBoxNormY">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="toolTip">
+           <string>Normalized density</string>
+          </property>
+          <property name="text">
+           <string/>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="2">
+         <widget class="QComboBox" name="comboBoxSelX">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="editable">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="3">
+         <widget class="QSpinBox" name="spinBoxBin1DY">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="toolTip">
+           <string>Number of 1D bins.</string>
+          </property>
+          <property name="minimum">
+           <number>1</number>
+          </property>
+          <property name="maximum">
+           <number>999</number>
+          </property>
+          <property name="value">
+           <number>81</number>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="0">
+         <widget class="QLabel" name="label">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
             <horstretch>0</horstretch>
@@ -353,14 +272,63 @@
           </property>
          </widget>
         </item>
-        <item row="6" column="0">
-         <widget class="QLabel" name="label_3">
+        <item row="4" column="0">
+         <widget class="QLabel" name="label_8">
           <property name="text">
            <string>y</string>
           </property>
          </widget>
         </item>
-        <item row="5" column="8">
+        <item row="5" column="2" colspan="6">
+         <layout class="QHBoxLayout" name="horizontalLayout">
+          <property name="spacing">
+           <number>0</number>
+          </property>
+         </layout>
+        </item>
+        <item row="4" column="2">
+         <widget class="QComboBox" name="comboBoxSelY">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="editable">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="2" colspan="6">
+         <layout class="QHBoxLayout" name="horizontalLayout_2">
+          <property name="spacing">
+           <number>0</number>
+          </property>
+         </layout>
+        </item>
+        <item row="3" column="3">
+         <widget class="QSpinBox" name="spinBoxBin1DX">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="toolTip">
+           <string>Number of 1D bins</string>
+          </property>
+          <property name="minimum">
+           <number>1</number>
+          </property>
+          <property name="maximum">
+           <number>999</number>
+          </property>
+          <property name="value">
+           <number>81</number>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="8">
          <widget class="QToolButton" name="toolButtonSetXAxis">
           <property name="enabled">
            <bool>true</bool>
@@ -380,7 +348,39 @@
          </widget>
         </item>
         <item row="4" column="8">
+         <widget class="QToolButton" name="toolButtonSetYAxis">
+          <property name="enabled">
+           <bool>true</bool>
+          </property>
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="toolTip">
+           <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Update default axis range.&lt;/p&gt;&lt;p&gt;To save current default axis settings use the Settings-&amp;gt;Save Menu.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+          </property>
+          <property name="text">
+           <string>u</string>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="8">
          <widget class="QToolButton" name="toolButtonAutoY">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="text">
+           <string>r</string>
+          </property>
+         </widget>
+        </item>
+        <item row="5" column="8">
+         <widget class="QToolButton" name="toolButtonAutoX">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
             <horstretch>0</horstretch>
@@ -429,6 +429,54 @@
         <property name="spacing">
          <number>0</number>
         </property>
+        <item row="0" column="12">
+         <widget class="QCheckBox" name="checkBoxAutoScaleZ">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="toolTip">
+           <string>If checked the axis is changed and no default scale is defined the axis scale is updated.</string>
+          </property>
+          <property name="text">
+           <string/>
+          </property>
+          <property name="checked">
+           <bool>false</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="0" colspan="7">
+         <widget class="QComboBox" name="comboBoxSelZ">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="editable">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="7" colspan="2">
+         <widget class="QSpinBox" name="spinBoxBin1DZ">
+          <property name="toolTip">
+           <string>Number of 1D bins.</string>
+          </property>
+          <property name="minimum">
+           <number>1</number>
+          </property>
+          <property name="maximum">
+           <number>999</number>
+          </property>
+          <property name="value">
+           <number>81</number>
+          </property>
+         </widget>
+        </item>
         <item row="1" column="0">
          <widget class="QLabel" name="label_7">
           <property name="sizePolicy">
@@ -441,13 +489,6 @@
            <string>z range</string>
           </property>
          </widget>
-        </item>
-        <item row="1" column="1" colspan="12">
-         <layout class="QHBoxLayout" name="horizontalLayout_3">
-          <property name="spacing">
-           <number>0</number>
-          </property>
-         </layout>
         </item>
         <item row="0" column="10">
          <widget class="QCheckBox" name="checkBoxNormZ">
@@ -481,26 +522,21 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="12">
-         <widget class="QCheckBox" name="checkBoxAutoScaleZ">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="toolTip">
-           <string>If checked the axis is changed and no default scale is defined the axis scale is updated.</string>
-          </property>
-          <property name="text">
-           <string/>
-          </property>
-          <property name="checked">
+        <item row="0" column="9">
+         <widget class="QSpinBox" name="spinBoxBin2DZ">
+          <property name="enabled">
            <bool>false</bool>
           </property>
          </widget>
         </item>
-        <item row="1" column="13">
+        <item row="1" column="1" colspan="12">
+         <layout class="QHBoxLayout" name="horizontalLayout_3">
+          <property name="spacing">
+           <number>0</number>
+          </property>
+         </layout>
+        </item>
+        <item row="0" column="14">
          <widget class="QToolButton" name="toolButtonSetZAxis">
           <property name="enabled">
            <bool>true</bool>
@@ -519,23 +555,7 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="7" colspan="2">
-         <widget class="QSpinBox" name="spinBoxBin1DZ">
-          <property name="toolTip">
-           <string>Number of 1D bins.</string>
-          </property>
-          <property name="minimum">
-           <number>1</number>
-          </property>
-          <property name="maximum">
-           <number>999</number>
-          </property>
-          <property name="value">
-           <number>81</number>
-          </property>
-         </widget>
-        </item>
-        <item row="0" column="13">
+        <item row="1" column="14">
          <widget class="QToolButton" name="toolButtonAutoZ">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
@@ -545,26 +565,6 @@
           </property>
           <property name="text">
            <string>r</string>
-          </property>
-         </widget>
-        </item>
-        <item row="0" column="0" colspan="7">
-         <widget class="QComboBox" name="comboBoxSelZ">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="editable">
-           <bool>true</bool>
-          </property>
-         </widget>
-        </item>
-        <item row="0" column="9">
-         <widget class="QSpinBox" name="spinBoxBin2DZ">
-          <property name="enabled">
-           <bool>false</bool>
           </property>
          </widget>
         </item>
