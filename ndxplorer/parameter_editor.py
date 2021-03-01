@@ -64,7 +64,7 @@ def pt2dict(parameter_tree, target=OrderedDict()):
         if not child.children():
             value = child.opts['value']
             name = child.name()
-            if isinstance(value, QtWidgets.QColor):
+            if isinstance(value, QtGui.QColor):
                 value = str(value.name())
             if isinstance(child, ListParameter):
                 target[name + '_options'] = child.opts['values']

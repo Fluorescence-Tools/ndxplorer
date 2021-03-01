@@ -555,6 +555,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, normed=self.plot_control.normed_hist_x)[::-1]
         self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, normed=self.plot_control.normed_hist_y)[::-1]
         self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, normed=self.plot_control.normed_hist_z)[::-1]
+
         # 2D Histogram
         ####################
         try:
