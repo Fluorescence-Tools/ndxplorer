@@ -1,0 +1,18 @@
+[
+    {
+        "upper": 0.32826935483870967, 
+        "lower": -0.21430483870967754, 
+        "name": "Tg-Tr (ms)", 
+        "parameter_idx": 42, 
+        "invert": false, 
+        "enabled": false
+    }, 
+    {
+        "upper": 0.15358395904436817, 
+        "lower": -0.07651365187713322, 
+        "name": "Tg-Tr (ms)", 
+        "parameter_idx": 42, 
+        "invert": false, 
+        "enabled": true
+    }
+]

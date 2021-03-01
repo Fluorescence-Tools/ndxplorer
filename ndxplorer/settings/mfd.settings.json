@@ -1,0 +1,5 @@
+{
+  "equations": "mfd.equations.yaml",
+  "constants": "mfd.constants.json",
+  "axis": "mfd.axis.json"
+}

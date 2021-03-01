@@ -1,0 +1,98 @@
+{
+    "r Experimental (green)": {
+        "n_bins_1d": 81.0, 
+        "max": 0.6, 
+        "scale": "lin", 
+        "min": -0.2, 
+        "n_bins_2d": 31
+    }, 
+    "Fd/Fa": {
+        "n_bins_1d": 81.0, 
+        "max": 500.0, 
+        "n_bins_2d": 31, 
+        "scale": "log", 
+        "min": 0.1
+    }, 
+    "Red Count Rate (KHz)": {
+        "n_bins_1d": 81.0, 
+        "max": 100.0, 
+        "scale": "log", 
+        "min": 0.1, 
+        "n_bins_2d": 31
+    }, 
+    "FRET efficiency": {
+        "n_bins_1d": 81.0, 
+        "max": 1.1,
+        "scale": "lin", 
+        "min": -0.1,
+        "n_bins_2d": 31
+    }, 
+    "r Scatter (green)": {
+        "n_bins_1d": 81.0, 
+        "max": 0.6, 
+        "scale": "lin", 
+        "min": -0.2, 
+        "n_bins_2d": 31
+    }, 
+    "First Photon": {
+        "n_bins_1d": 81.0, 
+        "max": 211212.0, 
+        "scale": "lin", 
+        "min": 60.0
+    }, 
+    "r Experimental (red)": {
+        "n_bins_1d": 81.0, 
+        "max": 0.6, 
+        "scale": "lin", 
+        "min": -0.2, 
+        "n_bins_2d": 31
+    }, 
+    "Sg/Sr": {
+        "n_bins_1d": 81.0, 
+        "max": 500.0, 
+        "n_bins_2d": 31, 
+        "scale": "log", 
+        "min": 0.1
+    }, 
+    "Fg/Fr": {
+        "n_bins_1d": 81.0, 
+        "max": 500.0, 
+        "scale": "log", 
+        "min": 0.1, 
+        "n_bins_2d": 31
+    }, 
+    "r Scatter (red)": {
+        "n_bins_1d": 81.0, 
+        "max": 0.6, 
+        "scale": "lin", 
+        "min": -0.2, 
+        "n_bins_2d": 31
+    }, 
+    "Tau (green)": {
+        "n_bins_1d": 81.0, 
+        "max": 6.0, 
+        "scale": "lin", 
+        "min": 0.0, 
+        "n_bins_2d": 31
+    }, 
+    "Tg-Tr (ms)": {
+        "n_bins_1d": 81.0,
+        "max": 1.0, 
+        "scale": "lin", 
+        "min": -1.0
+    }, 
+    "Green Count Rate (KHz)": {
+        "n_bins_1d": 81.0, 
+        "max": 1000.0, 
+        "scale": "log", 
+        "min": 0.1, 
+        "n_bins_2d": 31
+    }, 
+    "Proximity ratio": {
+        "n_bins_1d": 81.0, 
+        "max": 1.05, 
+        "n_bins_2d": 31, 
+        "scale": "lin", 
+        "min": -0.05
+    }
+}

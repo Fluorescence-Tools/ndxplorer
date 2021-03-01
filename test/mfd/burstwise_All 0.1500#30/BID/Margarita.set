@@ -1,0 +1,37 @@
+Margarita_LV2012x64SF.vi
+2/28/2021  8:55 PM
+
+2D Count |>   11870
+Tau (green) |>   0.000000E+0
+Sg/Sr |>   0.000000E+0
+directory |>   Z:\tpeulen\Development\tpeulen\chisurf_legacy\chisurf\tools\ndxplorer\test\mfd\burstwise_All 0.1500#30\bi4_bur
+Current selection values (Double-click to remove item) |>   Group 0
+
+Comment |>   
+x colour |>   16448250
+y colour |>   16777215
+XY Cursors |>   1-dim array:
+20.5000	19.5000
+1.5000	0.5000
+
+Action |>   Cluster:
+  View only selection |>   ON
+  Invert hilited limits |>   OFF
+  Keep selection |>   OFF
+  Use weights |>   OFF
+  Select Region |>   OFF
+  Cluster? |>   OFF
+X |>   Tau (green)
+Y |>   Sg/Sr
+Z |>   
+log x |>   OFF
+log y |>   ON
+log z |>   OFF
+bin array |>   1-dim array:
+81	41	OFF
+150	100	OFF
+101	101	OFF
+
+Info |>   User tpeulen from  UNRAID-WIN10 on 2/28/2021 8:55:12 PM
+Ring |>   ColorMap
+Sel.Mode |>   Green
