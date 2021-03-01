@@ -1,0 +1,16 @@
+- Sg/Sr:
+    d['Green Count Rate (KHz)'] / d['Red Count Rate (KHz)']
+- Proximity ratio:
+    d['Red Count Rate (KHz)'] / (d['Green Count Rate (KHz)'] + d['Red Count Rate (KHz)'])
+- Fg/Fr:
+    (d['Green Count Rate (KHz)'] - c['Bg']) / (d['Red Count Rate (KHz)'] - c['Br'] - c['alpha'] * d['Green Count Rate (KHz)'])
+- Fd/Fa:
+    d['Fg/Fr'] / c['gG/gR']
+- FRET efficiency:
+    (1.+d['Fd/Fa']*c['PhiA']/c['PhiD'])**(-1.0)
+- Tg-Tr (ms):
+    d['Duration (green) (ms)'] - d['Duration (red) (ms)']
+- <tauD(A)>x:
+    (1-d['FRET efficiency'])*c['tauD0x']
+- Var_tauD(A)):
+    d['Tau (green)']*d['<tauD(A)>x'] - d['<tauD(A)>x']**(2.0)
