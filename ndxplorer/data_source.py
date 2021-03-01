@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from collections import OrderedDict
-from data_selection import DataSelection
+from . data_selection import DataSelection
 
 
 def compute_values(

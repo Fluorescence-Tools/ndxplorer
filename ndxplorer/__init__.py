@@ -1,2 +1,1 @@
-import ui
-from plot_main import *
+from . plot_main import NDXplorer

@@ -1,0 +1,1 @@
+ndxplorer ndxplorer.__main__:main
