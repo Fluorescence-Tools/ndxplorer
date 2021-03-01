@@ -167,7 +167,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             settings_json_fn=None,  # type: str
             parent=None
     ):
-        # type: (DataSource, QtGui.QWidget) -> ()
+        # type: (DataSource, QtWidgets.QWidget) -> ()
         if isinstance(data_source, DataSource):
             self._data_source = data_source
 
@@ -378,7 +378,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.update_plots()
 
     def onSelectWorkingPath(self):
-        working_path = QtGui.QFileDialog.getExistingDirectory(None, 'Select current path', self.working_path)
+        working_path = QtWidgets.QFileDialog.getExistingDirectory(None, 'Select current path', self.working_path)
         self.lineEditWorkingPath.blockSignals(True)
         self.lineEditWorkingPath.setText(working_path)
         self.lineEditWorkingPath.blockSignals(False)
@@ -386,7 +386,7 @@ class NDXplorer(QtWidgets.QMainWindow):
     def onSaveBurstIDs(self, folder=None):
         print("onSaveBurstIDs")
         if folder is None:
-            folder = QtGui.QFileDialog.getExistingDirectory(
+            folder = QtWidgets.QFileDialog.getExistingDirectory(
                 None, 'Folder for Burst IDs', self.working_path
             )
         writer.save_burst_ids(
@@ -400,7 +400,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             settings_json_fn=None  # type: str
     ):
         if settings_json_fn is None:
-            settings_json_fn = QtGui.QFileDialog.getSaveFileName(
+            settings_json_fn = QtWidgets.QFileDialog.getSaveFileName(
                 None, 'Axis settings file', self.working_path, 'Axis file (*.axis.json)'
             )
         with open(settings_json_fn, "w") as fp:
@@ -415,7 +415,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             settings_json_fn=None  # type: str
     ):
         if settings_json_fn is None:
-            settings_json_fn = QtGui.QFileDialog.getOpenFileName(
+            settings_json_fn = QtWidgets.QFileDialog.getOpenFileName(
                 None, 'ndXplorer settings file', self.working_path, 'ndXplorer settings (*.settings.json)'
             )
         with open(settings_json_fn, "r") as fp:
@@ -442,19 +442,19 @@ class NDXplorer(QtWidgets.QMainWindow):
     ):
         if file_type in ["cs_sampling", "er4"]:
             if file_handles is None:
-                file_handles = QtGui.QFileDialog.getOpenFileNames(
+                file_handles = QtWidgets.QFileDialog.getOpenFileNames(
                     None, 'ChiSurf sampling files', self.working_path, 'All files (*.er4)'
                 )
             self.working_path = str(pathlib.Path(file_handles[0]).parent)
             data_reader = reader.read_csv_sampling
         elif file_type in ["paris_dir"]:
-            file_handles = QtGui.QFileDialog.getExistingDirectory(
+            file_handles = QtWidgets.QFileDialog.getExistingDirectory(
                 None, 'Open MFD analysis folder', self.working_path)
             self.working_path = str(pathlib.Path(file_handles))
             data_reader = reader.read_paris_analysis
         else: #if file_type in [None, "csv"]:
             if file_handles is None:
-                file_handles = QtGui.QFileDialog.getOpenFileNames(
+                file_handles = QtWidgets.QFileDialog.getOpenFileNames(
                     None, 'Comma separated value files', self.working_path, 'Text files (*.csv;*.dat;*.txt)'
                 )
             self.working_path = str(pathlib.Path(file_handles[0]).parent)
@@ -602,7 +602,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
             self.g_xyplot.removeItem(self.g_hist2d_m)
             self.g_hist2d_m = pg.ImageItem(image=H)
-            self.g_hist2d_m.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
+            self.g_hist2d_m.setCompositionMode(QtWidgets.QPainter.CompositionMode_Plus)
             #self.g_hist2d_m.translate(x0, y0)
             self.g_hist2d_m.scale(xscale, yscale)
             self.g_xyplot.addItem(self.g_hist2d_m)

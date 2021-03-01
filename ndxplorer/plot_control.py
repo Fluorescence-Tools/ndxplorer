@@ -253,7 +253,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.actionAuto_range_z.triggered.connect(self.onAutoRangeZ)
         self.actionAuto_range_z.triggered.connect(self.onUpdate_axis_scales)
         self.actionAuto_range_z.triggered.connect(self.auto_selection_range)
-        self.actionUpdate_axis_scales.triggered.connect(self.onAutoRangeX)
+        self.actionUpdate_axis_scales.triggered.connect(self.onUpdate_axis_scales)
         self.actionAuto_range_x.triggered.connect(self.onUpdate_axis_scales)
 
         # Selection table
@@ -413,7 +413,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     def onSave_selection(self):
         print("onSave_selection")
         l = [s.__dict__ for s in self.get_selections()]
-        fn = QtGui.QFileDialog.getSaveFileName(
+        fn = QtWidgets.QFileDialog.getSaveFileName(
             None,
             "Selection JSON",
             os.path.dirname(__file__),
@@ -423,7 +423,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             json.dump(l, fp=fp, indent=4)
 
     def onLoad_selection(self):
-        fn = QtGui.QFileDialog.getOpenFileName(
+        fn = QtWidgets.QFileDialog.getOpenFileName(
             None,
             "Selection JSON",
             os.path.dirname(__file__),
@@ -480,26 +480,26 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         row = table.rowCount()
         table.setRowCount(row + 1)
 
-        tmp = QtGui.QTableWidgetItem("%s" % name)
+        tmp = QtWidgets.QTableWidgetItem("%s" % name)
         tmp.setFlags(QtCore.Qt.ItemIsEnabled)
         tmp.setData(1, idx)
         table.setItem(row, 0, tmp)
 
-        tmp = QtGui.QTableWidgetItem()
+        tmp = QtWidgets.QTableWidgetItem()
         tmp.setData(0, xmin)
         tmp.setFlags(QtCore.Qt.ItemIsEnabled)
         table.setItem(row, 1, tmp)
 
-        tmp = QtGui.QTableWidgetItem()
+        tmp = QtWidgets.QTableWidgetItem()
         tmp.setFlags(QtCore.Qt.ItemIsEnabled)
         tmp.setData(0, xmax)
         table.setItem(row, 2, tmp)
 
-        cb_invert_x = QtGui.QCheckBox(table)
+        cb_invert_x = QtWidgets.QCheckBox(table)
         table.setCellWidget(row, 3, cb_invert_x)
         cb_invert_x.setChecked(invert)
 
-        cb_enable_x = QtGui.QCheckBox(table)
+        cb_enable_x = QtWidgets.QCheckBox(table)
         table.setCellWidget(row, 4, cb_enable_x)
         cb_enable_x.setChecked(enabled)
         self.parent.update_plots()

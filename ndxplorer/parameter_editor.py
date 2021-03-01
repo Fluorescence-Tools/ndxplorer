@@ -64,7 +64,7 @@ def pt2dict(parameter_tree, target=OrderedDict()):
         if not child.children():
             value = child.opts['value']
             name = child.name()
-            if isinstance(value, QtGui.QColor):
+            if isinstance(value, QtWidgets.QColor):
                 value = str(value.name())
             if isinstance(child, ListParameter):
                 target[name + '_options'] = child.opts['values']
@@ -84,7 +84,7 @@ class ParameterEditor(QtWidgets.QWidget):
     def __init__(
             self,
             json_file=None,  # type: str
-            parent=None,  # type: QtGui.QWidget
+            parent=None,  # type: QtWidgets.QWidget
             callback=None  # type: callable
     ):
         super(ParameterEditor, self).__init__(parent)
@@ -153,7 +153,7 @@ class ParameterEditor(QtWidgets.QWidget):
 
 
 def main():
-    app = QtGui.QApplication(sys.argv)
+    app = QtWidgets.QApplication(sys.argv)
     target = dict()
     pt = ParameterEditor(
         target=target,

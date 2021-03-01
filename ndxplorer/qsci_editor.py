@@ -55,14 +55,14 @@ class SimpleCodeEditor(QsciScintilla):
         self.setMarginLineNumbers(0, True)
         if marker_background_color:
             self.setMarginsBackgroundColor(
-                QtGui.QColor(margins_background_color)
+                QtWidgets.QColor(margins_background_color)
             )
 
         self.markerDefine(QsciScintilla.RightArrow, self.ARROW_MARKER_NUM)
 
         if marker_background_color:
             self.setMarkerBackgroundColor(
-                QtGui.QColor(marker_background_color),
+                QtWidgets.QColor(marker_background_color),
                 self.ARROW_MARKER_NUM
             )
 
@@ -75,7 +75,7 @@ class SimpleCodeEditor(QsciScintilla):
         self.setCaretLineVisible(caret_line_visible)
         if caret_line_background_color:
             self.setCaretLineBackgroundColor(
-                QtGui.QColor(caret_line_background_color)
+                QtWidgets.QColor(caret_line_background_color)
             )
 
         text = bytearray(str.encode("Courier New"))
@@ -109,7 +109,7 @@ class CodeEditor(QtWidgets.QWidget):
             filename=None
     ):
         if filename is None:
-            filename = QtGui.QFileDialog.getOpenFileName()
+            filename = QtWidgets.QFileDialog.getOpenFileName()
         self.filename = filename
         try:
             print('loading filename: ', filename)
@@ -121,7 +121,7 @@ class CodeEditor(QtWidgets.QWidget):
 
     def save_text(self):
         if self.filename is None or self.filename == '':
-            self.filename = QtGui.QFileDialog.getSaveFileName()
+            self.filename = QtWidgets.QFileDialog.getSaveFileName()
         with open(self.filename, mode='w') as fp:
             text = str(self.editor.text())
             fp.write(text)
@@ -162,7 +162,7 @@ class CodeEditor(QtWidgets.QWidget):
 
 
 if __name__ == "__main__":
-    app = QtGui.QApplication(sys.argv)
+    app = QtWidgets.QApplication(sys.argv)
     editor = CodeEditor()
     editor.show()
     app.exec_()
