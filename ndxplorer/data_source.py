@@ -80,12 +80,13 @@ class DataSource(object):
             equation_json_fn=None  # type: str
     ):
         compute_values(
-            d=self._data,
+            d=self.data,
             constants=constants,
             equations=equations,
             equation_json_fn=equation_json_fn
         )
-        self._parameter_names = list(self._data.columns)
+        # use property to update dependent attributes
+        self.data = self.data
 
     @property
     def empty(self):

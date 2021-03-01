@@ -9,15 +9,13 @@ sip.setapi('QUrl', 2)
 sip.setapi('QVariant', 2)
 
 from qtpy.QtWidgets import QApplication
-from . import plot_main
+from ndxplorer import plot_main
 
 
 def main():
     app = QApplication(sys.argv)
-
     import numpy as np
     np.random.seed(0)
-
     win = plot_main.NDXplorer()
     win.show()
     app.exec_()
