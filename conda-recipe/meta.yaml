@@ -1,0 +1,62 @@
+{% set data = load_setup_py_data(setup_file='../setup.py', from_recipe_dir=True) %}
+
+package:
+  name: {{ data.get('name')|lower }}
+  version: {{ data.get('version')|lower }}
+
+source:
+  path: ..
+
+build:
+  number: 0
+  noarch: python
+  string: qt{{ qt }}
+  entry_points:
+    {% for entry_point_type, entry_points in data.get("entry_points", dict()).items() -%}
+    {% for entry_point in entry_points -%}
+    - {{ entry_point }}
+    {% endfor %}
+    {% endfor %}
+requirements:
+  host:
+    - python
+    - typing_extensions
+    - pyyaml
+    - setuptools
+    - numpy
+  build:
+    - python
+    - setuptools
+    - typing_extensions
+    - pyyaml
+    - numpy
+    - pyyaml
+    - pathlib2
+  run:
+    - python
+    - pyqt {{ qt }}.*
+    - qtpy
+    - numpy
+    - pyyaml
+    - pandas
+    - pyqtgraph
+    - pathlib2
+    - typing-extensions
+    - qscintilla2
+    - scipy
+    - guidata=1.7.6
+    - guiqwt=3.0.3
+    - pathlib2
+
+about:
+  home: {{ data.get('url') }}
+  license: {{ data.get('license') }}
+  license_file: LICENSE
+  summary:
+    {{ data.get('description') }}
+  description: |
+    {{ data.get('description') }}
+
+extra:
+  recipe-maintainers:
+    - tpeulen

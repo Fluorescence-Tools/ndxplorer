@@ -6,8 +6,8 @@ import os
 from qtpy import QtGui, uic, QtCore, QtWidgets
 from pyqtgraph.widgets.SpinBox import SpinBox
 
-from plot_main import USE_GUIQWT
-from data_selection import RectangularDataSelection
+from . plot_main import USE_GUIQWT
+from . data_selection import RectangularDataSelection
 
 
 class SurfacePlotWidget(QtWidgets.QWidget):
@@ -243,24 +243,25 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         # Actions
         #########################
         # Generic action
-        self.connect(self.actionUpdatePlots, QtCore.SIGNAL("triggered()"), self.parent.update_plots)
+        self.actionUpdatePlots.triggered.connect(self.parent.update_plots)
 
         # Auto range
-        self.connect(self.actionAuto_range_x, QtCore.SIGNAL("triggered()"), self.onAutoRangeX)
-        self.connect(self.actionAuto_range_x, QtCore.SIGNAL("triggered()"), self.onUpdate_axis_scales)
-        self.connect(self.actionAuto_range_y, QtCore.SIGNAL("triggered()"), self.onAutoRangeY)
-        self.connect(self.actionAuto_range_y, QtCore.SIGNAL("triggered()"), self.onUpdate_axis_scales)
-        self.connect(self.actionAuto_range_z, QtCore.SIGNAL("triggered()"), self.onAutoRangeZ)
-        self.connect(self.actionAuto_range_z, QtCore.SIGNAL("triggered()"), self.onUpdate_axis_scales)
-        self.connect(self.actionAuto_range_z, QtCore.SIGNAL("triggered()"), self.auto_selection_range)
-        self.connect(self.actionUpdate_axis_scales, QtCore.SIGNAL("triggered()"), self.onUpdate_axis_scales)
+        self.actionAuto_range_x.triggered.connect(self.onAutoRangeX)
+        self.actionAuto_range_x.triggered.connect(self.onUpdate_axis_scales)
+        self.actionAuto_range_y.triggered.connect(self.onAutoRangeY)
+        self.actionAuto_range_y.triggered.connect(self.onUpdate_axis_scales)
+        self.actionAuto_range_z.triggered.connect(self.onAutoRangeZ)
+        self.actionAuto_range_z.triggered.connect(self.onUpdate_axis_scales)
+        self.actionAuto_range_z.triggered.connect(self.auto_selection_range)
+        self.actionUpdate_axis_scales.triggered.connect(self.onAutoRangeX)
+        self.actionAuto_range_x.triggered.connect(self.onUpdate_axis_scales)
 
         # Selection table
-        self.connect(self.actionSelectionTableClicked, QtCore.SIGNAL("triggered()"), self.onSelectionTableClicked)
-        self.connect(self.actionSave_selection, QtCore.SIGNAL("triggered()"), self.onSave_selection)
-        self.connect(self.actionLoad_selection, QtCore.SIGNAL("triggered()"), self.onLoad_selection)
-        self.connect(self.actionClear_Selection, QtCore.SIGNAL("triggered()"), self.onClearSelection)
-        self.connect(self.actionAdd_Selection, QtCore.SIGNAL("triggered()"), self.onAddSelection)
+        self.actionSelectionTableClicked.triggered.connect(self.onSelectionTableClicked)
+        self.actionSave_selection.triggered.connect(self.onSave_selection)
+        self.actionLoad_selection.triggered.connect(self.onLoad_selection)
+        self.actionClear_Selection.triggered.connect(self.onClearSelection)
+        self.actionAdd_Selection.triggered.connect(self.onAddSelection)
 
         # Change axis range
         self.spinBoxXmin.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
@@ -271,14 +272,14 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.spinBoxZmax.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
 
         # Change parameter plotted on axis
-        self.connect(self.actionX_axis_changed, QtCore.SIGNAL("triggered()"), self.onX_axis_changed)
-        self.connect(self.actionY_axis_changed, QtCore.SIGNAL("triggered()"), self.onY_axis_changed)
-        self.connect(self.actionZ_axis_changed, QtCore.SIGNAL("triggered()"), self.onZ_axis_changed)
+        self.actionX_axis_changed.triggered.connect(self.onX_axis_changed)
+        self.actionY_axis_changed.triggered.connect(self.onY_axis_changed)
+        self.actionZ_axis_changed.triggered.connect(self.onZ_axis_changed)
 
         # Update axis settings
-        self.connect(self.actionUpdate_x_axis_settings, QtCore.SIGNAL("triggered()"), self.onUpdate_x_axis_settings)
-        self.connect(self.actionUpdate_y_axis_settings, QtCore.SIGNAL("triggered()"), self.onUpdate_y_axis_settings)
-        self.connect(self.actionUpdate_z_axis_settings, QtCore.SIGNAL("triggered()"), self.onUpdate_z_axis_settings)
+        self.actionUpdate_x_axis_settings.triggered.connect(self.onUpdate_x_axis_settings)
+        self.actionUpdate_y_axis_settings.triggered.connect(self.onUpdate_y_axis_settings)
+        self.actionUpdate_z_axis_settings.triggered.connect(self.onUpdate_z_axis_settings)
 
     def set_axis_settings(self, name, amin, amax, scale, bins_1d, bins_2d):
         self.axis_settings[str(name)] = {

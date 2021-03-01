@@ -1,0 +1,20 @@
+name: ndxplorer
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - pip
+  - qt >=5
+  - qtpy
+  - pyqt
+  - numpy
+  - pyyaml
+  - pandas
+  - pyqtgraph
+  - pathlib2
+  - typing-extensions
+  - qscintilla2
+  - scipy
+  - pip:
+    - guidata==1.7.5
+    - guiqwt==3.0.2

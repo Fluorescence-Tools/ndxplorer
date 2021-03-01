@@ -3,7 +3,7 @@ import sys
 import json
 import pandas as pd
 import numpy as np
-from data_source import DataSource
+from . data_source import DataSource
 if sys.version_info.major > 2:
     import pathlib
 else:

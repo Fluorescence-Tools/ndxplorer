@@ -7,9 +7,10 @@ import os
 import json
 import yaml
 
-from plot_control import SurfacePlotWidget
-from parameter_editor import ParameterEditor
-from qsci_editor import CodeEditor
+from . plot_control import SurfacePlotWidget
+from . parameter_editor import ParameterEditor
+from . qsci_editor import CodeEditor
+from . data_source import DataSource
 
 if sys.version_info.major > 2:
     import pathlib
@@ -33,12 +34,11 @@ else:
 import numpy as np
 import pyqtgraph as pg
 
-from data_source import DataSource
-import reader
-import writer
+from . import reader
+from . import writer
 
 
-class SurfacePlot(QtWidgets.QMainWindow):
+class NDXplorer(QtWidgets.QMainWindow):
 
     settings = dict()  # type: Dict
     equations = list()  # type: List[Dict[str, str]]
@@ -118,7 +118,7 @@ class SurfacePlot(QtWidgets.QMainWindow):
         oCol, oRow = x.shape
         re = np.ma.compressed(x)
         nD = re.shape[0]
-        re = re.reshape((oCol, nD/oCol))
+        re = re.reshape((oCol, int(nD /oCol)))
         return re
 
     @property
@@ -171,7 +171,7 @@ class SurfacePlot(QtWidgets.QMainWindow):
         if isinstance(data_source, DataSource):
             self._data_source = data_source
 
-        super(SurfacePlot, self).__init__(parent=parent)
+        super(NDXplorer, self).__init__(parent=parent)
         self.plot_control = SurfacePlotWidget(self)
         self.equation_editor = CodeEditor(parent=self)
         uic.loadUi(os.path.dirname(__file__) + '/plot_main.ui', self)
@@ -339,19 +339,21 @@ class SurfacePlot(QtWidgets.QMainWindow):
         # Actions
         #############
         # Working path
-        self.connect(self.actionSelect_working_path, QtCore.SIGNAL("triggered()"), self.onSelectWorkingPath)
+        self.actionSelect_working_path.triggered.connect(self.onSelectWorkingPath)
+
         # Load / Save
-        self.connect(self.actionOpenChiSurfSampling, QtCore.SIGNAL("triggered()"), self.onOpenChiSurfSampling)
-        self.connect(self.actionOpenParisDataset, QtCore.SIGNAL("triggered()"), self.onOpenSmFRET)
-        self.connect(self.actionOpenCsv, QtCore.SIGNAL("triggered()"), self.onOpenCsv)
-        self.connect(self.actionBurst_IDs, QtCore.SIGNAL("triggered()"), self.onSaveBurstIDs)
+        self.actionOpenChiSurfSampling.triggered.connect(self.onOpenChiSurfSampling)
+        self.actionOpenParisDataset.triggered.connect(self.onOpenSmFRET)
+        self.actionOpenCsv.triggered.connect(self.onOpenCsv)
+        self.actionBurst_IDs.triggered.connect(self.onSaveBurstIDs)
+
         # Settings
-        self.connect(self.actionLoad_settings, QtCore.SIGNAL("triggered()"), self.onLoad_settings)
-        self.connect(self.actionSave_axis_settings, QtCore.SIGNAL("triggered()"), self.onSaveAxisSettings)
+        self.actionLoad_settings.triggered.connect(self.onLoad_settings)
+        self.actionSave_axis_settings.triggered.connect(self.onSaveAxisSettings)
         # GUI updates
-        self.connect(self.actionUpdate_plot, QtCore.SIGNAL("triggered()"), self.update_plots)
-        self.connect(self.actionClear_plot, QtCore.SIGNAL("triggered()"), self.clear_plots)
-        self.connect(self.actionMask_toggle_changed, QtCore.SIGNAL("triggered()"), self.onMaskChanged)
+        self.actionUpdate_plot.triggered.connect(self.update_plots)
+        self.actionClear_plot.triggered.connect(self.clear_plots)
+        self.actionMask_toggle_changed.triggered.connect(self.onMaskChanged)
         # Axis range
 
         ##########################################################
@@ -476,7 +478,7 @@ class SurfacePlot(QtWidgets.QMainWindow):
         self.open_files(file_type="paris_dir")
 
     def update(self, *args, **kwargs):
-        super(SurfacePlot, self).update()
+        super(NDXplorer, self).update()
         self.data_source.compute_columns(
             constants=self.constants,
             equations=self.equations

@@ -2,8 +2,8 @@ from __future__ import print_function
 from typing import List
 import os
 import numpy as np
-from data_selection import DataSelection
-from data_source import DataSource
+from . data_selection import DataSelection
+from . data_source import DataSource
 
 
 def save_burst_ids(
