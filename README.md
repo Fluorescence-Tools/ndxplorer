@@ -1,6 +1,6 @@
 [![pipeline status](https://gitlab.peulen.xyz/tpeulen/ndxplorer/badges/master/pipeline.svg)](https://gitlab.peulen.xyz/tpeulen/ndxplorer/-/commits/master)
 # ndxplorer
-## General description
+
 ndXplorer is a program analyze and visualize multidimensional data sets.
 
 * Multi dimensional fluorescence (MFD) data
