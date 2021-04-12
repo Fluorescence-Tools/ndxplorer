@@ -53,7 +53,7 @@ test:linux:
     # procps is used to grep the process by name to kill it when needed
     - export DEBIAN_FRONTEND=noninteractive
     - apt update -yq
-    - apt install -yq xorg-dev libglu1-mesa libgl1-mesa-dev xvfb libxinerama1 libxcursor1 procps wget
+    - apt install -yq xorg-dev libglu1-mesa libgl1-mesa-dev xvfb libxinerama1 libxcursor1 libgl1-mesa-glx procps wget
     # Download and install miniconda
     - wget https://repo.continuum.io/miniconda/Miniconda3-$MINICONDA_VERSION-$MINICONDA_OS-x86_64.sh -O miniconda.sh
     - bash miniconda.sh -b -p $HOME/miniconda
@@ -77,7 +77,7 @@ test:linux:
     - |
       xvfb-run -a -s "-screen 0 1400x900x24 +extension RANDR" -- ndxplorer &
       sleep 10
-      pgrep -f clsmview | awk '{print "kill -9 " $1}' | sh
+      pgrep -f ndxplorer | awk '{print "kill -9 " $1}' | sh
 
 deploy:linux:
   stage: deploy
