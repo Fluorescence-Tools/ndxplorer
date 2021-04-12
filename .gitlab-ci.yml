@@ -51,6 +51,7 @@ test:linux:
     # See: https://stackoverflow.com/questions/65675765/is-it-possible-to-run-x11-on-gitlab-ci
     # See: https://github.com/conda-forge/pygridgen-feedstock/issues/10
     # procps is used to grep the process by name to kill it when needed
+    - apt update -y
     - apt install -y xorg-dev libglu1-mesa libgl1-mesa-dev xvfb libxinerama1 libxcursor1 procps
     # Download and install miniconda
     - wget https://repo.continuum.io/miniconda/Miniconda3-$MINICONDA_VERSION-$MINICONDA_OS-x86_64.sh -O miniconda.sh
