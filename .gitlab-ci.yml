@@ -9,6 +9,7 @@ variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   CONDA_PACKAGE: "ndxplorer"
   DEPLOY_VARIABLE: "nightly"
+  MINICONDA_VERSION: "latest"
 
 workflow:
   rules:
