@@ -23,7 +23,6 @@ build:linux:
         conda config --add channels salilab
         conda config --add channels conda-forge
         conda config --add channels tpeulen
-        conda config --add channels tpeulen/label/nightly
     - conda mambabuild conda-recipe --output-folder bld-dir
   artifacts:
     expire_in: 7 days
@@ -55,9 +54,8 @@ test:linux:
         conda config --add channels salilab
         conda config --add channels conda-forge
         conda config --add channels tpeulen
-        conda config --add channels tpeulen/label/nightly
     - conda config --add channels "file://`pwd`/bld-dir"
-    - mamba create -n test python=3.7 ${CONDA_PACKAGE}
+    - mamba create -n test python ndxplorer
     - conda activate test
     # Run GUI with xvfb - no X11 screen
     - |
