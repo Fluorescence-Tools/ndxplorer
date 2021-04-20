@@ -28,11 +28,8 @@ build:linux:
     - source activate
     - conda install mamba boa conda-verify -c conda-forge
     - mamba update -y -n base -c defaults --all
-    - |
-        conda config --add channels salilab
-        conda config --add channels conda-forge
-        conda config --add channels tpeulen
-        conda config --add channels tpeulen/label/nightly
+    # guiqwt guidata
+    - conda config --add channels conda-forge
     - conda mambabuild conda-recipe --output-folder bld-dir
   artifacts:
     expire_in: 7 days
@@ -60,11 +57,8 @@ test:linux:
     - source activate base
     - conda install mamba conda-verify -c conda-forge
     - mamba update -y -n base -c defaults --all
-    - |
-        conda config --add channels salilab
-        conda config --add channels conda-forge
-        conda config --add channels tpeulen
-        conda config --add channels tpeulen/label/nightly
+    # guiqwt guidata
+    - conda config --add channels conda-forge
     - conda config --add channels "file://`pwd`/bld-dir"
     - mamba create -n test python=3.7 ${CONDA_PACKAGE}
     - conda activate test
