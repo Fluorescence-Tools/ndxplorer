@@ -17,9 +17,8 @@ build:linux:
   script:
     - echo "I am a build stage job for debian, running on docker using continuumio/miniconda3:latest image"
     - source activate
-    - conda install mamba=$MAMBA_VERSION boa conda-verify -c conda-forge
-    # guiqwt guidata
     - echo $CONDARC >> ~/.condarc
+    - conda install mamba=$MAMBA_VERSION boa conda-verify -c conda-forge
     - conda mambabuild conda-recipe --output-folder bld-dir
   artifacts:
     expire_in: 7 days
