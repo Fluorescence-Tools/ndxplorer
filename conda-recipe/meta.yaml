@@ -40,7 +40,9 @@ requirements:
     - typing-extensions
     - qscintilla2
     - scipy
-    - guidata
+    # later guidata broken. Should be fixed
+    # https://github.com/winpython/winpython/issues/774
+    - guidata >=1.7.6
     - guiqwt
     - pathlib2
 
