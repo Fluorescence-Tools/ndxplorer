@@ -17,7 +17,7 @@ build:linux:
   script:
     - echo "I am a build stage job for debian, running on docker using continuumio/miniconda3:latest image"
     - source activate
-    - echo $CONDARC >> ~/.condarc
+    - echo `$CONDARC` >> ~/.condarc
     - echo $CONDARC
     - conda install mamba=$MAMBA_VERSION boa conda-verify -c conda-forge
     - conda mambabuild conda-recipe --output-folder bld-dir
