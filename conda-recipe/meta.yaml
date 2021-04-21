@@ -28,13 +28,6 @@ requirements:
     - pyyaml
     - setuptools
     - numpy
-  host:
-    - python {{ python }}
-    - typing_extensions
-    - pathlib2
-    - pyyaml
-    - setuptools
-    - numpy
   run:
     - python
     - pyqt
@@ -47,8 +40,8 @@ requirements:
     - typing-extensions
     - qscintilla2
     - scipy
-    - guidata=1.7.6
-    - guiqwt=3.0.3
+    - guidata
+    - guiqwt
     - pathlib2
 
 about:
