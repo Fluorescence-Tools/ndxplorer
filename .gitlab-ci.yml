@@ -43,8 +43,8 @@ test:linux:
   script:
     - echo "I am a test stage job for debian, running on docker using continuumio/miniconda3:latest image"
     - source activate base
-    - conda install mamba=$MAMBA_VERSION -c conda-forge
     - cp .condarc ~/.condarc
+    - conda install mamba=$MAMBA_VERSION
     - conda config --add channels "file://`pwd`/bld-dir"
     - mamba create -n test python ndxplorer
     - conda activate test
