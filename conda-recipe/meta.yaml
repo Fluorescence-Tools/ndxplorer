@@ -44,7 +44,7 @@ requirements:
     # https://github.com/winpython/winpython/issues/774
     - guidata >=1.7.6
     - guiqwt
-    - pathlib2
+    - pathlib2 [py < 3]
 
 about:
   home: {{ data.get('url') }}
