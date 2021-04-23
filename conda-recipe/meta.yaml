@@ -42,7 +42,7 @@ requirements:
     - scipy
     # later guidata broken. Should be fixed
     # https://github.com/winpython/winpython/issues/774
-    - guidata >=1.7.6
+    - guidata
     - guiqwt
     - pathlib2 [py < 3]
 
