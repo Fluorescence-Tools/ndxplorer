@@ -508,8 +508,8 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.parent.update_plots()
 
         # Actions for selection checkbox
-        cb_enable_x.connect(cb_enable_x, QtCore.SIGNAL("stateChanged(int)"), self.actionUpdatePlots.trigger)
-        cb_invert_x.connect(cb_invert_x, QtCore.SIGNAL("stateChanged(int)"), self.actionUpdatePlots.trigger)
+        cb_enable_x.stateChanged.connect(self.actionUpdatePlots.trigger)
+        cb_invert_x.stateChanged.connect(self.actionUpdatePlots.trigger)
 
     def onAddSelection(self):
         idx, name = self.p3
