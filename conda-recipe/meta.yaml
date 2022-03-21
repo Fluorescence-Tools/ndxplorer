@@ -31,7 +31,7 @@ requirements:
   run:
     - python
     - pyqt
-    - qtpy
+    - qtpy <2.0
     - numpy
     - pyyaml
     - pandas
