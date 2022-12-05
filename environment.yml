@@ -1,7 +1,6 @@
 name: ndxplorer
 channels:
   - conda-forge
-  - defaults
 dependencies:
   - pip
   - qt >=5
@@ -15,6 +14,4 @@ dependencies:
   - typing-extensions
   - qscintilla2
   - scipy
-  - pip:
-    - guidata==1.7.5
-    - guiqwt==3.0.2
+  - guiqwt
