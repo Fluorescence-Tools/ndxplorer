@@ -113,7 +113,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
     @n_xhist_1d.setter
     def n_xhist_1d(self, v):
-        self.spinBoxBin1DX.setValue(v)
+        self.spinBoxBin1DX.setValue(int(v))
 
     @property
     def n_yhist_1d(self):
@@ -121,7 +121,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
     @n_yhist_1d.setter
     def n_yhist_1d(self, v):
-        self.spinBoxBin1DY.setValue(v)
+        self.spinBoxBin1DY.setValue(int(v))
 
     @property
     def n_zhist_1d(self):
@@ -129,7 +129,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
     @n_zhist_1d.setter
     def n_zhist_1d(self, v):
-        self.spinBoxBin1DZ.setValue(v)
+        self.spinBoxBin1DZ.setValue(int(v))
 
     @property
     def n_xhist_2d(self):
@@ -137,7 +137,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
     @n_xhist_2d.setter
     def n_xhist_2d(self, v):
-        self.spinBoxBin2DX.setValue(v)
+        self.spinBoxBin2DX.setValue(int(v))
 
     @property
     def n_yhist_2d(self):
@@ -145,7 +145,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
     @n_yhist_2d.setter
     def n_yhist_2d(self, v):
-        self.spinBoxBin2DY.setValue(v)
+        self.spinBoxBin2DY.setValue(int(v))
 
     @property
     def x_range(self):
@@ -358,7 +358,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         _, name = self.p3
         try:
             d = self.axis_settings[name]
-            self.n_zhist_1d = d['n_bins_1d']
+            self.n_zhist_1d = int(d['n_bins_1d'])
             self.zmin = d['min']
             self.zmax = d['max']
             self.scale_z = d['scale']
