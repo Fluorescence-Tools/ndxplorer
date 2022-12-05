@@ -427,7 +427,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.plot_control.axis_settings.update(d)
         fn_equations = pathlib.Path(settings_json_fn).parent / self.settings["equations"]
         with open(str(fn_equations), "r") as fp:
-            d = yaml.load(fp, Loader=yaml.Loader)
+            d = yaml.load(fp, Loader=yaml.FullLoader)
             self.equations = d
         fn_constants = pathlib.Path(settings_json_fn).parent / self.settings["constants"]
         with open(str(fn_constants), "r") as fp:
