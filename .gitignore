@@ -1,3 +1,8 @@
 __pycache__
 .vscode
 *.pyc
+.idea/misc.xml
+.idea/modules.xml
+.idea/ndxplorer.iml
+.idea/vcs.xml
+.idea/inspectionProfiles/profiles_settings.xml
