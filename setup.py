@@ -1,9 +1,12 @@
 #!/usr/bin/python
+from datetime import date
 try:
     import numpy as np
 except ImportError:
     np = None
 from setuptools import setup, find_packages
+
+today = date.today()
 
 __name__ = "ndxplorer"
 __author__ = "Thomas-Otavio Peulen"
