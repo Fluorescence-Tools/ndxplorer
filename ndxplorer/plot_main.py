@@ -6,19 +6,31 @@ import sys
 import os
 import json
 import yaml
+import typing
 
 from . plot_control import SurfacePlotWidget
 from . parameter_editor import ParameterEditor
-from . qsci_editor import CodeEditor
+try:
+    from chisurf.gui.tools.code_editor import CodeEditor
+except ImportError:
+    from . qsci_editor import CodeEditor
 from . data_source import DataSource
+try:
+    from chisurf import logging
+except ImportError:
+    logging = object()
+    logging.log = lambda level, message: print(message)
 
 if sys.version_info.major > 2:
     import pathlib
 else:
     import pathlib2 as pathlib
 
-from qtpy import QtCore, uic
-from qtpy import QtGui, QtWidgets
+try:
+    from chisurf.gui import QtGui, QtCore, uic, QtWidgets
+except ImportError:
+    from qtpy import QtCore, uic
+    from qtpy import QtGui, QtWidgets
 
 if USE_GUIQWT:
     import guiqwt.signals
@@ -179,7 +191,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.verticalLayout_15.addWidget(self.equation_editor)
 
         def save_cb():
-            print("Save CB")
+            logging.log(0, "Save CB")
             json_str = self.equation_editor.text()
             self.equations = yaml.load(json_str)
         self.equation_editor.save_callback = save_cb
@@ -368,7 +380,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.update()
 
     def clear_plots(self):
-        print("clear_plots")
+        logging.log(0, "clearing plots")
         self._data_source.clear()
         self.update()
 
@@ -384,7 +396,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.lineEditWorkingPath.blockSignals(False)
 
     def onSaveBurstIDs(self, folder=None):
-        print("onSaveBurstIDs")
+        logging.log(0, "saving burst")
         if folder is None:
             folder = QtWidgets.QFileDialog.getExistingDirectory(
                 None, 'Folder for Burst IDs', self.working_path
@@ -401,7 +413,10 @@ class NDXplorer(QtWidgets.QMainWindow):
     ):
         if settings_json_fn is None:
             settings_json_fn = QtWidgets.QFileDialog.getSaveFileName(
-                None, 'Axis settings file', self.working_path, 'Axis file (*.axis.json)'
+                self ,
+                'Axis settings file',
+                self.working_path,
+                'Axis file (*.axis.json)'
             )
         with open(settings_json_fn, "w") as fp:
             json.dump(
@@ -437,14 +452,16 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def open_files(
             self,
-            file_handles=None,  # type: List[str]
-            file_type=None  # type: str
+            file_handles: typing.List[str] = None,
+            file_type: str =None
     ):
+        wp = str(self.working_path)
         if file_type in ["cs_sampling", "er4"]:
-            if file_handles is None:
-                file_handles = QtWidgets.QFileDialog.getOpenFileNames(
-                    None, 'ChiSurf sampling files', self.working_path, 'All files (*.er4)'
+            if not hasattr(file_handles, '__iter__'):
+                file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(
+                    self, 'ChiSurf sampling files', wp, 'Sampling files (*.er4)'
                 )
+            logging.log(0, "Opening files: {}".format(file_handles))
             self.working_path = str(pathlib.Path(file_handles[0]).parent)
             data_reader = reader.read_csv_sampling
         elif file_type in ["paris_dir"]:
@@ -455,7 +472,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         else: #if file_type in [None, "csv"]:
             if file_handles is None:
                 file_handles = QtWidgets.QFileDialog.getOpenFileNames(
-                    None, 'Comma separated value files', self.working_path, 'Text files (*.csv;*.dat;*.txt)'
+                    None, 'Comma separated value files',
+                    self.working_path, 'Text files (*.csv;*.dat;*.txt)'
                 )
             self.working_path = str(pathlib.Path(file_handles[0]).parent)
             data_reader = reader.read_csv
@@ -562,7 +580,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             H, x_edges, y_edges = np.histogram2d(x=d1, y=d2, bins=[x_bins_2d, y_bins_2d])
             self._histogram["2d"] = H, x_edges, y_edges
         except ValueError:
-            print("Did not compute 2D histogram", file=sys.stderr)
+            logging.log(1, "Did not compute 2D histogram")
 
     def update_plots(self):
         self.update_parameter_names()
