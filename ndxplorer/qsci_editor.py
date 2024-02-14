@@ -104,24 +104,20 @@ class CodeEditor(QtWidgets.QWidget):
         #  type: ()->str
         return self.editor.text()
 
-    def load_file(
-            self,
-            filename=None
-    ):
+    def load_file(self, filename=None):
         if filename is None:
             filename = QtWidgets.QFileDialog.getOpenFileName()
         self.filename = filename
         try:
-            print('loading filename: ', filename)
             with open(filename) as fp:
                 text = fp.read()
             self.editor.setText(text)
         except IOError:
-            print("Not a valid filename.")
+            print(f"The file {filename}  cannot be opened.")
 
     def save_text(self):
         if self.filename is None or self.filename == '':
-            self.filename = QtWidgets.QFileDialog.getSaveFileName()
+            self.filename = QtWidgets.QFileDialog.getSaveFileName(parent=None)
         with open(self.filename, mode='w') as fp:
             text = str(self.editor.text())
             fp.write(text)
