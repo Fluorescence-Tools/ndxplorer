@@ -25,11 +25,11 @@ def compute_values(
     print(equations)
     for eq in equations:
         for key in eq:
-            print("Compute value: %s" % key)
             try:
                 d[key] = pd.eval(eq[key], engine=engine)
             except:
-                print("Could not compute: %s" % key, file=sys.stderr)
+                pass
+                # print("Could not compute: %s" % key, file=sys.stderr)
 
 
 class DataSource(object):
