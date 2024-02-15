@@ -1,8 +1,8 @@
-[![pipeline status](https://gitlab.peulen.xyz/tpeulen/ndxplorer/badges/master/pipeline.svg)](https://gitlab.peulen.xyz/tpeulen/ndxplorer/-/commits/master)
+![conda build](https://github.com/fluorescence-tools/ndxplorer/actions/workflows/conda-build.yml/badge.svg)
+[![Anaconda-Server Version](https://anaconda.org/tpeulen/ndxplorer/badges/version.svg)](https://anaconda.org/tpeulen/chisurf)
 # ndxplorer
 
 ndXplorer is a program analyze and visualize multidimensional data sets.
-
 * Multi dimensional fluorescence (MFD) data
 * Sampling of posterior distributions [ChiSurf](https://github.com/Fluorescence-Tools/chisurf)
 * Inter-label distance distributions [Olga](https://github.com/Fluorescence-Tools/Olga)
