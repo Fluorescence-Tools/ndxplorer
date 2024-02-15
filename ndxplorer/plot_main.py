@@ -12,14 +12,15 @@ from . plot_control import SurfacePlotWidget
 from . parameter_editor import ParameterEditor
 try:
     from chisurf.gui.tools.code_editor import CodeEditor
-except ImportError:
+except:
     from . qsci_editor import CodeEditor
-from . data_source import DataSource
 try:
     from chisurf import logging
-except ImportError:
-    logging = object()
-    logging.log = lambda level, message: print(message)
+except:
+    import logging
+    logging.basicConfig()
+
+from . data_source import DataSource
 
 if sys.version_info.major > 2:
     import pathlib
