@@ -7,8 +7,7 @@ package:
   version: {{ data.get('version')|lower }}
 
 source:
-#  path: ..
-  git_url: ..
+  path: ..
 
 build:
     number: 0
@@ -22,29 +21,32 @@ build:
 
 requirements:
   host:
-    - python {{ python }}
+    - python
     - typing_extensions
-    - pathlib2
     - pyyaml
     - setuptools
     - numpy
   run:
     - python
     - pyqt
-    - qtpy <2.0
+    - qtpy
     - numpy
     - pyyaml
     - pandas
     - pyqtgraph
-    - pathlib2
     - typing-extensions
     - qscintilla2
     - scipy
     # later guidata broken. Should be fixed
     # https://github.com/winpython/winpython/issues/774
-    - guidata
+    - guidata 3.0.*
     - guiqwt
-    - pathlib2 [py < 3]
+
+test:
+  imports:
+    - ndxplorer
+  commands:
+    - ndxplorer &        # [linux or osx]
 
 about:
   home: {{ data.get('url') }}
