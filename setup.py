@@ -1,14 +1,17 @@
 #!/usr/bin/python
+from datetime import date
 try:
     import numpy as np
 except ImportError:
     np = None
 from setuptools import setup, find_packages
 
+today = date.today()
+
 __name__ = "ndxplorer"
 __author__ = "Thomas-Otavio Peulen"
-__version__ = "0.0.1"
-__copyright__ = "Copyright (C) 2021 Thomas-Otavio Peulen"
+__version__ = str(today.strftime("%y.%m.%d"))
+__copyright__ = "Copyright (C) 2024 Thomas-Otavio Peulen"
 __credits__ = ["Thomas-Otavio Peulen"]
 __maintainer__ = "Thomas-Otavio Peulen"
 __email__ = "thomas@peulen.xyz"

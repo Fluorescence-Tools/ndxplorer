@@ -1,18 +1,15 @@
 {% set data = load_setup_py_data(setup_file='../setup.py', from_recipe_dir=True) %}
-{% set PY_VER_MAJOR = PY_VER[0] %}
-{% set PY_VER_MINOR = PY_VER[2] %}
+
 
 package:
   name: {{ data.get('name')|lower }}
   version: {{ data.get('version')|lower }}
 
 source:
-#  path: ..
-  git_url: ..
+  path: ..
 
 build:
     number: 0
-    string: py{{ PY_VER_MAJOR }}{{ PY_VER_MINOR }}h{{ PKG_HASH }}_{{ PKG_BUILDNUM }}
     entry_points:
       {% for entry_point_type, entry_points in data.get("entry_points", dict()).items() -%}
       {% for entry_point in entry_points -%}
@@ -22,29 +19,32 @@ build:
 
 requirements:
   host:
-    - python {{ python }}
+    - python
     - typing_extensions
-    - pathlib2
     - pyyaml
     - setuptools
     - numpy
   run:
     - python
     - pyqt
-    - qtpy <2.0
+    - qtpy
     - numpy
     - pyyaml
     - pandas
     - pyqtgraph
-    - pathlib2
     - typing-extensions
     - qscintilla2
     - scipy
     # later guidata broken. Should be fixed
     # https://github.com/winpython/winpython/issues/774
-    - guidata
+    - guidata 3.0.*
     - guiqwt
-    - pathlib2 [py < 3]
+
+test:
+  imports:
+    - ndxplorer
+  commands:
+    - ndxplorer &        # [linux]
 
 about:
   home: {{ data.get('url') }}

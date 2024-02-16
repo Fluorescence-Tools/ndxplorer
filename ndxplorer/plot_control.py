@@ -2,6 +2,7 @@ from __future__ import print_function
 from typing import List, Dict
 import json
 import os
+import pathlib
 
 from qtpy import QtGui, uic, QtCore, QtWidgets
 from pyqtgraph.widgets.SpinBox import SpinBox
@@ -216,8 +217,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         #########################
         # GUI
         #########################
-        ui_file = os.path.dirname(__file__) + '/plot_control.ui'
-        print(ui_file)
+        ui_file = pathlib.Path(__file__).parent / 'plot_control.ui'
         self.spinBoxXmin = SpinBox()
         self.spinBoxXmax = SpinBox()
         self.spinBoxYmin = SpinBox()
@@ -225,7 +225,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.spinBoxZmin = SpinBox()
         self.spinBoxZmax = SpinBox()
 
-        uic.loadUi(ui_file, self)
+        uic.loadUi(str(ui_file.as_posix()), self)
         self.horizontalLayout.addWidget(self.spinBoxXmin)
         self.horizontalLayout.addWidget(self.spinBoxXmax)
         self.horizontalLayout_2.addWidget(self.spinBoxYmin)
