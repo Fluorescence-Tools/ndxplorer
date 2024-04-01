@@ -31,7 +31,7 @@ requirements:
     - numpy
     - pyyaml
     - pandas
-    - pyqtgraph
+    - pyqtgraph 0.12.*
     - typing-extensions
     - qscintilla2
     - scipy
