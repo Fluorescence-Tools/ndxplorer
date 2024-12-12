@@ -460,14 +460,13 @@ class NDXplorer(QtWidgets.QMainWindow):
         if file_type in ["cs_sampling", "er4"]:
             if not hasattr(file_handles, '__iter__'):
                 file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(
-                    self, 'ChiSurf sampling files', wp, 'Sampling files (*.er4)'
+                    self, 'ChiSurf sampling files', wp, 'Sampling files (*.*)'
                 )
             logging.log(0, "Opening files: {}".format(file_handles))
             self.working_path = str(pathlib.Path(file_handles[0]).parent)
             data_reader = reader.read_csv_sampling
         elif file_type in ["paris_dir"]:
-            file_handles = QtWidgets.QFileDialog.getExistingDirectory(
-                None, 'Open MFD analysis folder', self.working_path)
+            file_handles = QtWidgets.QFileDialog.getExistingDirectory(None, 'Open MFD analysis folder', self.working_path)
             self.working_path = str(pathlib.Path(file_handles))
             data_reader = reader.read_paris_analysis
         else: #if file_type in [None, "csv"]:
@@ -478,8 +477,9 @@ class NDXplorer(QtWidgets.QMainWindow):
                 )
             self.working_path = str(pathlib.Path(file_handles[0]).parent)
             data_reader = reader.read_csv
-        self._data_source = data_reader(file_handles)
-        self.update()
+        if file_handles:
+            self._data_source = data_reader(file_handles)
+            self.update()
 
     def onOpenCsv(
             self,
