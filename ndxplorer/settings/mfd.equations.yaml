@@ -2,6 +2,8 @@
     d['Green Count Rate (KHz)'] / d['Red Count Rate (KHz)']
 - Proximity ratio:
     d['Red Count Rate (KHz)'] / (d['Green Count Rate (KHz)'] + d['Red Count Rate (KHz)'])
+- Sapp:
+    (d['S prompt red (kHz)'] + d['S prompt green (kHz)']) / (d['S prompt red (kHz)'] + d['S delayed yellow (kHz)'] + d['S prompt green (kHz)'])
 - Fg/Fr:
     (d['Green Count Rate (KHz)'] - c['Bg']) / (d['Red Count Rate (KHz)'] - c['Br'] - c['alpha'] * d['Green Count Rate (KHz)'])
 - Fd/Fa:
