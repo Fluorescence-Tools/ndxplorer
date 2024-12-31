@@ -32,6 +32,8 @@ except ImportError:
     from qtpy import QtCore, uic
     from qtpy import QtGui, QtWidgets
 
+from qwt.plot import QwtPlot
+
 import guiqwt.signals
 import guiqwt.plot
 import guiqwt.image
@@ -41,7 +43,8 @@ from guiqwt.plot import CurveDialog, ImageDialog
 from guiqwt.builder import make
 
 import numpy as np
-import pyqtgraph as pg
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from . import reader
 from . import writer
@@ -210,6 +213,11 @@ class NDXplorer(QtWidgets.QMainWindow):
         # x-axis
         win_x = CurveDialog()
         self.g_xplot = win_x.get_plot()
+        self.g_xplot.enableAxis(QwtPlot.xBottom, True)
+        self.g_xplot.enableAxis(QwtPlot.xTop, False)
+        self.g_xplot.enableAxis(QwtPlot.yLeft, False)
+        self.g_xplot.enableAxis(QwtPlot.yRight, False)
+
         curveparam = guiqwt.styles.CurveParam("Curve", icon='curve.png')
         curveparam.curvestyle = "Steps"
         curveparam.line.color = '#0066cc'
@@ -222,6 +230,11 @@ class NDXplorer(QtWidgets.QMainWindow):
         # y-axis
         win_y = CurveDialog()
         self.g_yplot = win_y.get_plot()
+        self.g_yplot.enableAxis(QwtPlot.xBottom, False)
+        self.g_yplot.enableAxis(QwtPlot.xTop, False)
+        self.g_yplot.enableAxis(QwtPlot.yLeft, True)
+        self.g_yplot.enableAxis(QwtPlot.yRight, False)
+
         curveparam = guiqwt.styles.CurveParam()
         curveparam.curvestyle = "Steps"
         curveparam.line.color = '#00ff00'
@@ -232,16 +245,33 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.verticalLayout_7.addWidget(self.g_yplot)
 
         # 2D-Histogram
-        image_param = guiqwt.styles.ImageParam()
-        image_param.alpha_mask = False
-        image_param.colormap = "hot"
-        self.g_hist2d_m = guiqwt.image.ImageItem(param=image_param)
-        win_xy = ImageDialog(edit=False, toolbar=False)
-        self.g_xyplot = win_xy.get_plot()
-        self.g_xyplot.set_aspect_ratio(1., False)
-        self.g_xyplot.set_axis_direction('left', reverse=False)
-        self.g_xyplot.add_item(self.g_hist2d_m)
-        self.verticalLayout_11.addWidget(self.g_xyplot)
+        # Create a matplotlib figure and axis
+        fig, ax = plt.subplots()
+        self.fig = fig
+        d = np.ones((200, 200))
+        d[120, 120] = 250
+        d[150, 120] = 250
+        # Display the data as an image using imshow
+        cax = ax.imshow(d, cmap='hot', interpolation='nearest')
+        self.cax = cax
+
+        # Create a FigureCanvas object to integrate matplotlib with PyQt
+        self.canvas = FigureCanvas(fig)
+
+        # Remove axes
+        ax.axis('off')
+
+        # Set aspect ratio to 'auto' to allow resizing
+        ax.set_aspect('auto')
+
+        # Adjust the layout to fill the widget
+        self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+        # Show the initial plot
+        self.canvas.draw()
+
+        # Add the widget to your PyQt layout
+        self.verticalLayout_11.addWidget(self.canvas)
 
         self.g_xplot.setMaximumHeight(150)
         self.g_yplot.setMaximumWidth(150)
@@ -421,9 +451,8 @@ class NDXplorer(QtWidgets.QMainWindow):
     def update_parameter_names(self):
         p1, p1_name = self.plot_control.p1
         p2, p2_name = self.plot_control.p2
-        self.g_yplot.set_titles(xlabel="counts", ylabel=p2_name)
-        self.g_xplot.set_titles(xlabel=p1_name, ylabel="counts")
-        self.g_xyplot.set_titles(ylabel=p2_name, xlabel=p1_name)
+        self.g_yplot.set_axis_title("top", p2_name)
+        self.g_xplot.set_axis_title("top", p1_name)
 
     def get_bins(self, arange, scale, n_1d, n_2d):
         xmin, xmax = arange
@@ -489,11 +518,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # 2D Histogram
         ####################
         try:
-            print("x_bins_2d: ", x_bins_2d)
-            print("y_bins_2d: ", y_bins_2d)
             H, x_edges, y_edges = np.histogram2d(x=d1, y=d2, bins=[x_bins_2d, y_bins_2d], density=True)
-            print("x_edges: ", x_edges)
-            print("y_edges: ", y_edges)
             self._histogram["2d"] = H, x_edges, y_edges
         except ValueError:
             logging.log(1, "Did not compute 2D histogram")
@@ -504,6 +529,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.g_xhist_m.set_data(self._histogram["x"][0][1:], self._histogram["x"][1])
         self.g_yhist_m.set_data(self._histogram["y"][1], self._histogram["y"][0][1:])
         self.g_zhist_m.set_data(self._histogram["z"][0][1:], self._histogram["z"][1])
+
         self.g_xplot.do_autoscale()
         self.g_yplot.do_autoscale()
         self.g_zplot.do_autoscale()
@@ -511,14 +537,16 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def update_2d_plot(self):
         try:
-            H, x_edges, y_edges = self._histogram["2d"]
+            new_data, x_edges, y_edges = self._histogram["2d"]
         except ValueError:
             return None
-        self.g_hist2d_m.set_data(H.T, lut_range=None)
-        self.g_hist2d_m.plot().replot()  # Force replotting of the 2D histogram
-        #self.g_hist2d_m.set_xdata(x_edges[1], x_edges[-1])
-        #self.g_hist2d_m.set_ydata(y_edges[1], y_edges[-1])
-        self.g_hist2d_m.update_bounds()
-        self.g_xyplot.do_autoscale()
-        #self.g_xyplot.set_aspect_ratio(None, update=True)
+
+        # Update the data of the displayed image
+        self.cax.set_data(np.rot90(new_data, k=1))
+
+        # Autoscale the intensity (set vmin and vmax)
+        self.cax.autoscale()
+
+        # Redraw the canvas to update the display
+        self.canvas.draw_idle()
 
