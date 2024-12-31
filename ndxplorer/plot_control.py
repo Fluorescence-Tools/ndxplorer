@@ -370,8 +370,8 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.parent.g_yplot.set_axis_scale("left", self.scale_y)
         self.parent.g_xplot.set_axis_scale("bottom", self.scale_x)
         self.parent.g_zplot.set_axis_scale("bottom", self.scale_z)
-        self.parent.g_xyplot.set_axis_scale("bottom", self.scale_x)
-        self.parent.g_xyplot.set_axis_scale("left", self.scale_y)
+        # self.parent.g_xyplot.set_axis_scale("bottom", self.scale_x)
+        # self.parent.g_xyplot.set_axis_scale("left", self.scale_y)
         self.parent.update_plots()
 
     def auto_selection_range(self):
