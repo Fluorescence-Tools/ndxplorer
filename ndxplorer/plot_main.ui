@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>860</width>
-    <height>595</height>
+    <width>838</width>
+    <height>673</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -158,27 +158,14 @@
              <number>0</number>
             </property>
             <item>
-             <spacer name="verticalSpacer">
-              <property name="orientation">
-               <enum>Qt::Vertical</enum>
-              </property>
-              <property name="sizeHint" stdset="0">
-               <size>
-                <width>20</width>
-                <height>40</height>
-               </size>
-              </property>
-             </spacer>
-            </item>
-            <item>
              <layout class="QGridLayout" name="gridLayout_2">
               <property name="spacing">
                <number>0</number>
               </property>
-              <item row="1" column="0">
-               <widget class="QToolButton" name="toolButtonUpdatePlot">
+              <item row="2" column="1">
+               <widget class="QToolButton" name="toolButton_2">
                 <property name="enabled">
-                 <bool>true</bool>
+                 <bool>false</bool>
                 </property>
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
@@ -186,15 +173,12 @@
                   <verstretch>0</verstretch>
                  </sizepolicy>
                 </property>
-                <property name="toolTip">
-                 <string>Update plot</string>
-                </property>
                 <property name="text">
-                 <string>update</string>
+                 <string>load</string>
                 </property>
                </widget>
               </item>
-              <item row="1" column="1">
+              <item row="3" column="1">
                <widget class="QToolButton" name="toolButtonClearPlot">
                 <property name="enabled">
                  <bool>true</bool>
@@ -213,7 +197,7 @@
                 </property>
                </widget>
               </item>
-              <item row="0" column="0">
+              <item row="2" column="0">
                <widget class="QToolButton" name="toolButton_3">
                 <property name="enabled">
                  <bool>false</bool>
@@ -229,10 +213,10 @@
                 </property>
                </widget>
               </item>
-              <item row="0" column="1">
-               <widget class="QToolButton" name="toolButton_2">
+              <item row="3" column="0">
+               <widget class="QToolButton" name="toolButtonUpdatePlot">
                 <property name="enabled">
-                 <bool>false</bool>
+                 <bool>true</bool>
                 </property>
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
@@ -240,12 +224,15 @@
                   <verstretch>0</verstretch>
                  </sizepolicy>
                 </property>
+                <property name="toolTip">
+                 <string>Update plot</string>
+                </property>
                 <property name="text">
-                 <string>load</string>
+                 <string>update</string>
                 </property>
                </widget>
               </item>
-              <item row="2" column="0">
+              <item row="4" column="0">
                <widget class="QLineEdit" name="lineEditCountCurrent">
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
@@ -255,7 +242,7 @@
                 </property>
                </widget>
               </item>
-              <item row="2" column="1">
+              <item row="4" column="1">
                <widget class="QLineEdit" name="lineEditCountTotal">
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
@@ -283,6 +270,19 @@
                 </property>
                </widget>
               </item>
+              <item row="5" column="0" colspan="2">
+               <widget class="QComboBox" name="comboBoxCmap">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="editable">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
              </layout>
             </item>
             <item>
@@ -291,14 +291,29 @@
                <number>0</number>
               </property>
               <item>
-               <widget class="QLabel" name="label">
+               <widget class="QCheckBox" name="checkBoxLogCounts">
+                <property name="enabled">
+                 <bool>false</bool>
+                </property>
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
                 <property name="text">
-                 <string>mask</string>
+                 <string>log #</string>
                 </property>
                </widget>
               </item>
               <item>
                <widget class="QCheckBox" name="checkBoxMaskNaN">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
                 <property name="text">
                  <string>NaN</string>
                 </property>
@@ -309,6 +324,12 @@
               </item>
               <item>
                <widget class="QCheckBox" name="checkBoxMaskInf">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
                 <property name="text">
                  <string>inf</string>
                 </property>
@@ -423,8 +444,8 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>860</width>
-     <height>21</height>
+     <width>838</width>
+     <height>24</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -435,23 +456,11 @@
      <property name="title">
       <string>Import</string>
      </property>
-     <widget class="QMenu" name="menusmFRET">
-      <property name="title">
-       <string>smFRET</string>
-      </property>
-      <addaction name="actionOpenParisDataset"/>
-     </widget>
-     <widget class="QMenu" name="menuSampling">
-      <property name="title">
-       <string>Sampling</string>
-      </property>
-      <addaction name="actionOpenChiSurfSampling"/>
-     </widget>
      <addaction name="separator"/>
      <addaction name="actionOpenCsv"/>
      <addaction name="separator"/>
-     <addaction name="menusmFRET"/>
-     <addaction name="menuSampling"/>
+     <addaction name="actionOpenParisDataset"/>
+     <addaction name="actionOpenChiSurfSampling"/>
     </widget>
     <widget class="QMenu" name="menuSave">
      <property name="title">
@@ -674,7 +683,7 @@
   </action>
   <action name="actionOpenChiSurfSampling">
    <property name="text">
-    <string>ChiSurf</string>
+    <string>ChiSurf-Sampling</string>
    </property>
   </action>
   <action name="actionLoad_settings">
@@ -684,7 +693,7 @@
   </action>
   <action name="actionOpenParisDataset">
    <property name="text">
-    <string>bur/b*4</string>
+    <string>Paris-Folder</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+I</string>
@@ -1025,6 +1034,22 @@
     <hint type="sourcelabel">
      <x>140</x>
      <y>252</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>-1</x>
+     <y>-1</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>comboBoxCmap</sender>
+   <signal>currentTextChanged(QString)</signal>
+   <receiver>actionUpdate_plot</receiver>
+   <slot>trigger()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>773</x>
+     <y>64</y>
     </hint>
     <hint type="destinationlabel">
      <x>-1</x>
