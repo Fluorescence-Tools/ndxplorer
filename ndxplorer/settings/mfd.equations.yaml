@@ -2,7 +2,9 @@
     d['Green Count Rate (KHz)'] / d['Red Count Rate (KHz)']
 - Proximity ratio:
     d['Red Count Rate (KHz)'] / (d['Green Count Rate (KHz)'] + d['Red Count Rate (KHz)'])
-- Sapp:
+- Proximity ratio (PIE):
+    d['S prompt red (kHz)'] / (d['S prompt red (kHz)'] + d['S prompt green (kHz)'])
+- Sapp (PIE):
     (d['S prompt red (kHz)'] + d['S prompt green (kHz)']) / (d['S prompt red (kHz)'] + d['S delayed yellow (kHz)'] + d['S prompt green (kHz)'])
 - Fg/Fr:
     (d['Green Count Rate (KHz)'] - c['Bg']) / (d['Red Count Rate (KHz)'] - c['Br'] - c['alpha'] * d['Green Count Rate (KHz)'])
@@ -10,6 +12,12 @@
     d['Fg/Fr'] / c['gG/gR']
 - FRET efficiency:
     (1.+d['Fd/Fa']*c['PhiA']/c['PhiD'])**(-1.0)
+- Fg/Fr (PIE):
+    (d['S prompt green (kHz)'] - c['Bg']) / (d['S prompt red (kHz)'] - c['Br'] - c['alpha'] * d['S prompt green (kHz)'])
+- Fd/Fa (PIE):
+    d['Fg/Fr'] / c['gG/gR']
+- FRET efficiency (PIE):
+    (1.+d['Fd/Fa (PIE)']*c['PhiA']/c['PhiD'])**(-1.0)
 - Tg-Tr (ms):
     d['Duration (green) (ms)'] - d['Duration (red) (ms)']
 - <tauD(A)>x:
