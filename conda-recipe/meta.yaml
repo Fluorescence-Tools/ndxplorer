@@ -31,14 +31,12 @@ requirements:
     - numpy
     - pyyaml
     - pandas
-    - pyqtgraph 0.12.*
+    - pyqtgraph
     - typing-extensions
     - qscintilla2
     - matplotlib
     - scipy
-    # later guidata broken. Should be fixed
-    # https://github.com/winpython/winpython/issues/774
-    - guidata 3.0.*
+    - guidata
     - guiqwt
 
 test:
