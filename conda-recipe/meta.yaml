@@ -36,7 +36,7 @@ requirements:
     - qscintilla2
     - matplotlib
     - scipy
-    - guidata
+    - guidata 3.6.*
     - guiqwt
 
 test:
