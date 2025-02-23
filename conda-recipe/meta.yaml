@@ -34,6 +34,7 @@ requirements:
     - pyqtgraph 0.12.*
     - typing-extensions
     - qscintilla2
+    - matplotlib
     - scipy
     # later guidata broken. Should be fixed
     # https://github.com/winpython/winpython/issues/774
