@@ -44,6 +44,7 @@ from guiqwt.builder import make
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import cm, colormaps
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from . import reader
@@ -170,11 +171,42 @@ class NDXplorer(QtWidgets.QMainWindow):
             v = v[np.where(v > 0)[0]]
         return min(v)
 
+    @property
+    def current_cmap(self) -> str:
+        return self.comboBoxCmap.currentText()
+
+    def update_cmap(self, cmap_name = None):
+        """
+        Update the colormap of the imshow plot based on the selected cmap.
+        """
+        if cmap_name is None:
+            cmap_name = self.current_cmap
+        self.cax.set_cmap(cmap_name)  # Update the colormap
+        self.canvas.draw()  # Redraw the canvas
+
+    def populate_colormap_combobox(self):
+        """Populate the QComboBox with matplotlib colormap names."""
+        colormap_names = sorted(colormaps.keys())  # Get all colormap names
+        self.comboBoxCmap.addItems(colormap_names)  # Add them to the QComboBox
+
+        # Set default selection
+        if self.current_cmap in colormap_names:
+            default_index = colormap_names.index(self.current_cmap)
+            self.comboBoxCmap.setCurrentIndex(default_index)
+
+    def set_default_colormap(self, default_cmap):
+        """Set the default colormap in the QComboBox."""
+        index = self.comboBoxCmap.findText(default_cmap)  # Find the index of 'jet'
+        if index != -1:  # Ensure it exists in the list
+            self.comboBoxCmap.setCurrentIndex(index)  # Set the QComboBox to 'jet'
+            self.cax.set_cmap(default_cmap)  # Update the plot's colormap
+
     def __init__(
             self,
             data_source=None,  # type: DataSource
             settings_json_fn=None,  # type: str
-            parent=None
+            parent=None,
+            cmap: str = 'jet'
     ):
         # type: (DataSource, QtWidgets.QWidget) -> ()
         if isinstance(data_source, DataSource):
@@ -192,6 +224,8 @@ class NDXplorer(QtWidgets.QMainWindow):
             json_str = self.equation_editor.text()
             self.equations = yaml.load(json_str)
         self.equation_editor.save_callback = save_cb
+
+        self.populate_colormap_combobox()
 
         # Plots
         #############
@@ -252,8 +286,9 @@ class NDXplorer(QtWidgets.QMainWindow):
         d[120, 120] = 250
         d[150, 120] = 250
         # Display the data as an image using imshow
-        cax = ax.imshow(d, cmap='hot', interpolation='nearest')
-        self.cax = cax
+        self.cax = ax.imshow(d, cmap='hot', interpolation='nearest')
+
+        self.set_default_colormap(cmap)
 
         # Create a FigureCanvas object to integrate matplotlib with PyQt
         self.canvas = FigureCanvas(fig)
@@ -525,6 +560,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def update_plots(self):
         self.update_parameter_names()
+        self.update_cmap()
         self.update_histograms()
         self.g_xhist_m.set_data(self._histogram["x"][0][1:], self._histogram["x"][1])
         self.g_yhist_m.set_data(self._histogram["y"][1], self._histogram["y"][0][1:])
@@ -540,6 +576,11 @@ class NDXplorer(QtWidgets.QMainWindow):
             new_data, x_edges, y_edges = self._histogram["2d"]
         except ValueError:
             return None
+
+        log_counts = self.checkBoxLogCounts.isChecked()
+        if log_counts:
+            new_data = np.log10(new_data)
+            new_data = np.nan_to_num(new_data)
 
         # Update the data of the displayed image
         self.cax.set_data(np.rot90(new_data, k=1))
