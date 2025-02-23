@@ -32,7 +32,7 @@ jobs:
           auto-update-conda: true
           python-version: ${{ matrix.python-version }}
           mamba-version: "*"
-          channels: conda-forge,defaults
+          channels: conda-forge,bioconda,tpeulen
           channel-priority: true
 
       - name: Display Conda Settings
@@ -51,6 +51,5 @@ jobs:
           run: |
             mamba install conda-build boa anaconda-client
             cd conda-recipe
-            curl -sLO https://github.com/conda-forge/conda-forge-pinning-feedstock/raw/main/recipe/conda_build_config.yaml
             conda mambabuild . --output-folder conda-bld -c tpeulen
             anaconda -t ${{ secrets.ANACONDA_TOKEN }} upload -u tpeulen --force conda-bld/**/*.tar.bz2

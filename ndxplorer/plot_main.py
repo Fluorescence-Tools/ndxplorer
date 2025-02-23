@@ -1,6 +1,5 @@
 from __future__ import print_function
 from typing import Dict, List
-USE_GUIQWT = True
 
 import sys
 import os
@@ -33,19 +32,20 @@ except ImportError:
     from qtpy import QtCore, uic
     from qtpy import QtGui, QtWidgets
 
-if USE_GUIQWT:
-    import guiqwt.signals
-    import guiqwt.plot
-    import guiqwt.image
-    import guiqwt.curve
-    import guiqwt.styles
-    from guiqwt.plot import CurveDialog, ImageDialog
-    from guiqwt.builder import make
-else:
-    import pyqtgraph as pg
+from qwt.plot import QwtPlot
+
+import guiqwt.signals
+import guiqwt.plot
+import guiqwt.image
+import guiqwt.curve
+import guiqwt.styles
+from guiqwt.plot import CurveDialog, ImageDialog
+from guiqwt.builder import make
 
 import numpy as np
-import pyqtgraph as pg
+import matplotlib.pyplot as plt
+from matplotlib import cm, colormaps
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from . import reader
 from . import writer
@@ -80,8 +80,7 @@ class NDXplorer(QtWidgets.QMainWindow):
     )
 
     @property
-    def data_source(self):
-        #  type: ()->DataSource
+    def data_source(self) ->DataSource:
         if self._data_source.empty:
             values = self._default_data_source
         else:
@@ -98,23 +97,19 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
 
     @property
-    def x_values(self):
-        # type: () -> np.ndarray
+    def x_values(self) -> np.ndarray:
         return self.values[self.plot_control.p1[0]].astype('float64')
 
     @property
-    def y_values(self):
-        # type: () -> np.ndarray
+    def y_values(self) -> np.ndarray:
         return self.values[self.plot_control.p2[0]].astype('float64')
 
     @property
-    def z_values(self):
-        # type: () -> np.ndarray
+    def z_values(self)-> np.ndarray:
         return self.values[self.plot_control.p3[0]].astype('float64')
 
     @property
-    def values(self):
-        # type: () -> np.ndarray
+    def values(self) -> np.ndarray:
         values = self.data_source.values
         selections = self.plot_control.get_selections()
         mask = self.data_source.get_mask(
@@ -135,18 +130,18 @@ class NDXplorer(QtWidgets.QMainWindow):
         return re
 
     @property
-    def ymax(self):
-        # type: () -> float
+    def ymax(self) -> float:
         return max(self.y_values)
 
     @property
     def zmin(self):
-        # type: () -> float
-        return min(self.z_values)
+        v = self.z_values[self.z_values > -np.inf]
+        if self.plot_control.scale_z == "log":
+            v = v[np.where(v > 0)[0]]
+        return min(v)
 
     @property
-    def zmax(self):
-        # type: () -> float
+    def zmax(self) -> float:
         return max(self.z_values)
 
     @property
@@ -159,26 +154,59 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.lineEditWorkingPath.setText(v)
 
     @property
-    def xmin(self):
-        # type: () -> float
+    def xmin(self) -> float:
         v = self.x_values[self.x_values > -np.inf]
+        if self.plot_control.scale_x == "log":
+            v = v[np.where(v > 0)[0]]
         return min(v)
 
     @property
-    def xmax(self):
-        # type: () -> float
+    def xmax(self) -> float:
         return max(self.x_values)
 
     @property
-    def ymin(self):
-        # type: () -> float
-        return min(self.y_values)
+    def ymin(self) -> float:
+        v = self.y_values[self.y_values > -np.inf]
+        if self.plot_control.scale_y == "log":
+            v = v[np.where(v > 0)[0]]
+        return min(v)
+
+    @property
+    def current_cmap(self) -> str:
+        return self.comboBoxCmap.currentText()
+
+    def update_cmap(self, cmap_name = None):
+        """
+        Update the colormap of the imshow plot based on the selected cmap.
+        """
+        if cmap_name is None:
+            cmap_name = self.current_cmap
+        self.cax.set_cmap(cmap_name)  # Update the colormap
+        self.canvas.draw()  # Redraw the canvas
+
+    def populate_colormap_combobox(self):
+        """Populate the QComboBox with matplotlib colormap names."""
+        colormap_names = sorted(colormaps.keys())  # Get all colormap names
+        self.comboBoxCmap.addItems(colormap_names)  # Add them to the QComboBox
+
+        # Set default selection
+        if self.current_cmap in colormap_names:
+            default_index = colormap_names.index(self.current_cmap)
+            self.comboBoxCmap.setCurrentIndex(default_index)
+
+    def set_default_colormap(self, default_cmap):
+        """Set the default colormap in the QComboBox."""
+        index = self.comboBoxCmap.findText(default_cmap)  # Find the index of 'jet'
+        if index != -1:  # Ensure it exists in the list
+            self.comboBoxCmap.setCurrentIndex(index)  # Set the QComboBox to 'jet'
+            self.cax.set_cmap(default_cmap)  # Update the plot's colormap
 
     def __init__(
             self,
             data_source=None,  # type: DataSource
             settings_json_fn=None,  # type: str
-            parent=None
+            parent=None,
+            cmap: str = 'jet'
     ):
         # type: (DataSource, QtWidgets.QWidget) -> ()
         if isinstance(data_source, DataSource):
@@ -197,135 +225,92 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.equations = yaml.load(json_str)
         self.equation_editor.save_callback = save_cb
 
+        self.populate_colormap_combobox()
+
         # Plots
         #############
         # z-axis
-        if USE_GUIQWT:
-            win_z = CurveDialog()
-            self.g_zplot = win_z.get_plot()
-            curveparam = guiqwt.styles.CurveParam("Curve", icon='curve.png')
-            curveparam.curvestyle = "Steps"
-            curveparam.line.color = '#ff00ff'
-            curveparam.shade = 0.5
-            curveparam.line.width = 2.0
-            self.g_zhist_m = guiqwt.curve.CurveItem(curveparam=curveparam)
-            self.g_zplot.add_item(self.g_zhist_m)
-            self.selection_z = make.range(.25, .5)
-            self.g_zplot.add_item(self.selection_z)
-        else:
-            self.g_zplot = pg.PlotWidget()
-            self.g_zhist_m = pg.PlotCurveItem(
-                [0, 1], [0, 1],
-                # stepMode=True,
-                fillLevel=0,
-                brush=(255, 255, 0, 255)
-            )
-            self.g_zplot.addItem(self.g_zhist_m)
-            self.selection_z = pg.LinearRegionItem()
-            self.g_zplot.addItem(self.selection_z)
-        # self.selectors.append(
-        #     ('z', self.selection_z)
-        # )
+        win_z = CurveDialog()
+        self.g_zplot = win_z.get_plot()
+        curveparam = guiqwt.styles.CurveParam("Curve", icon='curve.png')
+        curveparam.curvestyle = "Steps"
+        curveparam.line.color = '#ff00ff'
+        curveparam.shade = 0.5
+        curveparam.line.width = 2.0
+        self.g_zhist_m = guiqwt.curve.CurveItem(curveparam=curveparam)
+        self.g_zplot.add_item(self.g_zhist_m)
+        self.selection_z = make.range(.25, .5)
+        self.g_zplot.add_item(self.selection_z)
 
         self.plot_control.verticalLayout_4.addWidget(self.g_zplot)
 
         # x-axis
-        if USE_GUIQWT:
-            win_x = CurveDialog()
-            self.g_xplot = win_x.get_plot()
-            curveparam = guiqwt.styles.CurveParam("Curve", icon='curve.png')
-            curveparam.curvestyle = "Steps"
-            curveparam.line.color = '#0066cc'
-            curveparam.shade = 0.5
-            curveparam.line.width = 2.0
-            self.g_xhist_m = guiqwt.curve.CurveItem(curveparam=curveparam)
-            self.g_xplot.add_item(self.g_xhist_m)
-        else:
-            self.g_xplot = pg.PlotWidget()
-            self.g_xhist_m = pg.PlotCurveItem(
-                [0, 1], [0, 1],
-                # stepMode=True,
-                fillLevel=0,
-                brush=(0, 0, 255, 255)
-            )
-            self.g_xplot.addItem(self.g_xhist_m)
+        win_x = CurveDialog()
+        self.g_xplot = win_x.get_plot()
+        self.g_xplot.enableAxis(QwtPlot.xBottom, True)
+        self.g_xplot.enableAxis(QwtPlot.xTop, False)
+        self.g_xplot.enableAxis(QwtPlot.yLeft, False)
+        self.g_xplot.enableAxis(QwtPlot.yRight, False)
+
+        curveparam = guiqwt.styles.CurveParam("Curve", icon='curve.png')
+        curveparam.curvestyle = "Steps"
+        curveparam.line.color = '#0066cc'
+        curveparam.shade = 0.5
+        curveparam.line.width = 2.0
+        self.g_xhist_m = guiqwt.curve.CurveItem(curveparam=curveparam)
+        self.g_xplot.add_item(self.g_xhist_m)
         self.verticalLayout_5.addWidget(self.g_xplot)
 
         # y-axis
-        if USE_GUIQWT:
-            win_y = CurveDialog()
-            self.g_yplot = win_y.get_plot()
-            curveparam = guiqwt.styles.CurveParam()
-            curveparam.curvestyle = "Steps"
-            curveparam.line.color = '#00ff00'
-            curveparam.shade = 0.1
-            curveparam.line.width = 2.0
-            self.g_yhist_m = guiqwt.curve.CurveItem(curveparam=curveparam)
-            self.g_yplot.add_item(self.g_yhist_m)
-        else:
-            self.g_yplot = pg.PlotWidget()
-            self.g_yhist_m = pg.PlotCurveItem(
-                [0, 1], [0, 1],
-                # stepMode=True,
-                fillLevel=0,
-                brush=(255, 0, 255, 255)
-            )
-            self.g_yplot.addItem(self.g_yhist_m)
+        win_y = CurveDialog()
+        self.g_yplot = win_y.get_plot()
+        self.g_yplot.enableAxis(QwtPlot.xBottom, False)
+        self.g_yplot.enableAxis(QwtPlot.xTop, False)
+        self.g_yplot.enableAxis(QwtPlot.yLeft, True)
+        self.g_yplot.enableAxis(QwtPlot.yRight, False)
+
+        curveparam = guiqwt.styles.CurveParam()
+        curveparam.curvestyle = "Steps"
+        curveparam.line.color = '#00ff00'
+        curveparam.shade = 0.1
+        curveparam.line.width = 2.0
+        self.g_yhist_m = guiqwt.curve.CurveItem(curveparam=curveparam)
+        self.g_yplot.add_item(self.g_yhist_m)
         self.verticalLayout_7.addWidget(self.g_yplot)
 
         # 2D-Histogram
-        if USE_GUIQWT:
-            image_param = guiqwt.styles.ImageParam()
-            image_param.alpha_mask = False
-            image_param.colormap = "hot"
-            self.g_hist2d_m = guiqwt.image.ImageItem(param=image_param)
-            win_xy = ImageDialog(edit=False, toolbar=False)
-            self.g_xyplot = win_xy.get_plot()
-            self.g_xyplot.set_aspect_ratio(1., False)
-            self.g_xyplot.set_axis_direction('left', reverse=False)
-            self.g_xyplot.add_item(self.g_hist2d_m)
-        else:
-            self.g_xyplot = pg.PlotWidget(parent=self)
-            image = pg.ImageItem()
-            self.g_xyplot.addItem(image)
-            self.g_hist2d_m = image
-            self.g_hist2d_m.getViewBox().invertY(False)
-        self.verticalLayout_11.addWidget(self.g_xyplot)
-        if not USE_GUIQWT:
-            self.g_xyplot.setXLink(self.g_xplot)
-            self.g_xyplot.setYLink(self.g_yplot)
-            # # 2D Selection
-            # self.selection_2d_y = pg.LinearRegionItem(orientation='horizontal', movable=True)
-            # self.selection_2d_x = pg.LinearRegionItem(orientation='vertical', movable=True)
-            # self.g_xyplot.addItem(self.selection_2d_y)
-            # self.g_xyplot.addItem(self.selection_2d_x)
+        # Create a matplotlib figure and axis
+        fig, ax = plt.subplots()
+        self.fig = fig
+        d = np.ones((200, 200))
+        d[120, 120] = 250
+        d[150, 120] = 250
+        # Display the data as an image using imshow
+        self.cax = ax.imshow(d, cmap='hot', interpolation='nearest')
+
+        self.set_default_colormap(cmap)
+
+        # Create a FigureCanvas object to integrate matplotlib with PyQt
+        self.canvas = FigureCanvas(fig)
+
+        # Remove axes
+        ax.axis('off')
+
+        # Set aspect ratio to 'auto' to allow resizing
+        ax.set_aspect('auto')
+
+        # Adjust the layout to fill the widget
+        self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+        # Show the initial plot
+        self.canvas.draw()
+
+        # Add the widget to your PyQt layout
+        self.verticalLayout_11.addWidget(self.canvas)
 
         self.g_xplot.setMaximumHeight(150)
         self.g_yplot.setMaximumWidth(150)
         self.g_zplot.setMaximumHeight(150)
-
-        # Clean plots
-        ################
-        if USE_GUIQWT:
-            pass
-        else:
-
-            self.g_xplot.showGrid(True, True)
-            self.g_yplot.showGrid(True, True)
-            self.g_zplot.showGrid(True, True)
-
-            self.g_xyplot.getPlotItem().showAxis('top')
-            self.g_xyplot.getPlotItem().showAxis('bottom')
-            self.g_xyplot.getPlotItem().showAxis('right')
-            self.g_xyplot.getPlotItem().showAxis('left')
-
-            self.g_zplot.getPlotItem().showAxis('right')
-            self.g_xplot.getPlotItem().showAxis('bottom')
-            self.g_xplot.getPlotItem().showAxis('right')
-            self.g_yplot.getPlotItem().hideAxis('left')
-            self.g_yplot.getPlotItem().showAxis('right')
-            self.g_yplot.getPlotItem().showAxis('top')
-            self.g_yplot.getPlotItem().showAxis('bottom')
 
         # Load settings
         ###############
@@ -454,36 +439,29 @@ class NDXplorer(QtWidgets.QMainWindow):
     def open_files(
             self,
             file_handles: typing.List[str] = None,
-            file_type: str =None
+            file_type: str = None
     ):
         wp = str(self.working_path)
         if file_type in ["cs_sampling", "er4"]:
             if not hasattr(file_handles, '__iter__'):
-                file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(
-                    self, 'ChiSurf sampling files', wp, 'Sampling files (*.er4)'
-                )
+                file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(self, 'ChiSurf sampling files', wp, 'Sampling files (*.*)')
             logging.log(0, "Opening files: {}".format(file_handles))
-            self.working_path = str(pathlib.Path(file_handles[0]).parent)
             data_reader = reader.read_csv_sampling
         elif file_type in ["paris_dir"]:
-            file_handles = QtWidgets.QFileDialog.getExistingDirectory(
-                None, 'Open MFD analysis folder', self.working_path)
-            self.working_path = str(pathlib.Path(file_handles))
+            file_handles = QtWidgets.QFileDialog.getExistingDirectory(None, 'Open MFD analysis folder', self.working_path)
             data_reader = reader.read_paris_analysis
         else: #if file_type in [None, "csv"]:
             if file_handles is None:
-                file_handles = QtWidgets.QFileDialog.getOpenFileNames(
-                    None, 'Comma separated value files',
-                    self.working_path, 'Text files (*.csv;*.dat;*.txt)'
-                )
-            self.working_path = str(pathlib.Path(file_handles[0]).parent)
+                file_handles = QtWidgets.QFileDialog.getOpenFileNames(None, 'Comma separated value files', self.working_path, 'Text files (*.*)')
             data_reader = reader.read_csv
-        self._data_source = data_reader(file_handles)
-        self.update()
+        if file_handles:
+            self.working_path = str(pathlib.Path(file_handles[0]).parent)
+            self._data_source = data_reader(file_handles)
+            self.update()
 
     def onOpenCsv(
             self,
-            filenames=None  # type: List[str]
+            filenames: List[str] = None
     ):
         self.open_files(file_type="csv", file_handles=filenames)
 
@@ -508,21 +486,17 @@ class NDXplorer(QtWidgets.QMainWindow):
     def update_parameter_names(self):
         p1, p1_name = self.plot_control.p1
         p2, p2_name = self.plot_control.p2
-        if USE_GUIQWT:
-            self.g_yplot.set_titles(xlabel="counts", ylabel=p2_name)
-            self.g_xplot.set_titles(xlabel=p1_name, ylabel="counts")
-            self.g_xyplot.set_titles(ylabel=p2_name, xlabel=p1_name)
-        else:
-            # self.g_yplot.setLabel('bottom', "counts")
-            self.g_xplot.setLabel('top', p1_name)
-            # self.g_xplot.setLabel('left', "counts")
-            self.g_yplot.setLabel('right', p2_name)
-            # self.g_xplot.setLabel('left', p2_name)
+        self.g_yplot.set_axis_title("top", p2_name)
+        self.g_xplot.set_axis_title("top", p1_name)
 
     def get_bins(self, arange, scale, n_1d, n_2d):
         xmin, xmax = arange
         # set log scales
         if scale == "log":
+            if xmin <= 0:
+                xmin = 1e-6
+            if xmax <= 0:
+                xmax = 1e-6
             x_func = np.logspace
             x_start = np.log10(xmin)
             x_stop = np.log10(xmax)
@@ -551,12 +525,13 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
 
     def get_z_bins(self):
-        return self.get_bins(
+        bins = self.get_bins(
             self.plot_control.z_range,
             self.plot_control.scale_z,
             self.plot_control.n_zhist_1d,
             10
         )
+        return bins
 
     def update_histograms(self):
         d1 = self.x_values
@@ -578,52 +553,41 @@ class NDXplorer(QtWidgets.QMainWindow):
         # 2D Histogram
         ####################
         try:
-            H, x_edges, y_edges = np.histogram2d(x=d1, y=d2, bins=[x_bins_2d, y_bins_2d])
+            H, x_edges, y_edges = np.histogram2d(x=d1, y=d2, bins=[x_bins_2d, y_bins_2d], density=True)
             self._histogram["2d"] = H, x_edges, y_edges
         except ValueError:
             logging.log(1, "Did not compute 2D histogram")
 
     def update_plots(self):
         self.update_parameter_names()
+        self.update_cmap()
         self.update_histograms()
-        if USE_GUIQWT:
-            self.g_xhist_m.set_data(self._histogram["x"][0][1:], self._histogram["x"][1])
-            self.g_yhist_m.set_data(self._histogram["y"][1], self._histogram["y"][0][1:])
-            self.g_zhist_m.set_data(self._histogram["z"][0][1:], self._histogram["z"][1])
-            self.g_xplot.do_autoscale()
-            self.g_yplot.do_autoscale()
-            self.g_zplot.do_autoscale()
-        else:
-            self.g_xhist_m.setData(self._histogram["x"][0][1:], self._histogram["x"][1])
-            self.g_yhist_m.setData(self._histogram["y"][1], self._histogram["y"][0][1:])
-            self.g_zhist_m.setData(self._histogram["z"][0][1:], self._histogram["z"][1])
+        self.g_xhist_m.set_data(self._histogram["x"][0][1:], self._histogram["x"][1])
+        self.g_yhist_m.set_data(self._histogram["y"][1], self._histogram["y"][0][1:])
+        self.g_zhist_m.set_data(self._histogram["z"][0][1:], self._histogram["z"][1])
+
+        self.g_xplot.do_autoscale()
+        self.g_yplot.do_autoscale()
+        self.g_zplot.do_autoscale()
         self.update_2d_plot()
 
     def update_2d_plot(self):
         try:
-            H, x_edges, y_edges = self._histogram["2d"]
+            new_data, x_edges, y_edges = self._histogram["2d"]
         except ValueError:
             return None
-        if USE_GUIQWT:
-            self.g_hist2d_m.set_data(H.T, lut_range=None)
-            self.g_hist2d_m.set_xdata(x_edges[1], x_edges[-1])
-            self.g_hist2d_m.set_ydata(y_edges[1], y_edges[-1])
-            self.g_hist2d_m.update_bounds()
-            self.g_xyplot.do_autoscale()
-        else:
-            img = H
-            x0, x1 = (x_edges[0], x_edges[-1])
-            y0, y1 = (y_edges[0], y_edges[-1])
-            if self.plot_control.scale_x == "log":
-                x0, x1 = np.log10(x0), np.log10(x1)
-            if self.plot_control.scale_y == "log":
-                y0, y1 = np.log10(y0), np.log10(y1)
-            xscale, yscale = (x1 - x0) / img.shape[0], (y1 - y0) / img.shape[1]
 
-            self.g_xyplot.removeItem(self.g_hist2d_m)
-            self.g_hist2d_m = pg.ImageItem(image=H)
-            self.g_hist2d_m.setCompositionMode(QtWidgets.QPainter.CompositionMode_Plus)
-            #self.g_hist2d_m.translate(x0, y0)
-            self.g_hist2d_m.scale(xscale, yscale)
-            self.g_xyplot.addItem(self.g_hist2d_m)
+        log_counts = self.checkBoxLogCounts.isChecked()
+        if log_counts:
+            new_data = np.log10(new_data)
+            new_data = np.nan_to_num(new_data)
+
+        # Update the data of the displayed image
+        self.cax.set_data(np.rot90(new_data, k=1))
+
+        # Autoscale the intensity (set vmin and vmax)
+        self.cax.autoscale()
+
+        # Redraw the canvas to update the display
+        self.canvas.draw_idle()
 

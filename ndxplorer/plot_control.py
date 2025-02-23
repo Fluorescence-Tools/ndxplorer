@@ -7,7 +7,6 @@ import pathlib
 from qtpy import QtGui, uic, QtCore, QtWidgets
 from pyqtgraph.widgets.SpinBox import SpinBox
 
-from . plot_main import USE_GUIQWT
 from . data_selection import RectangularDataSelection
 
 
@@ -46,7 +45,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
     @property
     def scale_z(self):
-        if bool(self.checkBoxLogZ.isChecked()):
+        if self.checkBoxLogZ.isChecked():
             return "log"
         else:
             return "lin"
@@ -368,30 +367,18 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.parent.update_plots()
 
     def onUpdate_axis_scales(self):
-        if USE_GUIQWT:
-            self.parent.g_yplot.set_axis_scale("left", self.scale_y)
-            self.parent.g_xplot.set_axis_scale("bottom", self.scale_x)
-            self.parent.g_zplot.set_axis_scale("bottom", self.scale_z)
-            self.parent.g_xyplot.set_axis_scale("bottom", self.scale_x)
-            self.parent.g_xyplot.set_axis_scale("left", self.scale_y)
-        else:
-            self.parent.g_xplot.setLogMode(self.scale_x == "log", None)
-            self.parent.g_yplot.setLogMode(None, "log" == self.scale_y)
-            # self.parent.g_zplot.setLogMode(self.scale_z == "log", None)
-            self.parent.g_xyplot.setLogMode(
-                self.scale_x == "log",
-                self.scale_y == "log"
-            )
+        self.parent.g_yplot.set_axis_scale("left", self.scale_y)
+        self.parent.g_xplot.set_axis_scale("bottom", self.scale_x)
+        self.parent.g_zplot.set_axis_scale("bottom", self.scale_z)
+        # self.parent.g_xyplot.set_axis_scale("bottom", self.scale_x)
+        # self.parent.g_xyplot.set_axis_scale("left", self.scale_y)
         self.parent.update_plots()
 
     def auto_selection_range(self):
         z = self.parent.z_values
         m = z.mean()
         sd = z.std()
-        if USE_GUIQWT:
-            self.parent.selection_z.set_range(m - 2 * sd, m + 2 * sd)
-        else:
-            self.parent.selection_z.setRegion(m - 2 * sd, m + 2 * sd)
+        self.parent.selection_z.set_range(m - 2 * sd, m + 2 * sd)
 
     def update(self):
         super(SurfacePlotWidget, self).update()
@@ -513,10 +500,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
     def onAddSelection(self):
         idx, name = self.p3
-        if USE_GUIQWT:
-            xsel = self.parent.selection_z.get_range()
-        else:
-            xsel = self.parent.selection_z.getRegion()
+        xsel = self.parent.selection_z.get_range()
         xmin = float(min(xsel))
         xmax = float(max(xsel))
         self.addSelection(idx, xmin, xmax, False, True, name)

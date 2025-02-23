@@ -11,10 +11,9 @@ else:
 
 
 def read_paris_analysis(
-        base_path="./test/mfd/burstwise_All 0.2500#30",  # type: str
-        skip_nth_row=2  # type: int
-):
-    # type: (str) -> DataSource
+        base_path: str = "./test/mfd/burstwise_All 0.2500#30",
+        skip_nth_row: int = 2
+) -> DataSource:
     base_path = pathlib.Path(base_path)
     path = base_path / "bi4_bur"
     filenames = path.glob("*.bur")
@@ -32,28 +31,25 @@ def read_paris_analysis(
             df.drop(df.columns[len(df.columns) - 1], axis=1, inplace=True)
             dfs.append(df)
         b = pd.concat(dfs, axis=1)
-        df_files.append(
-            b[b.index % skip_nth_row != 0]
-        )
+        df_files.append(b[b.index % skip_nth_row != 0])
     df = pd.concat(df_files)
     data_source = DataSource()
     data_source.data = df
     return data_source
 
 
-def read_csv_sampling(filenames):
+def read_csv_sampling(filenames, sep='\t'):
     # type: (List[str])->(DataSource)
     with open(filenames[0], "r") as fp:
         l = fp.readline()
         pn = l.split("\t")
     values = list()
     for filename in filenames:
-        values.append(
-            np.loadtxt(filename, skiprows=1)
-        )
-    values = np.vstack(values)
+        df = pd.read_csv(filename, sep=sep)
+        values.append(df)
+    data = pd.concat(values)
     return DataSource(
-        data=values,
+        data=data,
         parameter_names=pn
     )
 
