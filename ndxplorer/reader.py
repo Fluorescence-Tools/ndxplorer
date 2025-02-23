@@ -15,7 +15,7 @@ def read_paris_analysis(
         skip_nth_row: int = 2
 ) -> DataSource:
     base_path = pathlib.Path(base_path)
-    path = base_path / "bur"
+    path = base_path / "bi4_bur"
     filenames = path.glob("*.bur")
     df_files = list()
     for filename in filenames:
