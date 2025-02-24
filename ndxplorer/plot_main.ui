@@ -47,7 +47,11 @@
        </widget>
       </item>
       <item>
-       <widget class="QLineEdit" name="lineEditWorkingPath"/>
+       <widget class="QLineEdit" name="lineEditWorkingPath">
+        <property name="placeholderText">
+         <string>Drop folder here.</string>
+        </property>
+       </widget>
       </item>
       <item>
        <widget class="QToolButton" name="toolButtonChangePath">
