@@ -444,7 +444,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1017</width>
+     <width>1024</width>
      <height>21</height>
     </rect>
    </property>
@@ -693,7 +693,7 @@
   </action>
   <action name="actionOpenParisDataset">
    <property name="text">
-    <string>Paris-Folder</string>
+    <string>Burst Analysis</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+I</string>
