@@ -9,6 +9,12 @@ from pyqtgraph.widgets.SpinBox import SpinBox
 
 from . data_selection import RectangularDataSelection
 
+try:
+    from chisurf import logging
+except:
+    import logging
+    logging.basicConfig()
+
 
 class SurfacePlotWidget(QtWidgets.QWidget):
 
@@ -213,6 +219,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super(SurfacePlotWidget, self).__init__()
         self.parent = parent
+        logging.log(0, "Initializing SurfacePlotWidget")
         #########################
         # GUI
         #########################
@@ -283,20 +290,21 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
     def set_axis_settings(self, name, amin, amax, scale, bins_1d, bins_2d):
         self.axis_settings[str(name)] = {
-                "n_bins_1d": float(bins_1d),
-                "min": float(amin),
-                "max": float(amax),
-                "scale": str(scale)
-            }
+            "n_bins_1d": float(bins_1d),
+            "min": float(amin),
+            "max": float(amax),
+            "scale": str(scale)
+        }
         if bins_2d is not None:
             self.axis_settings[str(name)].update(
                 {
                     "n_bins_2d": int(bins_2d)
                 }
             )
+        logging.log(0, f"Axis settings updated for {name}: {self.axis_settings[str(name)]}")
 
     def onUpdate_x_axis_settings(self):
-        print("onUpdate_x_axis_settings")
+        logging.log(0, "onUpdate_x_axis_settings")
         self.set_axis_settings(
             self.p1[1],
             self.xmin, self.xmax,
@@ -306,7 +314,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         )
 
     def onUpdate_y_axis_settings(self):
-        print("onUpdate_y_axis_settings")
+        logging.log(0, "onUpdate_y_axis_settings")
         self.set_axis_settings(
             self.p2[1],
             self.ymin, self.ymax,
@@ -316,7 +324,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         )
 
     def onUpdate_z_axis_settings(self):
-        print("onUpdate_z_axis_settings")
+        logging.log(0, "onUpdate_z_axis_settings")
         self.set_axis_settings(
             self.p3[1],
             self.zmin, self.zmax,
@@ -334,7 +342,9 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             self.xmin = d['min']
             self.xmax = d['max']
             self.scale_x = d['scale']
+            logging.log(0, f"X axis changed to settings: {d}")
         except KeyError:
+            logging.log(0, f"X axis settings for {name} not found.")
             if self.checkBoxAutoScaleX.isChecked():
                 self.onAutoRangeX()
         self.parent.update_plots()
@@ -348,7 +358,9 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             self.ymin = d['min']
             self.ymax = d['max']
             self.scale_y = d['scale']
+            logging.log(0, f"Y axis changed to settings: {d}")
         except KeyError:
+            logging.log(0, f"Y axis settings for {name} not found.")
             if self.checkBoxAutoScaleY.isChecked():
                 self.onAutoRangeY()
         self.parent.update_plots()
@@ -361,7 +373,9 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             self.zmin = d['min']
             self.zmax = d['max']
             self.scale_z = d['scale']
+            logging.log(0, f"Z axis changed to settings: {d}")
         except KeyError:
+            logging.log(0, f"Z axis settings for {name} not found.")
             if self.checkBoxAutoScaleZ.isChecked():
                 self.onAutoRangeZ()
         self.parent.update_plots()
@@ -373,12 +387,14 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         # self.parent.g_xyplot.set_axis_scale("bottom", self.scale_x)
         # self.parent.g_xyplot.set_axis_scale("left", self.scale_y)
         self.parent.update_plots()
+        logging.log(0, "Axis scales updated")
 
     def auto_selection_range(self):
         z = self.parent.z_values
         m = z.mean()
         sd = z.std()
         self.parent.selection_z.set_range(m - 2 * sd, m + 2 * sd)
+        logging.log(0, f"Auto selection range set to: {(m - 2 * sd, m + 2 * sd)}")
 
     def update(self):
         super(SurfacePlotWidget, self).update()
@@ -394,14 +410,15 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.actionUpdatePlots.blockSignals(False)
         self.actionUpdate_axis_scales.blockSignals(False)
         self.actionUpdatePlots.trigger()
+        logging.log(0, "Updated parameter selectors and triggered plot update")
 
     def onClearSelection(self):
-        print("onClearSelection")
+        logging.log(0, "onClearSelection")
         self.tableWidget.setRowCount(0)
         self.parent.update_plots()
 
     def onSave_selection(self):
-        print("onSave_selection")
+        logging.log(0, "onSave_selection")
         l = [s.__dict__ for s in self.get_selections()]
         fn = QtWidgets.QFileDialog.getSaveFileName(
             None,
@@ -411,6 +428,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         )
         with open(fn, "w") as fp:
             json.dump(l, fp=fp, indent=4)
+        logging.log(0, f"Selection saved to file: {fn}")
 
     def onLoad_selection(self):
         fn = QtWidgets.QFileDialog.getOpenFileName(
@@ -430,9 +448,10 @@ class SurfacePlotWidget(QtWidgets.QWidget):
                     selection['enabled'],
                     selection['name']
                 )
+        logging.log(0, f"Selections loaded from file: {fn}")
 
     def onAutoRangeX(self):
-        print("onAutoRangeX")
+        logging.log(0, "onAutoRangeX")
         self.spinBoxXmin.blockSignals(True)
         self.spinBoxXmax.blockSignals(True)
         self.spinBoxXmin.setValue(self.parent.xmin)
@@ -441,7 +460,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.spinBoxXmax.blockSignals(False)
 
     def onAutoRangeY(self):
-        print("onAutoRangeY")
+        logging.log(0, "onAutoRangeY")
         self.spinBoxYmin.blockSignals(True)
         self.spinBoxYmax.blockSignals(True)
         self.spinBoxYmin.setValue(self.parent.ymin)
@@ -450,7 +469,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.spinBoxYmax.blockSignals(False)
 
     def onAutoRangeZ(self):
-        print("onAutoRangeZ")
+        logging.log(0, "onAutoRangeZ")
         self.spinBoxZmin.blockSignals(True)
         self.spinBoxZmax.blockSignals(True)
         self.spinBoxZmin.setValue(self.parent.zmin)
@@ -459,7 +478,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.spinBoxZmax.blockSignals(False)
 
     def onSelectionTableClicked(self):
-        print("onSelectionTableClicked")
+        logging.log(0, "onSelectionTableClicked")
         row = self.tableWidget.currentRow()
         self.tableWidget.removeRow(row)
         self.parent.update_plots()
@@ -497,6 +516,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         # Actions for selection checkbox
         cb_enable_x.stateChanged.connect(self.actionUpdatePlots.trigger)
         cb_invert_x.stateChanged.connect(self.actionUpdatePlots.trigger)
+        logging.log(0, f"Added selection for parameter index {idx} with range ({xmin}, {xmax}), invert={invert}, enabled={enabled}")
 
     def onAddSelection(self):
         idx, name = self.p3
@@ -504,6 +524,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         xmin = float(min(xsel))
         xmax = float(max(xsel))
         self.addSelection(idx, xmin, xmax, False, True, name)
+        logging.log(0, f"onAddSelection: Added selection for {name} with range ({xmin}, {xmax})")
 
     def get_selections(self):
         selections = list()
@@ -526,4 +547,5 @@ class SurfacePlotWidget(QtWidgets.QWidget):
                     name=name
                 )
             )
+        logging.log(0, f"get_selections: Retrieved {len(selections)} selections")
         return selections
