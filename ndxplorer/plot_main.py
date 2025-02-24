@@ -1,4 +1,3 @@
-from __future__ import print_function
 from typing import Dict, List
 
 import sys
@@ -21,10 +20,7 @@ except:
 
 from . data_source import DataSource
 
-if sys.version_info.major > 2:
-    import pathlib
-else:
-    import pathlib2 as pathlib
+import pathlib
 
 try:
     from chisurf.gui import QtGui, QtCore, uic, QtWidgets
@@ -39,7 +35,7 @@ import guiqwt.plot
 import guiqwt.image
 import guiqwt.curve
 import guiqwt.styles
-from guiqwt.plot import CurveDialog, ImageDialog
+from guiqwt.plot import CurveDialog
 from guiqwt.builder import make
 
 import numpy as np
@@ -79,8 +75,19 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
     )
 
+    def invalidate_values_cache(self) -> None:
+        """
+        Manually clear the cached 'values'. Call this whenever something
+        changes that would invalidate the mask or the data.
+        """
+        self._cached_values = None
+        self._cached_values_selections = None
+        self._cached_values_p13 = None
+        self._cached_values_mask_inf = None
+        self._cached_values_mask_nan = None
+
     @property
-    def data_source(self) ->DataSource:
+    def data_source(self) -> DataSource:
         if self._data_source.empty:
             values = self._default_data_source
         else:
@@ -88,13 +95,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         return values
 
     @data_source.setter
-    def data_source(self, v):
-        #  type: (DataSource)->()
+    def data_source(self, v: DataSource) -> None:
         self._data_source = v
+        # Whenever the underlying DataSource changes, invalidate the cached 'values'
+        self.invalidate_values_cache()
         self._data_source.compute_columns(
             constants=self.constants,
             equations=self.equations
         )
+
 
     @property
     def x_values(self) -> np.ndarray:
@@ -110,23 +119,50 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def values(self) -> np.ndarray:
-        values = self.data_source.values
+        """
+        Return a 2D array of data (selected columns only), applying the
+        user-defined mask for Inf/NaN. The result is cached to avoid repeated
+        computation when .values is accessed multiple times.
+        """
+        # Step 1: Gather current parameters relevant to our cache
         selections = self.plot_control.get_selections()
+        p13 = (self.plot_control.p1[0], self.plot_control.p2[0], self.plot_control.p3[0])
+        mask_inf = self._mask_inf
+        mask_nan = self._mask_nan
+
+        # Step 2: Check if our existing cache is still valid
+        cache_is_valid = (
+            self._cached_values is not None
+            and self._cached_values_selections == selections
+            and self._cached_values_p13 == p13
+            and self._cached_values_mask_inf == mask_inf
+            and self._cached_values_mask_nan == mask_nan
+        )
+        if cache_is_valid:
+            return self._cached_values
+
+        # Step 3: If cache is invalid or empty, compute fresh data
+        all_values = self.data_source.values
         mask = self.data_source.get_mask(
             selections=selections,
-            idxs=[
-                self.plot_control.p1[0],
-                self.plot_control.p2[0],
-                self.plot_control.p3[0]
-            ],
-            mask_inf=self._mask_inf,
-            mask_nan=self._mask_nan
+            idxs=[p13[0], p13[1], p13[2]],
+            mask_inf=mask_inf,
+            mask_nan=mask_nan
         )
-        x = np.ma.array(values, mask=mask)
+
+        x = np.ma.array(all_values, mask=mask)
         oCol, oRow = x.shape
         re = np.ma.compressed(x)
         nD = re.shape[0]
-        re = re.reshape((oCol, int(nD /oCol)))
+        re = re.reshape((oCol, int(nD / oCol)))
+
+        # Step 4: Store in the cache for next time
+        self._cached_values = re
+        self._cached_values_selections = selections
+        self._cached_values_p13 = p13
+        self._cached_values_mask_inf = mask_inf
+        self._cached_values_mask_nan = mask_nan
+
         return re
 
     @property
@@ -212,6 +248,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         if isinstance(data_source, DataSource):
             self._data_source = data_source
         super(NDXplorer, self).__init__(parent=parent)
+
+        # Initialize the cache variables to None
+        self._cached_values = None
+        self._cached_values_selections = None
+        self._cached_values_p13 = None
+        self._cached_values_mask_inf = None
+        self._cached_values_mask_nan = None
+
         self.plot_control = SurfacePlotWidget(self)
         self.equation_editor = CodeEditor(parent=self)
         uic.loadUi(os.path.dirname(__file__) + '/plot_main.ui', self)
@@ -387,12 +431,39 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def clear_plots(self):
         logging.log(0, "clearing plots")
+        # 1. Clear the user data => empty => fallback to _default_data_source
         self._data_source.clear()
+
+        # 2. Clear the selection table so no old mask references remain
+        #    (But remember, this does NOT fix comboBoxSelX/Y/Z)
+        self.plot_control.onClearSelection()
+
+        # 3. Update once so 'plot_control.update()' sees empty _data_source =>
+        #    repopulates combo boxes with the default dataset columns
         self.update()
 
-    def onMaskChanged(self):
+        # 4. Force combo box indices to match the default columns.
+        #    Example: we want [ "Tau (green)", "Proximity ratio", "r Experimental (green)" ]
+        default_names = self._default_data_source.parameter_names
+        ix_tau = default_names.index("Tau (green)")
+        ix_prox = default_names.index("Proximity ratio")
+        ix_r = default_names.index("r Experimental (green)")
+
+        self.plot_control.comboBoxSelX.setCurrentIndex(ix_tau)
+        self.plot_control.comboBoxSelY.setCurrentIndex(ix_prox)
+        self.plot_control.comboBoxSelZ.setCurrentIndex(ix_r)
+
+        # 5. Trigger a final update for correct plots
+        self.update()
+
+    def onMaskChanged(self) -> None:
+        """
+        Whenever the user toggles the Inf/NaN masks,
+        invalidate the cache and re-plot.
+        """
         self._mask_inf = self.checkBoxMaskInf.isChecked()
         self._mask_nan = self.checkBoxMaskNaN.isChecked()
+        self.invalidate_values_cache()
         self.update_plots()
 
     def onSelectWorkingPath(self):
@@ -467,9 +538,9 @@ class NDXplorer(QtWidgets.QMainWindow):
                 file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(self, 'ChiSurf sampling files', wp, 'Sampling files (*.*)')
             logging.log(0, "Opening files: {}".format(file_handles))
             data_reader = reader.read_csv_sampling
-        elif file_type in ["paris_dir"]:
-            file_handles = QtWidgets.QFileDialog.getExistingDirectory(None, 'Open MFD analysis folder', self.working_path)
-            data_reader = reader.read_paris_analysis
+        elif file_type in ["burst_dir"]:
+            file_handles = QtWidgets.QFileDialog.getExistingDirectory(None, 'Open burst analysis folder', self.working_path)
+            data_reader = reader.read_burst_analysis
         else: #if file_type in [None, "csv"]:
             if file_handles is None:
                 file_handles = QtWidgets.QFileDialog.getOpenFileNames(None, 'Comma separated value files', self.working_path, 'Text files (*.*)')
@@ -492,7 +563,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.open_files(file_type="cs_sampling", file_handles=filenames)
 
     def onOpenSmFRET(self):
-        self.open_files(file_type="paris_dir")
+        self.open_files(file_type="burst_dir")
 
     def update(self, *args, **kwargs):
         super(NDXplorer, self).update()
@@ -579,6 +650,17 @@ class NDXplorer(QtWidgets.QMainWindow):
             logging.log(1, "Did not compute 2D histogram")
 
     def update_plots(self):
+        # If there's no data (or fewer than 3 columns), do nothing
+        if self._data_source.empty or self._data_source.values.shape[0] == 0:
+            # Optionally also clear any old histogram displays
+            self.g_xhist_m.set_data([], [])
+            self.g_yhist_m.set_data([], [])
+            self.g_zhist_m.set_data([], [])
+            # Clear the 2D histogram (use a tiny array or similar)
+            self.cax.set_data(np.zeros((1, 1)))
+            self.canvas.draw_idle()
+            return
+
         # Update parameter names, colormap, and recalc histograms
         self.update_parameter_names()
         self.update_cmap()
