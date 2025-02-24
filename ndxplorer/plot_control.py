@@ -7,7 +7,7 @@ import pathlib
 from qtpy import QtGui, uic, QtCore, QtWidgets
 from pyqtgraph.widgets.SpinBox import SpinBox
 
-from . data_selection import RectangularDataSelection
+from . data_source import RectangularDataSelection
 
 try:
     from chisurf import logging
@@ -335,49 +335,49 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
     def onX_axis_changed(self):
         _, name = self.p1
-        try:
+        if name in self.axis_settings:
             d = self.axis_settings[name]
-            self.n_xhist_1d = d['n_bins_1d']
-            self.n_xhist_2d = d['n_bins_2d']
-            self.xmin = d['min']
-            self.xmax = d['max']
-            self.scale_x = d['scale']
+            self.n_xhist_1d = d.get('n_bins_1d', 50)
+            self.n_xhist_2d = d.get('n_bins_2d', 50)
+            self.xmin = d.get('min', self.parent.xmin)
+            self.xmax = d.get('max', self.parent.xmax)
+            self.scale_x = d.get('scale', "lin")
             logging.log(0, f"X axis changed to settings: {d}")
-        except KeyError:
-            logging.log(0, f"X axis settings for {name} not found.")
-            if self.checkBoxAutoScaleX.isChecked():
-                self.onAutoRangeX()
+        else:
+            logging.log(0, f"X axis settings for {name} not found. Using auto range.")
+            self.onAutoRangeX()
+
         self.parent.update_plots()
 
     def onY_axis_changed(self):
         _, name = self.p2
-        try:
+        if name in self.axis_settings:
             d = self.axis_settings[name]
-            self.n_yhist_1d = d['n_bins_1d']
-            self.n_yhist_2d = d['n_bins_2d']
-            self.ymin = d['min']
-            self.ymax = d['max']
-            self.scale_y = d['scale']
+            self.n_yhist_1d = d.get('n_bins_1d', 50)
+            self.n_yhist_2d = d.get('n_bins_2d', 50)
+            self.ymin = d.get('min', self.parent.ymin)
+            self.ymax = d.get('max', self.parent.ymax)
+            self.scale_y = d.get('scale', "lin")
             logging.log(0, f"Y axis changed to settings: {d}")
-        except KeyError:
-            logging.log(0, f"Y axis settings for {name} not found.")
-            if self.checkBoxAutoScaleY.isChecked():
-                self.onAutoRangeY()
+        else:
+            logging.log(0, f"Y axis settings for {name} not found. Using auto range.")
+            self.onAutoRangeY()
+
         self.parent.update_plots()
 
     def onZ_axis_changed(self):
         _, name = self.p3
-        try:
+        if name in self.axis_settings:
             d = self.axis_settings[name]
-            self.n_zhist_1d = int(d['n_bins_1d'])
-            self.zmin = d['min']
-            self.zmax = d['max']
-            self.scale_z = d['scale']
+            self.n_zhist_1d = d.get('n_bins_1d', 50)
+            self.zmin = d.get('min', self.parent.zmin)
+            self.zmax = d.get('max', self.parent.zmax)
+            self.scale_z = d.get('scale', "lin")
             logging.log(0, f"Z axis changed to settings: {d}")
-        except KeyError:
-            logging.log(0, f"Z axis settings for {name} not found.")
-            if self.checkBoxAutoScaleZ.isChecked():
-                self.onAutoRangeZ()
+        else:
+            logging.log(0, f"Z axis settings for {name} not found. Using auto range.")
+            self.onAutoRangeZ()
+
         self.parent.update_plots()
 
     def onUpdate_axis_scales(self):
