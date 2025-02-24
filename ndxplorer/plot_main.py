@@ -418,6 +418,9 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.actionMask_toggle_changed.triggered.connect(self.onMaskChanged)
         # Axis range
 
+        self.canvas.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.canvas.customContextMenuRequested.connect(self.on_canvas_context_menu)
+
         ##########################################################
         #      Arrange Docks and window positions                #
         #      Window-controls tile, stack etc.                  #
@@ -455,6 +458,85 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # 5. Trigger a final update for correct plots
         self.update()
+
+    def copy_1d_hists_to_clipboard_csv(self):
+        try:
+            x_hist = self._histogram["x"]  # tuple: (bin_edges, counts)
+            y_hist = self._histogram["y"]
+            z_hist = self._histogram["z"]
+        except Exception as e:
+            logging.error("1D histogram data not available: {}".format(e))
+            return
+
+        import io
+        output = io.StringIO()
+
+        # Extract histogram components for X, Y, and Z
+        x_edges, x_counts = x_hist
+        y_edges, y_counts = y_hist
+        z_edges, z_counts = z_hist
+
+        n_x = len(x_counts)
+        n_y = len(y_counts)
+        n_z = len(z_counts)
+        n_rows = max(n_x, n_y, n_z)
+
+        # Write header with columns for each histogram
+        header = "\t".join([
+            "X Bin Start", "X Bin End", "X Count",
+            "Y Bin Start", "Y Bin End", "Y Count",
+            "Z Bin Start", "Z Bin End", "Z Count"
+        ])
+        output.write(header + "\n")
+
+        # Write each row
+        for i in range(n_rows):
+            if i < n_x:
+                x_bin_start = f"{x_edges[i]:12.4e}"
+                x_bin_end = f"{x_edges[i + 1]:12.4e}"
+                x_count = f"{x_counts[i]:12.4e}"
+            else:
+                x_bin_start = x_bin_end = x_count = ""
+            if i < n_y:
+                y_bin_start = f"{y_edges[i]:12.4e}"
+                y_bin_end = f"{y_edges[i + 1]:12.4e}"
+                y_count = f"{y_counts[i]:12.4e}"
+            else:
+                y_bin_start = y_bin_end = y_count = ""
+            if i < n_z:
+                z_bin_start = f"{z_edges[i]:12.4e}"
+                z_bin_end = f"{z_edges[i + 1]:12.4e}"
+                z_count = f"{z_counts[i]:12.4e}"
+            else:
+                z_bin_start = z_bin_end = z_count = ""
+
+            row = "\t".join([
+                x_bin_start, x_bin_end, x_count,
+                y_bin_start, y_bin_end, y_count,
+                z_bin_start, z_bin_end, z_count
+            ])
+            output.write(row + "\n")
+
+        csv_text = output.getvalue()
+        output.close()
+
+        # Copy the resulting CSV text to the clipboard
+        clipboard = QtWidgets.QApplication.clipboard()
+        clipboard.setText(csv_text)
+        logging.log(0, "1D histograms data copied to clipboard as CSV with side-by-side columns.")
+
+    def on_canvas_context_menu(self, pos):
+        menu = QtWidgets.QMenu(self.canvas)
+        action_csv = menu.addAction("Copy 2D Histogram (CSV)")
+        #action_json = menu.addAction("Copy 2D Histogram (JSON)")
+        action_csv1d = menu.addAction("Copy 1D Histograms (CSV)")
+        action = menu.exec_(self.canvas.mapToGlobal(pos))
+        if action == action_csv:
+            self.copy_2d_hist_to_clipboard_csv()
+        #elif action == action_json:
+        #    self.copy_2d_hist_to_clipboard_json()
+        elif action == action_csv1d:
+            self.copy_1d_hists_to_clipboard_csv()
 
     def onMaskChanged(self) -> None:
         """
@@ -649,15 +731,81 @@ class NDXplorer(QtWidgets.QMainWindow):
         except ValueError:
             logging.log(1, "Did not compute 2D histogram")
 
+    def copy_2d_hist_to_clipboard_json(self):
+        try:
+            H, x_edges, y_edges = self._histogram["2d"]
+        except Exception as e:
+            logging.error("No 2D histogram data available: {}".format(e))
+            return
+
+        # Convert NumPy arrays to lists for serialization
+        data_dict = {
+            "H": H.tolist(),
+            "x_edges": x_edges.tolist(),
+            "y_edges": y_edges.tolist()
+        }
+        # Serialize the data as a nicely formatted JSON string
+        text_data = json.dumps(data_dict, indent=2)
+
+        # Use Qt's clipboard to store the data
+        clipboard = QtWidgets.QApplication.clipboard()
+        clipboard.setText(text_data)
+        logging.log(0, "2D histogram data copied to clipboard.")
+
+    def copy_2d_hist_to_clipboard_csv(self):
+        try:
+            H, x_edges, y_edges = self._histogram["2d"]
+        except Exception as e:
+            logging.error("No 2D histogram data available: {}".format(e))
+            return
+
+        # Compute bin centers from bin edges
+        x_centers = (x_edges[:-1] + x_edges[1:]) / 2
+        y_centers = (y_edges[:-1] + y_edges[1:]) / 2
+
+        import io
+        output = io.StringIO()
+
+        # Build header row with tabs and uniform formatting
+        header_cells = ["y/x"] + [f"{x:10.4f}" for x in x_centers]
+        output.write("\t".join(header_cells) + "\n")
+
+        # Build rows: each row starts with the y center, then the corresponding histogram counts.
+        # Note: H is assumed to be shaped (len(x_centers), len(y_centers)).
+        for j, y in enumerate(y_centers):
+            row_cells = [f"{y:10.4e}"]  # y center formatted uniformly
+            for i in range(len(x_centers)):
+                row_cells.append(f"{H[i, j]:10.4e}")
+            output.write("\t".join(row_cells) + "\n")
+
+        csv_text = output.getvalue()
+        output.close()
+
+        # Copy the nicely formatted CSV text to the clipboard
+        clipboard = QtWidgets.QApplication.clipboard()
+        clipboard.setText(csv_text)
+        logging.log(0, "2D histogram data copied to clipboard as CSV (formatted with tabs).")
+
     def update_plots(self):
-        # If there's no data (or fewer than 3 columns), do nothing
+        # If there's no data (or fewer than 3 columns), display the background image
         if self._data_source.empty or self._data_source.values.shape[0] == 0:
-            # Optionally also clear any old histogram displays
+            # Clear any old histogram displays
             self.g_xhist_m.set_data([], [])
             self.g_yhist_m.set_data([], [])
             self.g_zhist_m.set_data([], [])
-            # Clear the 2D histogram (use a tiny array or similar)
-            self.cax.set_data(np.zeros((1, 1)))
+
+            # Construct the path to the background image
+            bg_path = os.path.join(os.path.dirname(__file__), 'ui', 'background.png')
+            try:
+                # Load the background image using matplotlib's imread
+                bg_img = plt.imread(bg_path)
+            except Exception as e:
+                logging.error("Could not load background image: %s", e)
+                bg_img = np.zeros((1, 1))  # fallback to an empty array if needed
+
+            # Set the background image in the 2D histogram axis
+            self.cax.set_data(bg_img)
+            self.cax.autoscale()
             self.canvas.draw_idle()
             return
 
