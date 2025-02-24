@@ -206,18 +206,30 @@ class NDXplorer(QtWidgets.QMainWindow):
             data_source=None,  # type: DataSource
             settings_json_fn=None,  # type: str
             parent=None,
-            cmap: str = 'jet'
-    ):
-        # type: (DataSource, QtWidgets.QWidget) -> ()
+            cmap: str = 'turbo',
+            theme_file = "theme.qss"
+    ) -> None:
         if isinstance(data_source, DataSource):
             self._data_source = data_source
-
         super(NDXplorer, self).__init__(parent=parent)
         self.plot_control = SurfacePlotWidget(self)
         self.equation_editor = CodeEditor(parent=self)
         uic.loadUi(os.path.dirname(__file__) + '/plot_main.ui', self)
         self.verticalLayout_3.addWidget(self.plot_control)
         self.verticalLayout_15.addWidget(self.equation_editor)
+
+        # -------------------------------------------------------------
+        # Load a stylesheet from an external file and apply it here
+        # -------------------------------------------------------------
+        theme_file = os.path.join(os.path.dirname(__file__), theme_file)
+        # or prompt the user to pick a file with QFileDialog
+        # theme_file, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open Theme", "", "Style Sheets (*.qss)")
+        if os.path.exists(theme_file):
+            with open(theme_file, "r") as f:
+                style_sheet = f.read()
+            self.setStyleSheet(style_sheet)
+        else:
+            logging.warning(f"Theme file not found: {theme_file}")
 
         def save_cb():
             logging.log(0, "Save CB")
@@ -277,6 +289,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.g_yhist_m = guiqwt.curve.CurveItem(curveparam=curveparam)
         self.g_yplot.add_item(self.g_yhist_m)
         self.verticalLayout_7.addWidget(self.g_yplot)
+
+        # -------------------------------------------------------------
+        # Force background colors to white
+        # -------------------------------------------------------------
+        # For guiqwt / QwtPlot-based plots:
+        self.g_xplot.canvas().setStyleSheet("background-color: white;")
+        self.g_yplot.canvas().setStyleSheet("background-color: white;")
+        self.g_zplot.canvas().setStyleSheet("background-color: white;")
 
         # 2D-Histogram
         # Create a matplotlib figure and axis
