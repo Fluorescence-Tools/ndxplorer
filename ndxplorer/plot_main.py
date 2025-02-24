@@ -579,17 +579,61 @@ class NDXplorer(QtWidgets.QMainWindow):
             logging.log(1, "Did not compute 2D histogram")
 
     def update_plots(self):
+        # Update parameter names, colormap, and recalc histograms
         self.update_parameter_names()
         self.update_cmap()
         self.update_histograms()
-        self.g_xhist_m.set_data(self._histogram["x"][0][1:], self._histogram["x"][1])
-        self.g_yhist_m.set_data(self._histogram["y"][1], self._histogram["y"][0][1:])
-        self.g_zhist_m.set_data(self._histogram["z"][0][1:], self._histogram["z"][1])
 
-        self.g_xplot.do_autoscale()
-        self.g_yplot.do_autoscale()
-        self.g_zplot.do_autoscale()
+        # ----------------------------------------------------
+        # 1. X histogram
+        # _histogram["x"] = (bin_edges, counts), reversed via [::-1] in your code
+        x_bin_edges = self._histogram["x"][0]
+        x_counts = self._histogram["x"][1]
+        # Plot with X=bin_edges[1:], Y=counts
+        self.g_xhist_m.set_data(x_bin_edges[1:], x_counts)
+
+        # 2. Y histogram (rotated)
+        # _histogram["y"] = (bin_edges, counts)
+        y_bin_edges = self._histogram["y"][0]
+        y_counts = self._histogram["y"][1]
+        # Plot with X=counts, Y=bin_edges[1:]
+        self.g_yhist_m.set_data(y_counts, y_bin_edges[1:])
+
+        # 3. Z histogram
+        # _histogram["z"] = (bin_edges, counts)
+        z_bin_edges = self._histogram["z"][0]
+        z_counts = self._histogram["z"][1]
+        # Plot with X=bin_edges[1:], Y=counts
+        self.g_zhist_m.set_data(z_bin_edges[1:], z_counts)
+
+        # ----------------------------------------------------
+        # Manually set axis scales to start at 0 for the count axis
+
+        # X histogram => x-axis: bin edges, y-axis: counts
+        y_max_x = np.max(x_counts) if len(x_counts) else 1
+        self.g_xplot.setAxisScale(QwtPlot.yLeft, 0, y_max_x * 1.05)
+        self.g_xplot.setAxisScale(QwtPlot.xBottom, x_bin_edges[0], x_bin_edges[-1])
+
+        # Y histogram => x-axis: counts, y-axis: bin edges
+        x_max_y = np.max(y_counts) if len(y_counts) else 1
+        self.g_yplot.setAxisScale(QwtPlot.xBottom, 0, x_max_y * 1.05)
+        self.g_yplot.setAxisScale(QwtPlot.yLeft, y_bin_edges[0], y_bin_edges[-1])
+
+        # Z histogram => x-axis: bin edges, y-axis: counts
+        y_max_z = np.max(z_counts) if len(z_counts) else 1
+        self.g_zplot.setAxisScale(QwtPlot.yLeft, 0, y_max_z * 1.05)
+        self.g_zplot.setAxisScale(QwtPlot.xBottom, z_bin_edges[0], z_bin_edges[-1])
+
+        # ----------------------------------------------------
+        # 2D histogram updates as before
         self.update_2d_plot()
+
+        # ----------------------------------------------------
+        # Finally replot everything
+        self.g_xplot.replot()
+        self.g_yplot.replot()
+        self.g_zplot.replot()
+        self.canvas.draw_idle()
 
     def update_2d_plot(self):
         try:
