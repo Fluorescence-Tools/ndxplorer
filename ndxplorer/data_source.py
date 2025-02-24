@@ -3,11 +3,11 @@ from typing import List, Dict
 
 import sys
 import yaml
+import abc
 import numpy as np
 import pandas as pd
 
 from collections import OrderedDict
-from . data_selection import DataSelection
 
 
 def compute_values(
@@ -30,6 +30,61 @@ def compute_values(
             except:
                 pass
                 # print("Could not compute: %s" % key, file=sys.stderr)
+
+
+class DataSelection(object):
+
+    @abc.abstractmethod
+    def get_mask(
+            self,
+            data  # type: np.ndarray
+    ):
+        # type: (np.ndarray) -> np.ndarray
+        pass
+
+
+class RectangularDataSelection(DataSelection):
+
+    def __init__(
+            self,
+            parameter_idx,   # type: int
+            lower,  # type: float
+            upper,   # type: float
+            invert=False,   # type: bool
+            enabled=True,   # type: bool
+            name=None  # type: str
+    ):
+        self.parameter_idx = parameter_idx
+        self.lower = lower
+        self.upper = upper
+        self.invert = invert
+        self.enabled = enabled
+        self.name = name
+
+    def __str__(self):
+        s = "RectangularDataSelection:\n"
+        s += "Bounds: %s, %s\n" % (self.lower, self.upper)
+        s += "Invert: %s\n" % self.invert
+        s += "Enabled: %s\n" % self.enabled
+        return s
+
+    def get_mask(
+            self,
+            data  # type: np.ndarray
+    ):
+        # type: (np.ndarray) -> np.ndarray
+        n_parameter, n_data_points = data.shape
+        mask = np.ma.make_mask_none((n_parameter, n_data_points))
+        s = self
+        if s.parameter_idx < n_parameter:
+            if s.enabled:
+                if s.invert:
+                    mask[:, :] |= np.logical_and(data[s.parameter_idx, :] > s.lower, data[s.parameter_idx, :] < s.upper)
+                else:
+                    mask[:, :] |= np.logical_or(data[s.parameter_idx, :] < s.lower, data[s.parameter_idx, :] > s.upper)
+        else:
+            print("Parameter with idx %s exceeds dimension of dataset." % s.parameter_idx, file=sys.stderr)
+        return mask
 
 
 class DataSource(object):
@@ -100,25 +155,62 @@ class DataSource(object):
             mask_nan=True,  # type: bool
             mask_inf=True  # type: bool
     ):
-        # type: (List[DataSelection]) -> np.ndarray
         """
-
         :param selections: A list of selections
-        :return: mask - masked values are True
+        :param idxs: Which parameter indices to check for NaN/Inf
+        :param mask_nan: If True, NaN values are masked
+        :param mask_inf: If True, Inf values are masked
+        :return: A boolean array 'mask' of shape (n_parameter, n_data_points),
+                 where True indicates the value is masked.
         """
         if idxs is None:
-            idxs = list()
-        d = self.values
-        mask = np.ma.make_mask_none(d.shape)
-        for s in selections:
-            mask |= s.get_mask(d)
-        for idx in idxs:
-            if idx < 0:
+            idxs = []
+
+        d = self.values  # shape: (n_parameter, n_data_points)
+        n_parameter, n_data_points = d.shape
+
+        # Pre-allocate a boolean mask, all set to False initially
+        mask = np.zeros((n_parameter, n_data_points), dtype=bool)
+
+        # 1) Apply each DataSelection
+        for sel in selections:
+            if not sel.enabled:
                 continue
+            if sel.parameter_idx >= n_parameter:
+                # skip invalid indices
+                continue
+
+            param_data = d[sel.parameter_idx, :]  # shape: (n_data_points,)
+
+            if sel.invert:
+                # Mask where data is within (lower, upper)
+                out_of_bounds = (param_data > sel.lower) & (param_data < sel.upper)
+            else:
+                # Mask where data is outside [lower, upper]
+                out_of_bounds = (param_data < sel.lower) | (param_data > sel.upper)
+
+            # For all data points that are out_of_bounds, mask across *all parameters*
+            # (i.e., set True in the entire row for those columns).
+            mask[:, out_of_bounds] = True
+
+        # 2) Mask NaN/Inf in specified idxs
+        for idx in idxs:
+            if idx < 0 or idx >= n_parameter:
+                continue
+
+            col_data = d[idx, :]  # shape: (n_data_points,)
+
+            # Combine NaN and Inf checks if both are needed
+            bad_vals = np.zeros(n_data_points, dtype=bool)
+
             if mask_nan:
-                mask[:, :] |= np.isnan(d[idx, :])
+                bad_vals |= np.isnan(col_data)
             if mask_inf:
-                mask[:, :] |= np.isinf(d[idx, :])
+                bad_vals |= np.isinf(col_data)
+
+            # Mask entire row for those columns
+            mask[:, bad_vals] = True
+
         return mask
 
     @property
