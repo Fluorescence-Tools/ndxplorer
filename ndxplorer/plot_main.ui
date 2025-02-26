@@ -1047,7 +1047,7 @@
   </connection>
   <connection>
    <sender>comboBoxCmap</sender>
-   <signal>currentTextChanged(QString)</signal>
+   <signal>currentIndexChanged(int)</signal>
    <receiver>actionUpdate_plot</receiver>
    <slot>trigger()</slot>
    <hints>
