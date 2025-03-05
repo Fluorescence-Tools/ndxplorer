@@ -56,9 +56,9 @@ def save_burst_ids(
     progress_window.show()
 
     for i, (filename, g) in enumerate(grouped, start=1):
-        fn = Path(filename).stem
+        fn = Path(filename).name
         ext = Path(filename).suffix
-        bst_file = folder_path / f"{fn}_0{ext}.bst"
+        bst_file = folder_path / f"{fn}.bst"
 
         a = np.vstack([g["First Photon"], g["Last Photon"]]).astype(int)
         np.savetxt(bst_file, a.T, fmt='%i', delimiter='\t')
