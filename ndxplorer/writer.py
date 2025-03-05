@@ -1,7 +1,10 @@
 from __future__ import print_function
 from typing import List
 from pathlib import Path
-from chisurf import logging
+try:
+    from chisurf import logging
+except ImportError:
+    import logging
 import numpy as np
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel, QApplication
 from PyQt5.QtCore import Qt, QCoreApplication
