@@ -269,6 +269,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.actionLoad_selection.triggered.connect(self.onLoad_selection)
         self.actionClear_Selection.triggered.connect(self.onClearSelection)
         self.actionAdd_Selection.triggered.connect(self.onAddSelection)
+        self.actionSave_Burst_IDs.triggered.connect(self.parent.onSaveBurstIDs)
 
         # Change axis range
         self.spinBoxXmin.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
@@ -423,9 +424,9 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         fn = QtWidgets.QFileDialog.getSaveFileName(
             None,
             "Selection JSON",
-            os.path.dirname(__file__),
+            self.parent.working_path,
             'All files (*.selection.json)'
-        )
+        )[0]
         with open(fn, "w") as fp:
             json.dump(l, fp=fp, indent=4)
         logging.log(0, f"Selection saved to file: {fn}")
@@ -434,9 +435,9 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         fn = QtWidgets.QFileDialog.getOpenFileName(
             None,
             "Selection JSON",
-            os.path.dirname(__file__),
+            self.parent.working_path,
             'All files (*.selection.json)'
-        )
+        )[0]
         with open(fn, "r") as fp:
             d = json.load(fp)
             for selection in d:

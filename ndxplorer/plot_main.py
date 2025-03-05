@@ -554,12 +554,12 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.lineEditWorkingPath.setText(working_path)
         self.lineEditWorkingPath.blockSignals(False)
 
-    def onSaveBurstIDs(self, folder=None):
-        logging.log(0, "saving burst")
+    def onSaveBurstIDs(self, evt=None, folder=None):
         if folder is None:
             folder = QtWidgets.QFileDialog.getExistingDirectory(
                 None, 'Folder for Burst IDs', self.working_path
             )
+        logging.info(f"Saving burst IDs to {folder}...")
         writer.save_burst_ids(
             folder_name=folder,
             selections=self.plot_control.get_selections(),
@@ -628,7 +628,7 @@ class NDXplorer(QtWidgets.QMainWindow):
                 file_handles = QtWidgets.QFileDialog.getOpenFileNames(None, 'Comma separated value files', self.working_path, 'Text files (*.*)')
             data_reader = reader.read_csv
         if file_handles:
-            self.working_path = str(pathlib.Path(file_handles[0]).parent)
+            # self.working_path = str(pathlib.Path(file_handles[0]).parent)
             self._data_source = data_reader(file_handles)
             self.update()
 
