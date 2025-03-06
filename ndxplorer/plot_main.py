@@ -104,7 +104,6 @@ class NDXplorer(QtWidgets.QMainWindow):
             equations=self.equations
         )
 
-
     @property
     def x_values(self) -> np.ndarray:
         return self.values[self.plot_control.p1[0]].astype('float64')
@@ -208,6 +207,22 @@ class NDXplorer(QtWidgets.QMainWindow):
         return min(v)
 
     @property
+    def vmin(self):
+        return self.doubleSpinBox_vmin.value() / 10.0
+
+    @vmin.setter
+    def vmin(self, v):
+        return self.doubleSpinBox_vmin.setValue(v)
+
+    @property
+    def vmax(self):
+        return self.doubleSpinBox_vmax.value() / 10.0
+
+    @vmax.setter
+    def vmax(self, v):
+        return self.doubleSpinBox_vmax.setValue(v)
+
+    @property
     def current_cmap(self) -> str:
         return self.comboBoxCmap.currentText()
 
@@ -229,6 +244,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         if self.current_cmap in colormap_names:
             default_index = colormap_names.index(self.current_cmap)
             self.comboBoxCmap.setCurrentIndex(default_index)
+
+    def on_vmin_vmax_changed(self):
+        # Get current values from the spin boxes using the properties
+        current_vmin = self.vmin  # this should read from doubleSpinBox_vmin.value()
+        current_vmax = self.vmax  # similarly for doubleSpinBox_vmax.value()
+
+        # Update the colormap limits for the 2D histogram image
+        self.cax.set_clim(current_vmin, current_vmax)
+        self.canvas.draw_idle()  # Redraw the canvas to reflect the change
 
     def set_default_colormap(self, default_cmap):
         """Set the default colormap in the QComboBox."""
@@ -420,6 +444,14 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         self.canvas.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.canvas.customContextMenuRequested.connect(self.on_canvas_context_menu)
+
+        # Assuming these combo boxes control the parameter selections for the 2D plot:
+        self.plot_control.comboBoxSelX.currentIndexChanged.connect(self.update_spinbox_limits)
+        self.plot_control.comboBoxSelY.currentIndexChanged.connect(self.update_spinbox_limits)
+
+        # In your __init__ or setup method, after creating the spin boxes:
+        self.doubleSpinBox_vmin.valueChanged.connect(self.on_vmin_vmax_changed)
+        self.doubleSpinBox_vmax.valueChanged.connect(self.on_vmin_vmax_changed)
 
         ##########################################################
         #      Arrange Docks and window positions                #
@@ -865,6 +897,40 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.g_zplot.replot()
         self.canvas.draw_idle()
 
+    def update_spinbox_limits(self):
+        """
+        Recompute the 2D histogram limits based on the newly selected parameters
+        and update the vmin/vmax spin boxes.
+        """
+        # First, recalc the histogram data for the new parameter selection.
+        self.update_histograms()  # Make sure the histogram data (_histogram["2d"]) is updated
+
+        try:
+            new_data, x_edges, y_edges = self._histogram["2d"]
+        except ValueError:
+            return
+
+        # Optionally apply logarithmic transformation if needed.
+        if self.checkBoxLogCounts.isChecked():
+            new_data = np.log10(new_data)
+            new_data = np.nan_to_num(new_data)
+
+        # If you’re displaying a rotated image (as in your update_2d_plot),
+        # rotate the data accordingly.
+        image_data = np.rot90(new_data, k=1)
+
+        # Compute new limits from the histogram data.
+        new_vmin = np.min(image_data)
+        new_vmax = np.max(image_data)
+
+        # Update the spin boxes using their setter properties.
+        self.vmin = new_vmin
+        self.vmax = new_vmax
+
+        # Also update the colormap limits of the displayed image.
+        self.cax.set_clim(new_vmin, new_vmax)
+        self.canvas.draw_idle()
+
     def update_2d_plot(self):
         try:
             new_data, x_edges, y_edges = self._histogram["2d"]
@@ -879,8 +945,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Update the data of the displayed image
         self.cax.set_data(np.rot90(new_data, k=1))
 
-        # Autoscale the intensity (set vmin and vmax)
-        self.cax.autoscale()
+        # Set the intensity range using the vmin and vmax properties from the UI
+        self.cax.set_clim(self.vmin, self.vmax)
 
         # Redraw the canvas to update the display
         self.canvas.draw_idle()
