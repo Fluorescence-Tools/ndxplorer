@@ -54,7 +54,7 @@ def read_burst_analysis(
     base_path = pathlib.Path(base_path)
 
     if additional_endings is None:
-        additional_endings = ["bg4", "br4", "by4"]
+        additional_endings = ["bg4", "br4", "by4", "bv4"]
 
     path_bi4_bur = base_path / "bi4_bur"
     path_bur = base_path / "bur"
