@@ -902,33 +902,49 @@ class NDXplorer(QtWidgets.QMainWindow):
         Recompute the 2D histogram limits based on the newly selected parameters
         and update the vmin/vmax spin boxes.
         """
-        # First, recalc the histogram data for the new parameter selection.
-        self.update_histograms()  # Make sure the histogram data (_histogram["2d"]) is updated
-
-        try:
-            new_data, x_edges, y_edges = self._histogram["2d"]
-        except ValueError:
+        # --- 1) Guard: is there any data at all? ---
+        if self._data_source.empty:
             return
 
-        # Optionally apply logarithmic transformation if needed.
+        # --- 2) Guard: are our selected column indices valid? ---
+        p1_idx, p2_idx, p3_idx = self.plot_control.p1[0], self.plot_control.p2[0], self.plot_control.p3[0]
+        try:
+            # make sure values array has at least p1, p2, p3 rows
+            n_rows, _ = self.values.shape
+        except Exception:
+            # values property may raise if data not ready
+            return
+
+        if not (0 <= p1_idx < n_rows and 0 <= p2_idx < n_rows and 0 <= p3_idx < n_rows):
+            return
+
+        # --- 3) Safe to recompute the histograms ---
+        self.update_histograms()  # fills self._histogram["2d"]
+
+        # unpack 2D histogram
+        try:
+            hist2d, x_edges, y_edges = self._histogram["2d"]
+        except Exception:
+            return
+
+        # --- 4) Optionally apply log scaling to counts ---
         if self.checkBoxLogCounts.isChecked():
-            new_data = np.log10(new_data)
-            new_data = np.nan_to_num(new_data)
+            hist2d = np.log10(hist2d)
+            hist2d = np.nan_to_num(hist2d)
 
-        # If you’re displaying a rotated image (as in your update_2d_plot),
-        # rotate the data accordingly.
-        image_data = np.rot90(new_data, k=1)
+        # rotate if you're displaying rotated image
+        image_data = np.rot90(hist2d, k=1)
 
-        # Compute new limits from the histogram data.
-        new_vmin = np.min(image_data)
-        new_vmax = np.max(image_data)
+        # --- 5) Compute new vmin/vmax from the data ---
+        new_vmin = float(np.min(image_data))  # cast to Python float
+        new_vmax = float(np.max(image_data))
 
-        # Update the spin boxes using their setter properties.
+        # --- 6) Update spin boxes via their property setters ---
         self.vmin = new_vmin
         self.vmax = new_vmax
 
-        # Also update the colormap limits of the displayed image.
-        self.cax.set_clim(new_vmin, new_vmax)
+        # --- 7) Update the actual image color limits and redraw ---
+        self.cax.set_clim(self.vmin, self.vmax)
         self.canvas.draw_idle()
 
     def update_2d_plot(self):
