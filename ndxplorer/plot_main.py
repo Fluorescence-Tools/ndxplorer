@@ -208,7 +208,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def vmin(self):
-        return self.doubleSpinBox_vmin.value() / 10.0
+        return self.doubleSpinBox_vmin.value()
 
     @vmin.setter
     def vmin(self, v):
@@ -216,7 +216,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def vmax(self):
-        return self.doubleSpinBox_vmax.value() / 10.0
+        return self.doubleSpinBox_vmax.value()
 
     @vmax.setter
     def vmax(self, v):
@@ -448,6 +448,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Assuming these combo boxes control the parameter selections for the 2D plot:
         self.plot_control.comboBoxSelX.currentIndexChanged.connect(self.update_spinbox_limits)
         self.plot_control.comboBoxSelY.currentIndexChanged.connect(self.update_spinbox_limits)
+        self.plot_control.comboBoxSelZ.currentIndexChanged.connect(self.update_spinbox_limits)
 
         # In your __init__ or setup method, after creating the spin boxes:
         self.doubleSpinBox_vmin.valueChanged.connect(self.on_vmin_vmax_changed)
@@ -897,12 +898,12 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.g_zplot.replot()
         self.canvas.draw_idle()
 
-    def update_spinbox_limits(self):
+    def update_spinbox_limits(self, low_pct=0.1, high_pct=99):
         """
         Recompute the 2D histogram limits based on the newly selected parameters
         and update the vmin/vmax spin boxes.
         """
-        # --- 1) Guard: is there any data at all? ---
+        # --- 0) Guard: is there any data at all? ---
         if self._data_source.empty:
             return
 
@@ -918,33 +919,37 @@ class NDXplorer(QtWidgets.QMainWindow):
         if not (0 <= p1_idx < n_rows and 0 <= p2_idx < n_rows and 0 <= p3_idx < n_rows):
             return
 
-        # --- 3) Safe to recompute the histograms ---
-        self.update_histograms()  # fills self._histogram["2d"]
-
-        # unpack 2D histogram
+        # 1) Recompute the 2D histogram
+        self.update_histograms()
         try:
-            hist2d, x_edges, y_edges = self._histogram["2d"]
+            H, *_ = self._histogram["2d"]
         except Exception:
             return
 
-        # --- 4) Optionally apply log scaling to counts ---
+        # 2) Decide which data to percentile over
         if self.checkBoxLogCounts.isChecked():
-            hist2d = np.log10(hist2d)
-            hist2d = np.nan_to_num(hist2d)
+            # only positive bins, then log
+            mask = H > 0
+            data = np.log10(H[mask]) if np.any(mask) else np.array([])
+        else:
+            # only positive bins
+            data = H[H > 0]
 
-        # rotate if you're displaying rotated image
-        image_data = np.rot90(hist2d, k=1)
+        # 3) Guard against empty data
+        if data.size < 2:
+            # too few nonzero bins → just use the full range
+            raw = H if not self.checkBoxLogCounts.isChecked() else np.log10(np.nan_to_num(H))
+            vmin, vmax = float(np.nanmin(raw)), float(np.nanmax(raw))
+        else:
+            # 4) Compute robust cutoffs
+            vmin, vmax = np.percentile(data, [low_pct, high_pct])
+            # if log scale, convert back to linear for the clim
+            if self.checkBoxLogCounts.isChecked():
+                vmin, vmax = 10 ** vmin, 10 ** vmax
 
-        # --- 5) Compute new vmin/vmax from the data ---
-        new_vmin = float(np.min(image_data))  # cast to Python float
-        new_vmax = float(np.max(image_data))
-
-        # --- 6) Update spin boxes via their property setters ---
-        self.vmin = new_vmin
-        self.vmax = new_vmax
-
-        # --- 7) Update the actual image color limits and redraw ---
-        self.cax.set_clim(self.vmin, self.vmax)
+        # 5) Push to spin‐boxes and the image
+        self.vmin, self.vmax = vmin, vmax
+        self.cax.set_clim(vmin, vmax)
         self.canvas.draw_idle()
 
     def update_2d_plot(self):
