@@ -76,11 +76,6 @@ def pt2dict(parameter_tree, target=OrderedDict()):
 
 class ParameterEditor(QtWidgets.QWidget):
 
-    _dict = dict()  # type: Dict
-    _p = None
-    _json_file = None  # type: str
-    _target = list()  # type: List
-
     def __init__(
             self,
             json_file=None,  # type: str
@@ -88,6 +83,11 @@ class ParameterEditor(QtWidgets.QWidget):
             callback=None  # type: callable
     ):
         super(ParameterEditor, self).__init__(parent)
+
+        self._dict = dict()  # type: Dict
+        self._p = None
+        self._json_file = None  # type: str
+        self._target = list()  # type: List
 
         self._json_file = json_file
         self.json_file = json_file

@@ -49,32 +49,6 @@ from . import writer
 
 class NDXplorer(QtWidgets.QMainWindow):
 
-    settings = dict()  # type: Dict
-    equations = list()  # type: List[Dict[str, str]]
-    constants = dict()  # type: Dict[str, float]
-    _histogram = {
-        "x": (),
-        "y": (),
-        "z": (),
-        "2d": ()
-    }
-    _mask_inf = True  # type: bool
-    _mask_nan = True  # type: bool
-    _data_source = DataSource()  # type: DataSource
-    _default_data_source = DataSource(
-        ["Tau (green)", "Proximity ratio", "r Experimental (green)"],
-        np.vstack(
-            [
-                np.random.multivariate_normal(
-                    [4.1, 0.0, 0.05], [[0.1, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]], size=500
-                ),
-                np.random.multivariate_normal(
-                    [2.0, 0.5, 0.15], [[0.1, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]], size=500
-                )
-            ]
-        )
-    )
-
     def invalidate_values_cache(self) -> None:
         """
         Manually clear the cached 'values'. Call this whenever something
@@ -272,6 +246,32 @@ class NDXplorer(QtWidgets.QMainWindow):
         if isinstance(data_source, DataSource):
             self._data_source = data_source
         super(NDXplorer, self).__init__(parent=parent)
+
+        self.settings = dict()  # type: Dict
+        self.equations = list()  # type: List[Dict[str, str]]
+        self.constants = dict()  # type: Dict[str, float]
+        self._histogram = {
+            "x": (),
+            "y": (),
+            "z": (),
+            "2d": ()
+        }
+        self._mask_inf = True  # type: bool
+        self._mask_nan = True  # type: bool
+        self._data_source = DataSource()  # type: DataSource
+        self._default_data_source = DataSource(
+            ["Tau (green)", "Proximity ratio", "r Experimental (green)"],
+            np.vstack(
+                [
+                    np.random.multivariate_normal(
+                        [4.1, 0.0, 0.05], [[0.1, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]], size=500
+                    ),
+                    np.random.multivariate_normal(
+                        [2.0, 0.5, 0.15], [[0.1, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]], size=500
+                    )
+                ]
+            )
+        )
 
         # Initialize the cache variables to None
         self._cached_values = None
