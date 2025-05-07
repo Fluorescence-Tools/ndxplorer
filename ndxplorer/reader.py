@@ -1,8 +1,11 @@
 from typing import List, Union
+import pathlib
+
 import json
 import pandas as pd
+from pandas.errors import EmptyDataError
+
 from . data_source import DataSource
-import pathlib
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel
 from PyQt5.QtCore import Qt
@@ -42,90 +45,97 @@ def read_burst_analysis(
         drop_last_column: bool = True
 ) -> DataSource:
     """
-    Reads .bur files and any additional files specified.
-    Now shows a separate PyQt progress dialog while processing.
+    Reads .bur files and any additional files specified,
+    including files that have only headers or are completely empty.
+    Column names are preserved exactly as in the source files.
     """
-    # Make sure there's a QApplication running (required for any PyQt GUI)
-    # If you already have a QApplication in your main script, remove this check.
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-
+    # ensure a QApplication
+    app = QApplication.instance() or QApplication([])
     base_path = pathlib.Path(base_path)
+    additional_endings = additional_endings or ["bg4", "br4", "by4", "bv4"]
 
-    if additional_endings is None:
-        additional_endings = ["bg4", "br4", "by4", "bv4"]
-
-    path_bi4_bur = base_path / "bi4_bur"
-    path_bur = base_path / "bur"
-
-    # Attempt to find .bur files
-    if path_bi4_bur.is_dir():
-        bur_files = list(path_bi4_bur.glob("*.bur"))
-        if not bur_files:
-            print("No .bur files in 'bi4_bur'; falling back to 'bur' folder.")
-            bur_files = list(path_bur.glob("*.bur"))
+    # locate .bur files
+    dir_main = base_path / "bi4_bur"
+    dir_fallback = base_path / "bur"
+    if dir_main.is_dir():
+        bur_files = list(dir_main.glob("*.bur")) or list(dir_fallback.glob("*.bur"))
     else:
-        print("'bi4_bur' folder does not exist; using 'bur' folder.")
-        bur_files = list(path_bur.glob("*.bur"))
-
+        bur_files = list(dir_fallback.glob("*.bur"))
     if not bur_files:
         raise FileNotFoundError("No .bur files found in either 'bi4_bur' or 'bur'.")
 
-    progress_window = ProgressWindow(
+    # helper: read CSV or build header‐only DataFrame
+    def _read_file(path: pathlib.Path) -> pd.DataFrame:
+        try:
+            df = pd.read_csv(path, sep="\t")
+        except EmptyDataError:
+            # try to pull headers even if there's no data rows
+            with open(path, 'r') as f:
+                first = f.readline().strip()
+            cols = first.split("\t") if first else []
+            df = pd.DataFrame(columns=cols)
+        return df
+
+    # progress dialog
+    progress = ProgressWindow(
         title="File Processing",
         message="Processing Burst files...",
         max_value=len(bur_files),
     )
-    progress_window.show()
+    progress.show()
 
-    df_files = []
+    pieces = []
+    for idx, bur_file in enumerate(bur_files, start=1):
+        # --- main .bur ---
+        df_main = _read_file(bur_file)
+        if drop_last_column and df_main.shape[1] > 1:
+            df_main = df_main.iloc[:, :-1]
+        dfs = [df_main]
 
-    # Process each .bur file
-    for i, bur_file in enumerate(bur_files, start=1):
-        # Read the main .bur file
-        dfs = []
-        df_bur = pd.read_csv(bur_file, sep="\t")
-        if drop_last_column:
-            df_bur.drop(df_bur.columns[-1], axis=1, inplace=True)
-        dfs.append(df_bur)
-
-        # Use the file stem to construct matching filenames
-        fn_head = bur_file.stem
-
-        # Read additional files
+        # --- extras ---
+        stem = bur_file.stem
         for ending in additional_endings:
-            extra_file = base_path / ending / f"{fn_head}.{ending}"
-            if extra_file.exists():
-                df_extra = pd.read_csv(extra_file, sep="\t")
-                if drop_last_column:
-                    df_extra.drop(df_extra.columns[-1], axis=1, inplace=True)
-                dfs.append(df_extra)
+            extra = base_path / ending / f"{stem}.{ending}"
+            if not extra.exists():
+                continue
+            df_extra = _read_file(extra)
+            # if truly empty (no cols), skip
+            if df_extra.shape[1] == 0:
+                continue
+            if drop_last_column and df_extra.shape[1] > 1:
+                df_extra = df_extra.iloc[:, :-1]
+            dfs.append(df_extra)
 
-        # Concatenate horizontally and apply row skipping
-        combined_df = pd.concat(dfs, axis=1)
-        df_files.append(combined_df[combined_df.index % skip_nth_row != 0])
+        # horizontal concat (index‐aligned)
+        combined = pd.concat(dfs, axis=1)
+        # —————————————————————————————————————————————
+        # drop any duplicate columns now (keep the first occurrence)
+        combined = combined.loc[:, ~combined.columns.duplicated()]
+        # —————————————————————————————————————————————
 
-        # -- Update the progress bar --
-        progress_window.set_value(i)
+        # skip every Nth row
+        if skip_nth_row > 1:
+            combined = combined[ combined.index % skip_nth_row != 0 ]
 
-        # Allow the GUI to refresh; avoid freezing
+        pieces.append(combined)
+
+        progress.set_value(idx)
         QCoreApplication.processEvents()
 
-    # Finished loop, set progress to max
-    progress_window.set_value(len(bur_files))
+    progress.set_value(len(bur_files))
 
-    # Concatenate final DataFrame
-    final_df = pd.concat(df_files, ignore_index=True)
+    # final vertical concat
+    final_df = (
+        pd.concat(pieces, ignore_index=True)
+        if any(len(df) for df in pieces)
+        else pieces[0].iloc[0:0]  # zero‐row with correct cols if no data at all
+    )
 
-    data_source = DataSource()
-    data_source.data = final_df
+    ds = DataSource()
+    ds.data = final_df
 
-    # Optionally close the progress window now that we're done
-    progress_window.close()
-
-    return data_source
-
+    progress.close()
+    return ds
 
 def read_csv_sampling(filenames, sep='\t'):
     # type: (List[str])->(DataSource)
