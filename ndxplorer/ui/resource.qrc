@@ -1,5 +1,6 @@
 <RCC>
   <qresource prefix="icons">
     <file>icon.svg</file>
+    <file>clustering.svg</file>
   </qresource>
 </RCC>

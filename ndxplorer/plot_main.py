@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple, Set
 
 import sys
 import os
@@ -6,7 +6,23 @@ import json
 import yaml
 import typing
 
+try:
+    import hdbscan
+except ImportError:
+    hdbscan = None
+
+try:
+    from sklearn.cluster import KMeans
+except ImportError:
+    KMeans = None
+
+try:
+    import umap
+except ImportError:
+    umap = None
+
 from . plot_control import SurfacePlotWidget
+from qtpy.QtCore import QThread, Signal
 from . parameter_editor import ParameterEditor
 try:
     from chisurf.gui.tools.code_editor import CodeEditor
@@ -21,6 +37,7 @@ except:
 from . data_source import DataSource
 
 import pathlib
+import pandas as pd
 
 try:
     from chisurf.gui import QtGui, QtCore, uic, QtWidgets
@@ -45,6 +62,8 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from . import reader
 from . import writer
+from .clustering_dialog import ClusteringDialog
+from .column_selection_dialog import ColumnSelectionDialog
 
 
 class NDXplorer(QtWidgets.QMainWindow):
@@ -54,6 +73,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Manually clear the cached 'values'. Call this whenever something
         changes that would invalidate the mask or the data.
         """
+        logging.log(0, "Invalidating values cache")
         self._cached_values = None
         self._cached_values_selections = None
         self._cached_values_p13 = None
@@ -62,17 +82,22 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def data_source(self) -> DataSource:
+        logging.log(0, "Getting data_source")
         if self._data_source.empty:
             values = self._default_data_source
+            logging.log(0, "Using default data source")
         else:
             values = self._data_source
+            logging.log(0, f"Using actual data source with {self._data_source.values.shape[1] if not self._data_source.empty else 0} data points")
         return values
 
     @data_source.setter
     def data_source(self, v: DataSource) -> None:
+        logging.log(0, f"Setting data_source with {v.values.shape[1] if not v.empty else 0} data points")
         self._data_source = v
         # Whenever the underlying DataSource changes, invalidate the cached 'values'
         self.invalidate_values_cache()
+        logging.log(0, "Computing columns with equations and constants")
         self._data_source.compute_columns(
             constants=self.constants,
             equations=self.equations
@@ -80,28 +105,33 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def x_values(self) -> np.ndarray:
+        logging.log(0, f"Getting x_values for parameter: {self.plot_control.p1[1]}")
         return self.values[self.plot_control.p1[0]].astype('float64')
 
     @property
     def y_values(self) -> np.ndarray:
+        logging.log(0, f"Getting y_values for parameter: {self.plot_control.p2[1]}")
         return self.values[self.plot_control.p2[0]].astype('float64')
 
     @property
     def z_values(self)-> np.ndarray:
+        logging.log(0, f"Getting z_values for parameter: {self.plot_control.p3[1]}")
         return self.values[self.plot_control.p3[0]].astype('float64')
 
     @property
-    def values(self) -> np.ndarray:
-        """
-        Return a 2D array of data (selected columns only), applying the
-        user-defined mask for Inf/NaN. The result is cached to avoid repeated
-        computation when .values is accessed multiple times.
-        """
-        # Step 1: Gather current parameters relevant to our cache
+    def value_mask(self):
         selections = self.plot_control.get_selections()
-        p13 = (self.plot_control.p1[0], self.plot_control.p2[0], self.plot_control.p3[0])
         mask_inf = self._mask_inf
         mask_nan = self._mask_nan
+        p13 = (self.plot_control.p1[0], self.plot_control.p2[0], self.plot_control.p3[0])
+        logging.log(0, f"Value mask parameters: p13={p13}, mask_inf={mask_inf}, mask_nan={mask_nan}, selections={len(selections)}")
+
+        # Check if dynamic selection is enabled
+        dynamic_selection = self._dynamic_selection and hasattr(self, 'selection_z')
+
+        # Check if clustering is enabled and a specific cluster is selected
+        selected_cluster = self.plot_control.selected_cluster
+        use_clustering = self._use_clustering and selected_cluster >= 0
 
         # Step 2: Check if our existing cache is still valid
         cache_is_valid = (
@@ -110,12 +140,17 @@ class NDXplorer(QtWidgets.QMainWindow):
             and self._cached_values_p13 == p13
             and self._cached_values_mask_inf == mask_inf
             and self._cached_values_mask_nan == mask_nan
+            and getattr(self, '_cached_values_dynamic_selection', None) == dynamic_selection
+            and getattr(self, '_cached_values_z_range', None) == getattr(self, '_last_z_range', None)
+            and getattr(self, '_cached_values_use_clustering', None) == use_clustering
+            and getattr(self, '_cached_values_selected_cluster', None) == selected_cluster
         )
         if cache_is_valid:
+            logging.log(0, "Using cached values")
             return self._cached_values
 
         # Step 3: If cache is invalid or empty, compute fresh data
-        all_values = self.data_source.values
+        logging.log(0, "Cache invalid, computing fresh data")
         mask = self.data_source.get_mask(
             selections=selections,
             idxs=[p13[0], p13[1], p13[2]],
@@ -123,117 +158,271 @@ class NDXplorer(QtWidgets.QMainWindow):
             mask_nan=mask_nan
         )
 
-        x = np.ma.array(all_values, mask=mask)
-        oCol, oRow = x.shape
-        re = np.ma.compressed(x)
-        nD = re.shape[0]
-        re = re.reshape((oCol, int(nD / oCol)))
+        # Apply additional filters
+
+        # If dynamic selection is enabled, filter the data based on the Z selection range
+        if dynamic_selection:
+            # Get the current Z selection range
+            z_range = self.selection_z.get_range()
+            z_min = min(z_range)
+            z_max = max(z_range)
+
+            # Store the current Z selection range for change detection
+            self._last_z_range = z_range
+
+            # Get z values
+            d3 = self.data_source.values[p13[2]]
+
+            # Create a mask for values within the Z selection range
+            z_mask = (d3 >= z_min) & (d3 <= z_max)
+
+            # Update the combined mask
+            mask = mask & z_mask
+
+            # Log the number of points in the selection
+            logging.log(0, f"Dynamic selection: {np.sum(z_mask)} points selected out of {len(d3)}")
+
+        # If clustering is enabled and a specific cluster is selected, filter by cluster
+        if use_clustering:
+            # Get cluster labels from the dataframe instead of using self._cluster_labels
+            try:
+                if 'Cluster Label' in self.data_source.data.columns:
+                    # Get cluster labels from the dataframe
+                    cluster_labels = self.data_source.data['Cluster Label'].values
+
+                    # Create a mask for the selected cluster
+                    cluster_mask = (cluster_labels == selected_cluster)
+
+                    # Create a 2D mask from the 1D cluster mask
+                    # The mask should be True for points that are NOT in the selected cluster
+                    n_parameter, n_data_points = mask.shape
+                    new_mask = np.zeros_like(mask)
+
+                    # For each data point not in the selected cluster, mask it across all parameters
+                    new_mask[:, ~cluster_mask] = True
+
+                    # Combine with the existing mask (keep points masked in either mask)
+                    mask = mask | new_mask
+
+                    # Calculate how many points are in the selected cluster and not masked
+                    # A point is not masked if all parameters for that point are not masked
+                    # So we need to check if any column in the mask for that point is False
+                    points_in_cluster = np.sum(cluster_mask)
+                    points_in_cluster_after_masking = np.sum(~np.any(mask[:, cluster_mask], axis=0))
+
+                    # Log the number of points in the selected cluster after masking
+                    logging.log(0, f"Cluster selection: {points_in_cluster_after_masking} points in cluster {selected_cluster} (out of {points_in_cluster} total in this cluster)")
+                else:
+                    logging.warning("'Cluster Label' column not found in dataframe. Skipping cluster filtering.")
+                    logging.warning("This can happen if clustering has not been performed yet.")
+            except Exception as e:
+                logging.warning(f"Error applying cluster filter: {str(e)}")
+                logging.warning("Skipping cluster filtering.")
 
         # Step 4: Store in the cache for next time
-        self._cached_values = re
         self._cached_values_selections = selections
         self._cached_values_p13 = p13
         self._cached_values_mask_inf = mask_inf
         self._cached_values_mask_nan = mask_nan
+        self._cached_values_dynamic_selection = dynamic_selection
+        self._cached_values_z_range = getattr(self, '_last_z_range', None)
+        self._cached_values_use_clustering = use_clustering
+        self._cached_values_selected_cluster = selected_cluster
+        logging.log(0, "Values cached for future use")
+
+        return mask
+
+    @property
+    def values(self) -> np.ndarray:
+        """
+        Return a 2D array of data (selected columns only), applying the
+        user-defined mask for Inf/NaN. The result is cached to avoid repeated
+        computation when .values is accessed multiple times.
+        """
+        logging.log(0, "Getting values with masking")
+
+        mask = self.value_mask
+        all_values = self.data_source.values
+
+        x = np.ma.array(all_values, mask=mask)
+        oCol, oRow = x.shape
+        logging.log(0, f"Original data shape: {oCol}x{oRow}")
+        re = np.ma.compressed(x)
+        nD = re.shape[0]
+        re = re.reshape((oCol, int(nD / oCol)))
+        logging.log(0, f"Reshaped data shape: {re.shape}")
 
         return re
 
     @property
     def ymax(self) -> float:
-        return max(self.y_values)
+        logging.log(0, "Getting ymax")
+        result = max(self.y_values)
+        logging.log(0, f"ymax = {result}")
+        return result
 
     @property
     def zmin(self):
+        logging.log(0, "Getting zmin")
         v = self.z_values[self.z_values > -np.inf]
+        logging.log(0, f"Filtered out {len(self.z_values) - len(v)} infinite values")
         if self.plot_control.scale_z == "log":
+            v_before = len(v)
             v = v[np.where(v > 0)[0]]
-        return min(v)
+            logging.log(0, f"Log scale: filtered out {v_before - len(v)} non-positive values")
+        try:
+            result = min(v)
+            logging.log(0, f"zmin = {result}")
+            return result
+        except ValueError:
+            logging.log(0, "No valid values for zmin, returning 0")
+            return 0
 
     @property
     def zmax(self) -> float:
-        return max(self.z_values)
+        logging.log(0, "Getting zmax")
+        result = max(self.z_values)
+        logging.log(0, f"zmax = {result}")
+        return result
 
     @property
     def working_path(self):
-        return self.lineEditWorkingPath.text()
+        logging.log(0, "Getting working_path")
+        path = self.lineEditWorkingPath.text()
+        logging.log(0, f"working_path = {path}")
+        return path
 
     @working_path.setter
     def working_path(self, v):
+        logging.log(0, f"Setting working_path to {v}")
         if pathlib.Path(v).is_dir():
+            logging.log(0, f"Path {v} is a valid directory, updating working path")
             self.lineEditWorkingPath.setText(v)
+        else:
+            logging.log(0, f"Path {v} is not a valid directory, working path not updated")
 
     @property
     def xmin(self) -> float:
+        logging.log(0, "Getting xmin")
         v = self.x_values[self.x_values > -np.inf]
+        logging.log(0, f"Filtered out {len(self.x_values) - len(v)} infinite values")
         if self.plot_control.scale_x == "log":
+            v_before = len(v)
             v = v[np.where(v > 0)[0]]
-        return min(v)
+            logging.log(0, f"Log scale: filtered out {v_before - len(v)} non-positive values")
+        try:
+            result = min(v)
+            logging.log(0, f"xmin = {result}")
+            return result
+        except ValueError:
+            logging.log(0, "No valid values for xmin, returning 0")
+            return 0
 
     @property
     def xmax(self) -> float:
-        return max(self.x_values)
+        logging.log(0, "Getting xmax")
+        result = max(self.x_values)
+        logging.log(0, f"xmax = {result}")
+        return result
 
     @property
     def ymin(self) -> float:
+        logging.log(0, "Getting ymin")
         v = self.y_values[self.y_values > -np.inf]
+        logging.log(0, f"Filtered out {len(self.y_values) - len(v)} infinite values")
         if self.plot_control.scale_y == "log":
+            v_before = len(v)
             v = v[np.where(v > 0)[0]]
-        return min(v)
+            logging.log(0, f"Log scale: filtered out {v_before - len(v)} non-positive values")
+        try:
+            result = min(v)
+            logging.log(0, f"ymin = {result}")
+            return result
+        except ValueError:
+            logging.log(0, "No valid values for ymin, returning 0")
+            return 0
 
     @property
     def vmin(self):
-        return self.doubleSpinBox_vmin.value()
+        logging.log(0, "Getting vmin")
+        result = self.doubleSpinBox_vmin.value()
+        logging.log(0, f"vmin = {result}")
+        return result
 
     @vmin.setter
     def vmin(self, v):
+        logging.log(0, f"Setting vmin to {v}")
         return self.doubleSpinBox_vmin.setValue(v)
 
     @property
     def vmax(self):
-        return self.doubleSpinBox_vmax.value()
+        logging.log(0, "Getting vmax")
+        result = self.doubleSpinBox_vmax.value()
+        logging.log(0, f"vmax = {result}")
+        return result
 
     @vmax.setter
     def vmax(self, v):
+        logging.log(0, f"Setting vmax to {v}")
         return self.doubleSpinBox_vmax.setValue(v)
 
     @property
     def current_cmap(self) -> str:
-        return self.comboBoxCmap.currentText()
+        logging.log(0, "Getting current_cmap")
+        result = self.comboBoxCmap.currentText()
+        logging.log(0, f"current_cmap = {result}")
+        return result
 
     def update_cmap(self, cmap_name = None):
         """
         Update the colormap of the imshow plot based on the selected cmap.
         """
+        logging.log(0, f"Updating colormap with cmap_name={cmap_name}")
         if cmap_name is None:
             cmap_name = self.current_cmap
+            logging.log(0, f"Using current colormap: {cmap_name}")
         self.cax.set_cmap(cmap_name)  # Update the colormap
         self.canvas.draw()  # Redraw the canvas
+        logging.log(0, f"Colormap updated to {cmap_name}")
 
     def populate_colormap_combobox(self):
         """Populate the QComboBox with matplotlib colormap names."""
+        logging.log(0, "Populating colormap combobox")
         colormap_names = sorted(colormaps.keys())  # Get all colormap names
+        logging.log(0, f"Found {len(colormap_names)} colormaps")
         self.comboBoxCmap.addItems(colormap_names)  # Add them to the QComboBox
 
         # Set default selection
         if self.current_cmap in colormap_names:
             default_index = colormap_names.index(self.current_cmap)
             self.comboBoxCmap.setCurrentIndex(default_index)
+            logging.log(0, f"Set default colormap to {self.current_cmap} at index {default_index}")
+        else:
+            logging.log(0, f"Default colormap {self.current_cmap} not found in available colormaps")
 
     def on_vmin_vmax_changed(self):
+        logging.log(0, "vmin/vmax values changed")
         # Get current values from the spin boxes using the properties
         current_vmin = self.vmin  # this should read from doubleSpinBox_vmin.value()
         current_vmax = self.vmax  # similarly for doubleSpinBox_vmax.value()
+        logging.log(0, f"Setting colormap limits to vmin={current_vmin}, vmax={current_vmax}")
 
         # Update the colormap limits for the 2D histogram image
         self.cax.set_clim(current_vmin, current_vmax)
         self.canvas.draw_idle()  # Redraw the canvas to reflect the change
+        logging.log(0, "Colormap limits updated")
 
     def set_default_colormap(self, default_cmap):
         """Set the default colormap in the QComboBox."""
-        index = self.comboBoxCmap.findText(default_cmap)  # Find the index of 'jet'
+        logging.log(0, f"Setting default colormap to {default_cmap}")
+        index = self.comboBoxCmap.findText(default_cmap)  # Find the index of the colormap
         if index != -1:  # Ensure it exists in the list
-            self.comboBoxCmap.setCurrentIndex(index)  # Set the QComboBox to 'jet'
+            logging.log(0, f"Found colormap {default_cmap} at index {index}")
+            self.comboBoxCmap.setCurrentIndex(index)  # Set the QComboBox to the colormap
             self.cax.set_cmap(default_cmap)  # Update the plot's colormap
+            logging.log(0, f"Default colormap set to {default_cmap}")
+        else:
+            logging.log(0, f"Colormap {default_cmap} not found in available colormaps")
 
     def __init__(
             self,
@@ -258,6 +447,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         }
         self._mask_inf = True  # type: bool
         self._mask_nan = True  # type: bool
+        self._dynamic_selection = False  # type: bool
         self._data_source = DataSource()  # type: DataSource
         self._default_data_source = DataSource(
             ["Tau (green)", "Proximity ratio", "r Experimental (green)"],
@@ -272,6 +462,31 @@ class NDXplorer(QtWidgets.QMainWindow):
                 ]
             )
         )
+
+        # Clustering settings
+        self._use_clustering = False  # type: bool, always enabled now
+        self._cluster_method = "kmeans"  # type: str #, default to K-means
+
+        # HDBSCAN specific parameters
+        self._cluster_min_samples = 5  # type: int
+        self._cluster_min_cluster_size = 5  # type: int
+
+        # K-means specific parameters
+        self._cluster_n_clusters = 3  # type: int
+
+        # UMAP specific parameters
+        self._umap_n_neighbors = 15  # type: int
+        self._umap_min_dist = 0.1  # type: float
+        self._umap_n_components = 2  # type: int
+
+        # Common clustering variables
+        self._cluster_labels = None  # type: Optional[np.ndarray]
+        self._cluster_probabilities = None  # type: Optional[np.ndarray]
+        self._cluster_columns = set()  # type: Set[str]
+        self.clustering_worker = None  # Initialize the worker instance
+
+        # Clustering dialog
+        self.clustering_dialog = None
 
         # Initialize the cache variables to None
         self._cached_values = None
@@ -306,6 +521,24 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.equation_editor.save_callback = save_cb
 
         self.populate_colormap_combobox()
+
+        # Add clustering button to show/hide dialog
+        self.setup_clustering_button()
+
+        # Add dynamic selection checkbox
+        self.checkBoxDynamicSelection = self.plot_control.checkBoxDynamicSelection
+        self.checkBoxDynamicSelection.setToolTip("When checked, 2D and 1D histograms (except Z) will only display data selected by region selector")
+        self.checkBoxDynamicSelection.setChecked(self._dynamic_selection)
+        self.checkBoxDynamicSelection.stateChanged.connect(self.on_dynamic_selection_changed)
+
+        # Store the last Z selection range to detect changes
+        self._last_z_range = None
+
+        # Create a timer to check for Z selection range changes
+        self.z_range_check_timer = QtCore.QTimer(self)
+        self.z_range_check_timer.timeout.connect(self.check_z_range_changes)
+        # Check every 500 ms
+        self.z_range_check_timer.start(500)
 
         # Plots
         #############
@@ -437,9 +670,11 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.actionLoad_settings.triggered.connect(self.onLoad_settings)
         self.actionSave_axis_settings.triggered.connect(self.onSaveAxisSettings)
         # GUI updates
-        self.actionUpdate_plot.triggered.connect(self.update_plots)
+        self.actionUpdate_plot.triggered.connect(lambda: self.update_plots())
         self.actionClear_plot.triggered.connect(self.clear_plots)
         self.actionMask_toggle_changed.triggered.connect(self.onMaskChanged)
+        # UMAP
+        self.actionUMAP.triggered.connect(self.onShowUMAP)
         # Axis range
 
         self.canvas.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -581,6 +816,43 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.invalidate_values_cache()
         self.update_plots()
 
+    def onShowUMAP(self) -> None:
+        """
+        Show the UMAP plot.
+        This method is triggered when the user clicks the UMAP action in the View menu.
+        """
+        try:
+            # Create the clustering dialog if it doesn't exist
+            if self.clustering_dialog is None:
+                self.create_clustering_dialog()
+
+            # Show the dialog if it's not visible
+            if not self.clustering_dialog.isVisible():
+                # Update the dialog with current settings before showing it
+                self.update_clustering_dialog()
+                self.clustering_dialog.show()
+        except RuntimeError:
+            # If we get a RuntimeError, it means the UI elements have been deleted
+            # In this case, we need to recreate the dialog
+            logging.warning("Clustering dialog UI elements have been deleted. Recreating dialog.")
+            self.clustering_dialog = None
+            self.create_clustering_dialog()
+            self.clustering_dialog.show()
+
+        # Get UMAP parameters directly from instance variables
+        # This avoids accessing potentially deleted UI elements
+        params = {
+            "n_neighbors": self._umap_n_neighbors,
+            "min_dist": self._umap_min_dist,
+            "n_components": self._umap_n_components
+        }
+
+        # Create the UMAP plot
+        self.create_umap_plot(
+            self._cluster_columns,
+            params
+        )
+
     def onSelectWorkingPath(self):
         working_path = QtWidgets.QFileDialog.getExistingDirectory(None, 'Select current path', self.working_path)
         self.lineEditWorkingPath.blockSignals(True)
@@ -597,6 +869,57 @@ class NDXplorer(QtWidgets.QMainWindow):
             folder_name=folder,
             selections=self.plot_control.get_selections(),
             data_source=self.data_source
+        )
+
+    def onSaveClusteringData(self, evt=None, folder=None):
+        """
+        Save clustering data to a folder.
+
+        Args:
+            evt: Event that triggered this method (not used)
+            folder: Folder where clustering data will be saved. If None, a folder selection dialog will be shown.
+        """
+        # Check if we have cluster labels
+        if self._cluster_labels is None:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "No Clustering Data",
+                "No clustering data available. Please apply clustering before saving."
+            )
+            return
+
+        # Get folder to save data
+        if folder is None:
+            folder = QtWidgets.QFileDialog.getExistingDirectory(
+                None, 'Folder for Clustering Data', self.working_path
+            )
+
+        if not folder:  # User cancelled the dialog
+            return
+
+        # Prepare parameters dictionary based on the clustering method
+        if self._cluster_method == "hdbscan":
+            parameters = {
+                "min_samples": self._cluster_min_samples,
+                "min_cluster_size": self._cluster_min_cluster_size
+            }
+        elif self._cluster_method == "kmeans":
+            parameters = {
+                "n_clusters": self._cluster_n_clusters
+            }
+        else:
+            parameters = {}
+
+        # Save clustering data
+        logging.info(f"Saving clustering data to {folder}...")
+        writer.save_clustering_data(
+            folder_name=folder,
+            data_source=self.data_source,
+            cluster_method=self._cluster_method,
+            cluster_labels=self._cluster_labels,
+            cluster_probabilities=self._cluster_probabilities,
+            cluster_columns=self._cluster_columns,
+            parameters=parameters
         )
 
     def onSaveAxisSettings(
@@ -740,6 +1063,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         return bins
 
     def update_histograms(self):
+        # Get the values that are already filtered by value_mask
+        # These properties use self.values which applies the value_mask
         d1 = self.x_values
         d2 = self.y_values
         d3 = self.z_values
@@ -752,6 +1077,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # X, Y, Z Histogram
         ###################
+        # Use the filtered data for all histograms
         self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, density=self.plot_control.normed_hist_x)[::-1]
         self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, density=self.plot_control.normed_hist_y)[::-1]
         self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, density=self.plot_control.normed_hist_z)[::-1]
@@ -759,6 +1085,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # 2D Histogram
         ####################
         try:
+            # Use the filtered data for the 2D histogram if dynamic selection is enabled
             H, x_edges, y_edges = np.histogram2d(x=d1, y=d2, bins=[x_bins_2d, y_bins_2d], density=True)
             self._histogram["2d"] = H, x_edges, y_edges
         except ValueError:
@@ -819,7 +1146,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         clipboard.setText(csv_text)
         logging.log(0, "2D histogram data copied to clipboard as CSV (formatted with tabs).")
 
-    def update_plots(self):
+    def update_plots(self, skip_clustering=False):
+        """
+        Update all plots with the current data.
+
+        Args:
+            skip_clustering: If True, skip the clustering step even if clustering is enabled.
+                            This is useful when update_plots is called after clustering is done
+                            or when loading data.
+        """
         # If there's no data (or fewer than 3 columns), display the background image
         if self._data_source.empty or self._data_source.values.shape[0] == 0:
             # Clear any old histogram displays
@@ -845,6 +1180,16 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Update parameter names, colormap, and recalc histograms
         self.update_parameter_names()
         self.update_cmap()
+
+        # Apply HDBSCAN clustering if enabled and not skipped
+        # Skip clustering when loading data (skip_clustering=True)
+        if self._use_clustering and self._cluster_labels is None and hdbscan and not skip_clustering:
+            # Start the clustering in a separate thread
+            self.on_apply_clustering()
+            # Return early to avoid updating the plots until clustering is done
+            return
+
+        # Update histograms
         self.update_histograms()
 
         # ----------------------------------------------------
@@ -952,6 +1297,957 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.cax.set_clim(vmin, vmax)
         self.canvas.draw_idle()
 
+    def setup_clustering_button(self):
+        """
+        Set up a button to show/hide the clustering dialog.
+        """
+        self.pushButtonShowClusteringDialog.clicked.connect(self.toggle_clustering_dialog)
+
+    def toggle_clustering_dialog(self):
+        """
+        Show or hide the clustering dialog.
+        """
+        if self.clustering_dialog is None:
+            self.create_clustering_dialog()
+
+        if self.clustering_dialog.isVisible():
+            self.clustering_dialog.hide()
+        else:
+            # Update dialog with current settings
+            self.update_clustering_dialog()
+            self.clustering_dialog.show()
+
+    def create_clustering_dialog(self):
+        """
+        Create the clustering dialog if it doesn't exist.
+        """
+        if self.clustering_dialog is None:
+            self.clustering_dialog = ClusteringDialog(parent=self)
+
+            # Set initial values
+            self.update_clustering_dialog()
+
+            # Connect signals
+            self.clustering_dialog.clustering_done.connect(self.on_clustering_done)
+            self.clustering_dialog.clustering_error.connect(self.on_clustering_error)
+            self.clustering_dialog.progress_updated.connect(self.on_clustering_progress)
+
+    def update_clustering_dialog(self):
+        """
+        Update the clustering dialog with current settings.
+        """
+        if self.clustering_dialog is None:
+            return
+
+        # Update clustering settings
+        self.clustering_dialog._cluster_method = self._cluster_method
+        self.clustering_dialog._cluster_min_samples = self._cluster_min_samples
+        self.clustering_dialog._cluster_min_cluster_size = self._cluster_min_cluster_size
+        self.clustering_dialog._cluster_n_clusters = self._cluster_n_clusters
+        self.clustering_dialog._cluster_columns = self._cluster_columns
+
+        # Only update UI elements if the dialog is visible
+        # This prevents errors when trying to access UI elements that might have been deleted
+        if self.clustering_dialog.isVisible():
+            try:
+                # Update UI
+                self.clustering_dialog.comboBoxClusteringMethod.setCurrentText(self._cluster_method)
+                self.clustering_dialog.spinBoxMinSamples.setValue(self._cluster_min_samples)
+                self.clustering_dialog.spinBoxMinClusterSize.setValue(self._cluster_min_cluster_size)
+                self.clustering_dialog.spinBoxNClusters.setValue(self._cluster_n_clusters)
+
+                # Update button text to show number of selected columns
+                num_selected = len(self._cluster_columns)
+                if num_selected > 0:
+                    self.clustering_dialog.pushButtonSelectColumns.setText(f"Select Columns ({num_selected})")
+                else:
+                    self.clustering_dialog.pushButtonSelectColumns.setText("Select Columns")
+
+                # Update save button state
+                self.clustering_dialog.pushButtonSaveClustering.setEnabled(
+                    self._cluster_labels is not None
+                )
+            except RuntimeError:
+                # If we get a RuntimeError, it means the UI elements have been deleted
+                # In this case, we need to recreate the dialog
+                logging.warning("Clustering dialog UI elements have been deleted. Recreating dialog.")
+                self.clustering_dialog = None
+                self.create_clustering_dialog()
+
+
+    def start_clustering_from_dialog(self, method, columns, params):
+        """
+        Start clustering with parameters from the dialog.
+
+        Args:
+            method: The clustering method to use (e.g., 'kmeans', 'hdbscan')
+            columns: Set of column names to use for clustering
+            params: Dictionary of parameters for the clustering method
+        """
+        # Update clustering settings
+        self._cluster_method = method
+        self._cluster_columns = columns
+
+        # Update method-specific parameters
+        if method == "hdbscan":
+            self._cluster_min_samples = params.get("min_samples", self._cluster_min_samples)
+            self._cluster_min_cluster_size = params.get("min_cluster_size", self._cluster_min_cluster_size)
+        elif method == "kmeans":
+            self._cluster_n_clusters = params.get("n_clusters", self._cluster_n_clusters)
+
+        # Start clustering
+        self.on_apply_clustering()
+
+    def cancel_clustering(self):
+        """
+        Cancel the current clustering operation.
+        """
+        self.on_cancel_clustering()
+
+    def on_select_columns(self):
+        """
+        Open a dialog to select columns for clustering.
+        """
+        # If clustering dialog exists and is visible, use its method
+        if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
+            self.clustering_dialog.on_select_columns()
+            return
+
+        # Otherwise, implement the functionality directly
+        # Get current parameter names from data source
+        parameter_names = self.data_source.parameter_names
+
+        # Create and show the dialog
+        dialog = ColumnSelectionDialog(
+            parent=self,
+            column_names=parameter_names,
+            selected_columns=self._cluster_columns
+        )
+
+        # If dialog is accepted, update selected columns
+        if dialog.exec_():
+            self._cluster_columns = dialog.get_selected_columns()
+
+            # Update clustering dialog if it exists
+            if self.clustering_dialog is not None:
+                self.clustering_dialog._cluster_columns = self._cluster_columns
+
+                # Update button text to show number of selected columns
+                num_selected = len(self._cluster_columns)
+                if num_selected > 0:
+                    self.clustering_dialog.pushButtonSelectColumns.setText(f"Select Columns ({num_selected})")
+                else:
+                    self.clustering_dialog.pushButtonSelectColumns.setText("Select Columns")
+
+
+
+    # Worker class for performing clustering in a separate thread
+    class ClusteringWorker(QThread):
+        # Signal emitted when clustering is done
+        clustering_done = Signal(tuple)
+        # Signal emitted when an error occurs
+        clustering_error = Signal(str)
+        # Signal emitted to report progress
+        progress_updated = Signal(int)
+
+        def __init__(self, parent, method, params):
+            super().__init__(parent)
+            self.parent = parent
+            self.method = method
+            self.params = params
+            self._stop_requested = False
+
+        def stop(self):
+            """Request the worker to stop processing"""
+            self._stop_requested = True
+            logging.info("Clustering stop requested")
+
+        def run(self):
+            try:
+                # Perform clustering in the worker thread
+                result = self.parent.perform_clustering(
+                    method=self.method,
+                    **self.params,
+                    worker=self  # Pass the worker instance to allow progress updates and cancellation
+                )
+                # Emit signal with the result only if not stopped
+                if not self._stop_requested:
+                    self.clustering_done.emit(result)
+            except Exception as e:
+                # Log the error
+                logging.error(f"Error in clustering worker thread: {str(e)}")
+                # Emit error signal only if not stopped
+                if not self._stop_requested:
+                    self.clustering_error.emit(str(e))
+                    # Emit done signal with None values to ensure the UI is updated
+                    self.clustering_done.emit((None, None))
+
+    def on_apply_clustering(self):
+        """
+        Apply clustering with current parameters and update plots.
+        """
+        logging.log(0, "Applying clustering with current parameters")
+
+        # Set the _use_clustering flag to True
+        self._use_clustering = True
+        logging.log(0, "Set _use_clustering flag to True")
+
+        # Check if the required library is available
+        if self._cluster_method == "hdbscan" and not hdbscan:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "HDBSCAN Not Available",
+                "HDBSCAN is not installed. Please install it using pip or conda."
+            )
+            if self.clustering_dialog is not None:
+                self.clustering_dialog.checkBoxClustering.setChecked(False)
+            return
+        elif self._cluster_method == "kmeans" and not KMeans:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "scikit-learn Not Available",
+                "scikit-learn is not installed. Please install it using pip or conda."
+            )
+            if self.clustering_dialog is not None:
+                self.clustering_dialog.checkBoxClustering.setChecked(False)
+            return
+
+        # Check if any columns are selected for clustering
+        if not self._cluster_columns:
+            # No columns selected, use default (x, y, z) values
+            logging.info("No columns selected for clustering. Using x, y, z values.")
+
+        # Prepare parameters based on the selected method
+        params = {}
+        if self._cluster_method == "hdbscan":
+            params = {
+                "min_samples": self._cluster_min_samples,
+                "min_cluster_size": self._cluster_min_cluster_size
+            }
+        elif self._cluster_method == "kmeans":
+            params = {
+                "n_clusters": self._cluster_n_clusters
+            }
+
+        # Clean up any existing worker thread
+        if hasattr(self, 'clustering_worker') and self.clustering_worker is not None:
+            # Disconnect any existing connections
+            try:
+                self.clustering_worker.clustering_done.disconnect(self.on_clustering_done)
+                self.clustering_worker.clustering_error.disconnect(self.on_clustering_error)
+                self.clustering_worker.progress_updated.disconnect(self.on_clustering_progress)
+            except (TypeError, RuntimeError):
+                # No connections exist, or the signal was not connected to this slot
+                pass
+
+            # Wait for the thread to finish if it's still running
+            if self.clustering_worker.isRunning():
+                self.clustering_worker.wait()
+
+            # Delete the old worker
+            self.clustering_worker.deleteLater()
+
+        # Create a new worker thread
+        self.clustering_worker = self.ClusteringWorker(
+            self, 
+            self._cluster_method,
+            params
+        )
+
+        # Connect the signals to slots
+        self.clustering_worker.clustering_done.connect(self.on_clustering_done)
+        self.clustering_worker.clustering_error.connect(self.on_clustering_error)
+        self.clustering_worker.progress_updated.connect(self.on_clustering_progress)
+
+        # Start the worker thread
+        self.clustering_worker.start()
+
+    def on_cancel_clustering(self):
+        """
+        Cancel the current clustering operation.
+        """
+        logging.log(0, "Cancelling clustering operation")
+
+        if hasattr(self, 'clustering_worker') and self.clustering_worker is not None and self.clustering_worker.isRunning():
+            # Request the worker to stop
+            self.clustering_worker.stop()
+            logging.log(0, "Requested clustering worker to stop")
+
+            # Update dialog UI if it exists
+            if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
+                self.clustering_dialog.pushButtonCancelClustering.setText("Cancelling...")
+                self.clustering_dialog.pushButtonCancelClustering.setEnabled(False)
+                logging.log(0, "Updated clustering dialog UI for cancellation")
+
+            # The worker will emit clustering_done with None values when it's done
+            logging.log(0, "Waiting for worker to complete cancellation")
+
+    def on_clustering_progress(self, progress):
+        """
+        Update the progress bar with the current clustering progress.
+
+        Args:
+            progress: Integer value between 0 and 100 representing the progress percentage
+        """
+        logging.log(0, f"Clustering progress: {progress}%")
+
+        # Update progress in dialog if it exists
+        if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
+            self.clustering_dialog.update_progress(progress)
+            logging.log(0, f"Updated clustering dialog progress bar to {progress}%")
+
+    def on_clustering_error(self, error_message):
+        """
+        Handle errors that occur during clustering.
+
+        Args:
+            error_message: String containing the error message
+        """
+        logging.log(0, f"Clustering error: {error_message}")
+
+        # Clear any partial clustering results
+        self._cluster_labels = None
+        self._cluster_probabilities = None
+
+        # Set the _use_clustering flag to False
+        self._use_clustering = False
+        logging.log(0, "Set _use_clustering flag to False due to error")
+
+        # Update dialog if it exists
+        if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
+            self.clustering_dialog.clustering_completed(success=False)
+
+        # Display an error message to the user
+        QtWidgets.QMessageBox.critical(
+            self,
+            "Clustering Error",
+            f"An error occurred during clustering:\n\n{error_message}\n\nPlease try again with different parameters."
+        )
+
+    def on_clustering_done(self, result):
+        """
+        Handle the completion of clustering.
+
+        Args:
+            result: Tuple containing cluster labels and probabilities
+        """
+        logging.log(0, "Clustering completed")
+
+        # Update the cluster labels and probabilities
+        self._cluster_labels, self._cluster_probabilities = result
+
+        # Initialize the cluster data shape if it doesn't exist
+        if not hasattr(self, '_cluster_data_shape'):
+            self._cluster_data_shape = len(self._cluster_labels) if self._cluster_labels is not None else 0
+            logging.log(0, f"Initialized cluster data shape: {self._cluster_data_shape}")
+
+        # If result is None, it means clustering was cancelled or failed
+        if result[0] is None:
+            logging.info("Clustering was cancelled or failed")
+
+            # Set the _use_clustering flag to False
+            self._use_clustering = False
+            logging.log(0, "Set _use_clustering flag to False due to cancellation or failure")
+
+            # Update dialog if it exists
+            if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
+                self.clustering_dialog.clustering_completed(success=False)
+
+            return
+
+        # Now update the plot control to include the new columns
+        self.plot_control.update()
+
+        # Adjust the spinBoxCluster range based on the number of clusters
+        if self._cluster_labels is not None:
+            # Get the unique cluster labels
+            unique_clusters = np.unique(self._cluster_labels)
+            # Count the number of clusters (excluding noise points with label -1)
+            n_clusters = len([c for c in unique_clusters if c >= 0])
+            # Set the maximum value of spinBoxCluster to (n_clusters - 1)
+            self.plot_control.spinBoxCluster.setMaximum(n_clusters - 1)
+            logging.log(0, f"Adjusted spinBoxCluster range to (-1, {n_clusters - 1})")
+
+        # Update dialog if it exists
+        if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
+            self.clustering_dialog.clustering_completed(success=True)
+
+        # Display a message to the user that clustering is complete
+        QtWidgets.QMessageBox.information(
+            self,
+            "Clustering Complete",
+            f"Clustering using {self._cluster_method.upper()} has been completed successfully."
+        )
+
+
+    def perform_clustering(self, method=None, worker=None, **kwargs) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """
+        Perform clustering on the current data using the specified method.
+
+        Args:
+            method: The clustering method to use. If None, uses self._cluster_method.
+            worker: The ClusteringWorker instance that called this method, used for progress updates and cancellation.
+            **kwargs: Additional parameters for the clustering method.
+                For HDBSCAN:
+                    min_samples: Minimum number of samples in a neighborhood for a point to be considered a core point.
+                    min_cluster_size: Minimum number of points for a cluster.
+                For K-means:
+                    n_clusters: Number of clusters to form.
+
+        Returns:
+            Tuple containing:
+            - cluster_labels: Array of cluster labels for each data point
+            - cluster_probabilities: Array of cluster membership probabilities (or None for K-means)
+        """
+        if method is None:
+            method = self._cluster_method
+
+        if method == "hdbscan" and not hdbscan:
+            logging.error("HDBSCAN is not installed. Cannot perform clustering.")
+            return None, None
+        elif method == "kmeans" and not KMeans:
+            logging.error("scikit-learn is not installed. Cannot perform clustering.")
+            return None, None
+
+        if self._data_source.empty:
+            return None, None
+
+        # Extract parameters for the selected method
+        if method == "hdbscan":
+            min_samples = kwargs.get("min_samples", self._cluster_min_samples)
+            min_cluster_size = kwargs.get("min_cluster_size", self._cluster_min_cluster_size)
+        elif method == "kmeans":
+            n_clusters = kwargs.get("n_clusters", self._cluster_n_clusters)
+
+        # Report progress: 10% - Starting data preparation
+        if worker:
+            worker.progress_updated.emit(10)
+            # Check if stop was requested
+            if worker._stop_requested:
+                logging.info("Clustering cancelled during data preparation")
+                return None, None
+
+        # Get the data for clustering based on selected columns
+        if self._cluster_columns:
+            # Use selected columns
+            df = self._data_source.data
+            selected_data = []
+
+            for column in self._cluster_columns:
+                if column in df.columns:
+                    # Convert to numeric and handle errors
+                    values = pd.to_numeric(df[column], errors='coerce').values
+                    selected_data.append(values)
+
+            if not selected_data:  # If no valid columns were found
+                logging.warning("No valid columns selected for clustering. Using x, y, z values.")
+                data = np.column_stack((self.x_values, self.y_values, self.z_values))
+            else:
+                data = np.column_stack(selected_data)
+        else:
+            # If no columns are selected, use x, y, z values
+            logging.info("No columns selected for clustering. Using x, y, z values.")
+            data = np.column_stack((self.x_values, self.y_values, self.z_values))
+
+        # Report progress: 20% - Data collected
+        if worker:
+            worker.progress_updated.emit(20)
+            # Check if stop was requested
+            if worker._stop_requested:
+                logging.info("Clustering cancelled after data collection")
+                return None, None
+
+        # Remove any rows with NaN or Inf values
+        mask = ~np.any(np.isnan(data) | np.isinf(data), axis=1)
+        clean_data = data[mask]
+
+        # Report progress: 30% - Data cleaned
+        if worker:
+            worker.progress_updated.emit(30)
+            # Check if stop was requested
+            if worker._stop_requested:
+                logging.info("Clustering cancelled after data cleaning")
+                return None, None
+
+        # Check if we have enough data points
+        if method == "hdbscan" and len(clean_data) < min_cluster_size:
+            logging.warning(f"Not enough data points for HDBSCAN clustering. Need at least {min_cluster_size}.")
+            return None, None
+        elif method == "kmeans" and len(clean_data) < n_clusters:
+            logging.warning(f"Not enough data points for K-means clustering. Need at least {n_clusters} (one per cluster).")
+            return None, None
+
+        try:
+            # Report progress: 40% - Starting clustering algorithm
+            if worker:
+                worker.progress_updated.emit(40)
+                # Check if stop was requested
+                if worker._stop_requested:
+                    logging.info("Clustering cancelled before algorithm start")
+                    return None, None
+
+            if method == "hdbscan":
+                # Create and fit the HDBSCAN clusterer
+                clusterer = hdbscan.HDBSCAN(
+                    min_samples=min_samples,
+                    min_cluster_size=min_cluster_size,
+                    prediction_data=True
+                )
+
+                # This is the most CPU-intensive part
+                clusterer.fit(clean_data)
+
+                # Report progress: 70% - HDBSCAN clustering completed
+                if worker:
+                    worker.progress_updated.emit(70)
+                    # Check if stop was requested
+                    if worker._stop_requested:
+                        logging.info("Clustering cancelled after HDBSCAN fit")
+                        return None, None
+
+                # Get cluster labels and probabilities
+                labels = clusterer.labels_
+                probabilities = clusterer.probabilities_
+
+                # Create full-sized arrays with NaN for filtered points
+                full_labels = np.full(len(data), -1, dtype=np.int32)
+                full_probabilities = np.zeros(len(data))
+
+                # Fill in the values for non-filtered points
+                full_labels[mask] = labels
+                full_probabilities[mask] = probabilities
+
+            elif method == "kmeans":
+                # Create and fit the K-means clusterer
+                clusterer = KMeans(
+                    n_clusters=n_clusters,
+                    random_state=42  # For reproducibility
+                )
+
+                # This is the most CPU-intensive part
+                clusterer.fit(clean_data)
+
+                # Report progress: 70% - K-means clustering completed
+                if worker:
+                    worker.progress_updated.emit(70)
+                    # Check if stop was requested
+                    if worker._stop_requested:
+                        logging.info("Clustering cancelled after K-means fit")
+                        return None, None
+
+                # Get cluster labels
+                labels = clusterer.labels_
+
+                # Create full-sized arrays with NaN for filtered points
+                full_labels = np.full(len(data), -1, dtype=np.int32)
+
+                # Fill in the values for non-filtered points
+                full_labels[mask] = labels
+
+                # For K-means, we don't have probabilities, so we use the distance to the cluster center
+                # as a proxy for probability (inverse of distance)
+                distances = np.zeros(len(clean_data))
+
+                # Report progress: 80% - Starting distance calculations
+                if worker:
+                    worker.progress_updated.emit(80)
+                    # Check if stop was requested
+                    if worker._stop_requested:
+                        logging.info("Clustering cancelled before distance calculations")
+                        return None, None
+
+                # Calculate distances in batches to reduce CPU load and allow cancellation
+                batch_size = 1000
+                for batch_start in range(0, len(clean_data), batch_size):
+                    batch_end = min(batch_start + batch_size, len(clean_data))
+
+                    # Check if stop was requested before processing each batch
+                    if worker and worker._stop_requested:
+                        logging.info(f"Clustering cancelled during distance calculations at batch {batch_start}-{batch_end}")
+                        return None, None
+
+                    for i in range(batch_start, batch_end):
+                        cluster_idx = labels[i]
+                        if cluster_idx >= 0:  # Skip noise points
+                            center = clusterer.cluster_centers_[cluster_idx]
+                            distances[i] = np.linalg.norm(clean_data[i] - center)
+
+                    # Update progress during batch processing
+                    if worker:
+                        progress = 80 + int((batch_end / len(clean_data)) * 10)
+                        worker.progress_updated.emit(progress)
+
+                # Normalize distances to [0, 1] range and invert (closer = higher probability)
+                if len(distances) > 0:
+                    max_dist = np.max(distances) if np.max(distances) > 0 else 1
+                    probabilities = 1 - (distances / max_dist)
+                else:
+                    probabilities = np.array([])
+
+                # Create full-sized array for probabilities
+                full_probabilities = np.zeros(len(data))
+                full_probabilities[mask] = probabilities
+
+            else:
+                logging.error(f"Unsupported clustering method: {method}")
+                return None, None
+
+            # Report progress: 90% - Updating data frame
+            if worker:
+                worker.progress_updated.emit(90)
+                # Check if stop was requested
+                if worker._stop_requested:
+                    logging.info("Clustering cancelled before data frame update")
+                    return None, None
+
+            # Add cluster labels and probabilities to the data frame
+            df = self._data_source.data
+            df['Cluster Label'] = full_labels
+            df['Cluster Probability'] = full_probabilities
+            self._data_source.data = df  # Update the data frame to trigger parameter_names update
+
+            # Update the plot control to include the new columns
+            # Note: This should be done in the main thread, not here
+            # We'll handle this in the on_clustering_done method
+
+            # Report progress: 100% - Clustering completed
+            if worker:
+                worker.progress_updated.emit(100)
+
+            # Store the data shape used for clustering
+            self._cluster_data_shape = len(data)
+            logging.log(0, f"Stored cluster data shape: {self._cluster_data_shape}")
+
+            return full_labels, full_probabilities
+
+        except Exception as e:
+            logging.error(f"Error during {method} clustering: {str(e)}")
+            return None, None
+
+    def closeEvent(self, event):
+        """
+        Handle the window close event.
+        Clean up resources before closing.
+        """
+        # Stop the Z range check timer
+        if hasattr(self, 'z_range_check_timer'):
+            self.z_range_check_timer.stop()
+
+        # Clean up any existing worker thread
+        if hasattr(self, 'clustering_worker') and self.clustering_worker is not None:
+            # Disconnect any existing connections
+            try:
+                self.clustering_worker.clustering_done.disconnect(self.on_clustering_done)
+                self.clustering_worker.clustering_error.disconnect(self.on_clustering_error)
+                self.clustering_worker.progress_updated.disconnect(self.on_clustering_progress)
+            except (TypeError, RuntimeError):
+                # No connections exist, or the signal was not connected to this slot
+                pass
+
+            # Stop the worker if it's running
+            if self.clustering_worker.isRunning():
+                self.clustering_worker.stop()
+                self.clustering_worker.wait()
+
+            # Delete the worker
+            self.clustering_worker.deleteLater()
+            self.clustering_worker = None
+
+        # Call the base class implementation
+        super(NDXplorer, self).closeEvent(event)
+
+    def check_z_range_changes(self):
+        """
+        Check if the Z selection range has changed and update the histograms if necessary.
+        This method is called periodically by a timer.
+        """
+        if not self._dynamic_selection or not hasattr(self, 'selection_z'):
+            return
+
+        # Get the current Z selection range
+        current_range = self.selection_z.get_range()
+
+        # If the range has changed, update the histograms
+        if self._last_z_range != current_range:
+            logging.log(0, f"Z selection range changed from {self._last_z_range} to {current_range}")
+            self._last_z_range = current_range
+            # Update histograms and plots
+            self.update_histograms()
+            self.update_plots(skip_clustering=True)
+
+    def on_dynamic_selection_changed(self, state):
+        """
+        Handle changes to the dynamic selection checkbox.
+
+        Args:
+            state: The new state of the checkbox (Qt.Checked or Qt.Unchecked)
+        """
+        self._dynamic_selection = bool(state)
+        # Update histograms to reflect the new selection state
+        self.update_histograms()
+        # Update plots to display the new histograms
+        self.update_plots(skip_clustering=True)
+
+    def create_umap_plot(self, columns, params):
+        """
+        Create and display a UMAP plot in a separate window using PyQtGraph.
+
+        Args:
+            columns: Set of column names to use for UMAP
+            params: Dictionary of parameters for UMAP
+                n_neighbors: Number of neighbors to consider for each point
+                min_dist: Minimum distance between points in the embedding
+                n_components: Number of components (dimensions) for the embedding
+        """
+        logging.log(0, f"Creating UMAP plot with params: {params}")
+
+        # Check if UMAP is available
+        if not umap:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "UMAP Not Available",
+                "UMAP is not installed. Please install it using pip or conda."
+            )
+            return
+
+        # Store the UMAP windows as instance variables to prevent garbage collection
+        if not hasattr(self, 'umap_windows'):
+            self.umap_windows = []
+
+        # Close any existing UMAP windows
+        for window in self.umap_windows:
+            window.close()
+        self.umap_windows = []
+
+        # Get the data for UMAP based on selected columns
+        if columns:
+            # Use selected columns
+            df = self._data_source.data
+            selected_data = []
+
+            for column in columns:
+                if column in df.columns:
+                    # Convert to numeric and handle errors
+                    values = pd.to_numeric(df[column], errors='coerce').values
+                    selected_data.append(values)
+
+            if not selected_data:  # If no valid columns were found
+                logging.warning("No valid columns selected for UMAP. Using x, y, z values.")
+                data = np.column_stack((self.x_values, self.y_values, self.z_values))
+            else:
+                data = np.column_stack(selected_data)
+        else:
+            # If no columns are selected, use x, y, z values
+            logging.info("No columns selected for UMAP. Using x, y, z values.")
+            data = np.column_stack((self.x_values, self.y_values, self.z_values))
+
+        # Remove any rows with NaN or Inf values
+        mask = ~np.any(np.isnan(data) | np.isinf(data), axis=1)
+        clean_data = data[mask]
+
+        # Check if we have enough data points
+        if len(clean_data) < params['n_neighbors']:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Not Enough Data",
+                f"Not enough data points for UMAP. Need at least {params['n_neighbors']} (n_neighbors parameter)."
+            )
+            return
+
+        try:
+            # Create and fit the UMAP reducer
+            reducer = umap.UMAP(
+                n_neighbors=params['n_neighbors'],
+                min_dist=params['min_dist'],
+                n_components=params['n_components'],
+                random_state=42  # For reproducibility
+            )
+
+            # Fit and transform the data
+            embedding = reducer.fit_transform(clean_data)
+
+            # Import pyqtgraph
+            import pyqtgraph as pg
+
+            # Create the plot based on the number of components
+            if params['n_components'] == 2:
+                # Create a new window for the UMAP plot
+                umap_window = QtWidgets.QMainWindow()
+                umap_window.setWindowTitle('UMAP Projection')
+                umap_window.resize(800, 600)
+
+                # Add the window to the list of UMAP windows
+                self.umap_windows.append(umap_window)
+
+                # Create central widget and layout
+                central_widget = QtWidgets.QWidget()
+                layout = QtWidgets.QVBoxLayout(central_widget)
+
+                # Create plot widget
+                plot_widget = pg.PlotWidget(title='UMAP Projection')
+                plot_widget.setLabel('bottom', 'UMAP 1')
+                plot_widget.setLabel('left', 'UMAP 2')
+
+                # If cluster labels are available, color points by cluster
+                if hasattr(self, '_cluster_labels') and self._cluster_labels is not None:
+                    # Get cluster labels for non-filtered points
+                    cluster_labels = self._cluster_labels[mask]
+
+                    # Get unique cluster labels
+                    unique_labels = np.unique(cluster_labels)
+
+                    # Create a colormap
+                    colors = plt.cm.viridis(np.linspace(0, 1, len(unique_labels)))
+
+                    # Create a legend
+                    legend = pg.LegendItem(offset=(70, 30))
+                    legend.setParentItem(plot_widget.graphicsItem())
+
+                    # Create a scatter plot item for each cluster
+                    for i, label in enumerate(unique_labels):
+                        mask_label = cluster_labels == label
+
+                        # Convert color to RGBA format for PyQtGraph
+                        color = colors[i]
+                        rgba = (int(color[0]*255), int(color[1]*255), int(color[2]*255), int(color[3]*100))
+
+                        scatter_item = pg.ScatterPlotItem(
+                            x=embedding[mask_label, 0],
+                            y=embedding[mask_label, 1],
+                            size=5,
+                            pen=None,
+                            brush=pg.mkBrush(*rgba),
+                            name=f"Cluster {label}"
+                        )
+                        plot_widget.addItem(scatter_item)
+
+                        # Add item to legend
+                        legend.addItem(scatter_item, f"Cluster {label}")
+                else:
+                    # Create scatter plot item with default color
+                    scatter = pg.ScatterPlotItem(
+                        x=embedding[:, 0],
+                        y=embedding[:, 1],
+                        size=5,
+                        pen=None,
+                        brush=pg.mkBrush(255, 255, 255, 100)
+                    )
+                    plot_widget.addItem(scatter)
+
+                # Add plot widget to layout
+                layout.addWidget(plot_widget)
+
+                # Set central widget
+                umap_window.setCentralWidget(central_widget)
+
+                # Show the main plot window
+                umap_window.show()
+
+            elif params['n_components'] == 3:
+                # Import pyqtgraph.opengl for 3D plotting
+                import pyqtgraph.opengl as gl
+
+                # Create a new window for the UMAP plot
+                umap_window = QtWidgets.QMainWindow()
+                umap_window.setWindowTitle('UMAP Projection (3D)')
+                umap_window.resize(800, 600)
+
+                # Add the window to the list of UMAP windows
+                self.umap_windows.append(umap_window)
+
+                # Create central widget and layout
+                central_widget = QtWidgets.QWidget()
+                layout = QtWidgets.QVBoxLayout(central_widget)
+
+                # Create 3D view widget
+                view_widget = gl.GLViewWidget()
+
+                # If cluster labels are available, color points by cluster
+                if hasattr(self, '_cluster_labels') and self._cluster_labels is not None:
+                    # Get cluster labels for non-filtered points
+                    cluster_labels = self._cluster_labels[mask]
+
+                    # Get unique cluster labels
+                    unique_labels = np.unique(cluster_labels)
+
+                    # Create a colormap
+                    colors = plt.cm.viridis(np.linspace(0, 1, len(unique_labels)))
+
+                    # Create a scatter plot for each cluster
+                    for i, label in enumerate(unique_labels):
+                        mask_label = cluster_labels == label
+
+                        # Convert color to RGBA format for PyQtGraph
+                        color = colors[i]
+
+                        scatter_item = gl.GLScatterPlotItem(
+                            pos=embedding[mask_label],
+                            size=5,
+                            color=(color[0], color[1], color[2], 0.5),
+                            pxMode=True
+                        )
+                        view_widget.addItem(scatter_item)
+
+                    # Create a separate 2D plot widget for the legend
+                    legend_widget = pg.PlotWidget(title='Legend')
+                    legend_widget.setFixedHeight(len(unique_labels) * 30 + 50)  # Adjust height based on number of clusters
+                    legend_widget.getPlotItem().hideAxis('left')
+                    legend_widget.getPlotItem().hideAxis('bottom')
+
+                    # Create a legend
+                    legend = pg.LegendItem(offset=(10, 10))
+                    legend.setParentItem(legend_widget.getPlotItem())
+
+                    # Add items to the legend
+                    for i, label in enumerate(unique_labels):
+                        color = colors[i]
+                        rgba = (int(color[0]*255), int(color[1]*255), int(color[2]*255), int(color[3]*100))
+
+                        # Create a dummy scatter item for the legend
+                        dummy_scatter = pg.ScatterPlotItem(
+                            x=[0], y=[0],
+                            size=5,
+                            pen=None,
+                            brush=pg.mkBrush(*rgba)
+                        )
+
+                        # Add to legend
+                        legend.addItem(dummy_scatter, f"Cluster {label}")
+
+                    # Add legend widget to layout
+                    layout.addWidget(legend_widget)
+                else:
+                    # Create 3D scatter plot with default color
+                    scatter_plot = gl.GLScatterPlotItem(
+                        pos=embedding,
+                        size=5,
+                        color=(1, 1, 1, 0.5),
+                        pxMode=True
+                    )
+                    view_widget.addItem(scatter_plot)
+
+                # Add axes
+                axes = gl.GLAxisItem()
+                axes.setSize(x=1, y=1, z=1)
+                view_widget.addItem(axes)
+
+                # Add view widget to layout
+                layout.addWidget(view_widget)
+
+                # Set central widget
+                umap_window.setCentralWidget(central_widget)
+
+                # Show the main plot window
+                umap_window.show()
+
+        except Exception as e:
+            logging.error(f"Error during UMAP: {str(e)}")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "UMAP Error",
+                f"An error occurred during UMAP: {str(e)}"
+            )
+
     def update_2d_plot(self):
         try:
             new_data, x_edges, y_edges = self._histogram["2d"]
@@ -971,4 +2267,3 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Redraw the canvas to update the display
         self.canvas.draw_idle()
-
