@@ -38,6 +38,7 @@ requirements:
     - scipy
     - guidata 3.0.*
     - guiqwt
+    - umap-learn
 
 test:
   imports:

@@ -702,6 +702,13 @@
          </widget>
         </item>
         <item>
+         <widget class="QCheckBox" name="checkBoxDynamicSelection">
+          <property name="text">
+           <string>Dynamic</string>
+          </property>
+         </widget>
+        </item>
+        <item>
          <spacer name="horizontalSpacer">
           <property name="orientation">
            <enum>Qt::Horizontal</enum>
@@ -713,6 +720,26 @@
            </size>
           </property>
          </spacer>
+        </item>
+        <item>
+         <widget class="QLabel" name="label_4">
+          <property name="text">
+           <string>Cluster</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QSpinBox" name="spinBoxCluster">
+          <property name="minimum">
+           <number>-1</number>
+          </property>
+          <property name="maximum">
+           <number>999</number>
+          </property>
+          <property name="value">
+           <number>-1</number>
+          </property>
+         </widget>
         </item>
         <item>
          <widget class="QToolButton" name="toolButton">
