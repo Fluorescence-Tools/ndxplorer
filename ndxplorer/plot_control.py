@@ -154,6 +154,14 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.spinBoxBin2DY.setValue(int(v))
 
     @property
+    def selected_cluster(self):
+        """
+        Returns the currently selected cluster from spinBoxCluster.
+        A value of -1 means all clusters should be displayed.
+        """
+        return int(self.spinBoxCluster.value())
+
+    @property
     def x_range(self):
         return float(self.spinBoxXmin.value()), \
                float(self.spinBoxXmax.value())
@@ -289,6 +297,9 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.actionUpdate_y_axis_settings.triggered.connect(self.onUpdate_y_axis_settings)
         self.actionUpdate_z_axis_settings.triggered.connect(self.onUpdate_z_axis_settings)
 
+        # Connect spinBoxCluster to update plots when value changes
+        self.spinBoxCluster.valueChanged.connect(self.onClusterSelectionChanged)
+
     def set_axis_settings(self, name, amin, amax, scale, bins_1d, bins_2d):
         self.axis_settings[str(name)] = {
             "n_bins_1d": float(bins_1d),
@@ -333,6 +344,17 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             self.n_zhist_1d,
             None
         )
+
+    def onClusterSelectionChanged(self, value):
+        """
+        Handle changes to the cluster selection spinbox.
+
+        Args:
+            value: The new value of the spinbox
+        """
+        logging.log(0, f"Cluster selection changed to {value}")
+        # Update plots with skip_clustering=True to avoid re-clustering the data
+        self.parent.update_plots(skip_clustering=True)
 
     def onX_axis_changed(self):
         _, name = self.p1
@@ -410,8 +432,11 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.comboBoxSelZ.addItems(pn)
         self.actionUpdatePlots.blockSignals(False)
         self.actionUpdate_axis_scales.blockSignals(False)
-        self.actionUpdatePlots.trigger()
-        logging.log(0, "Updated parameter selectors and triggered plot update")
+
+        # Instead of triggering the action, call update_plots directly with skip_clustering=True
+        # This ensures clustering is not applied automatically after loading data
+        self.parent.update_plots(skip_clustering=True)
+        logging.log(0, "Updated parameter selectors and triggered plot update with clustering skipped")
 
     def onClearSelection(self):
         logging.log(0, "onClearSelection")

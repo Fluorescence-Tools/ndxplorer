@@ -80,4 +80,14 @@ metadata = dict(
     }
 )
 
+metadata['install_requires'] = [
+    'numpy',
+    'matplotlib',
+    'pyyaml',
+    'pandas',
+    'scipy',
+    'hdbscan',  # Added for clustering functionality
+    'scikit-learn',  # Added for K-means clustering
+]
+
 setup(**metadata)
