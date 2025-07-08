@@ -1,0 +1,43 @@
+- name: "Perrin-Equation"
+  equation: "r0/(1+x/rho)"
+  parameters:
+    r0: 0.38
+    rho: 1.5
+
+- name: "Perrin 2x rho"
+  equation: "r0*(X/(1+(x/rho1))+(1-X)/(1+(x/rho2)))"
+  parameters:
+    r0: 0.38
+    X: 0.5
+    rho1: 0.5
+    rho2: 10.0
+
+- name: "FD/FA vs tau (static line)"
+  equation: "x*tauD0*kf/((tauD0-x)*PhiA)"
+  parameters:
+    tauD0: 4.0
+    kf: 0.2
+    PhiA: 0.32
+
+- name: "FD/FA vs tau (dynamic line)"
+  equation: "kf/(PhiA*((1/tauDA2+1/tauDA1-x/(tauDA1*tauDA2))-1/tauD0))"
+  parameters:
+    tauD0: 4.0
+    kf: 0.2
+    PhiA: 0.32
+    tauDA1: 1.0
+    tauDA2: 3.0
+
+- name: "E vs tau (static line)"
+  equation: "1 - x/tauD0"
+  parameters:
+    tauD0: 4.0
+
+- name: "E vs tau (dynamic line)"
+  equation: "1-(tauDA1*tauDA2/(tauD0*(tauDA1+tauDA2-x)))"
+  parameters:
+    tauD0: 4.0
+    kf: 0.2
+    PhiA: 0.32
+    tauDA1: 1.0
+    tauDA2: 3.0
