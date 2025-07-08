@@ -1,5 +1,7 @@
 """
 Dialog for clustering controls.
+Supports keyboard navigation:
+- Escape key to close/hide the dialog
 """
 from qtpy.QtCore import Signal
 
@@ -63,6 +65,7 @@ class ClusteringDialog(QtWidgets.QDialog):
         self._umap_n_neighbors = 15
         self._umap_min_dist = 0.1
         self._umap_n_components = 2
+        self._use_umap_enhancement = False  # default to not using UMAP enhancement
 
         # Common clustering variables
         self._cluster_columns = set()
@@ -80,11 +83,31 @@ class ClusteringDialog(QtWidgets.QDialog):
         event.ignore()
         self.hide()
 
+    def keyPressEvent(self, event):
+        """
+        Handle keyboard events.
+        - Escape key: hide the dialog
+        """
+        key = event.key()
+
+        if key == QtCore.Qt.Key_Escape:
+            logging.log(0, "ClusteringDialog keyPressEvent - Escape key pressed, hiding dialog")
+            self.hide()
+            event.accept()
+        else:
+            # Pass other keys to parent class
+            super(ClusteringDialog, self).keyPressEvent(event)
+
     def setup_ui(self):
         """Set up the dialog UI."""
         logging.log(0, "Setting up ClusteringDialog UI")
         # Main layout
         main_layout = QtWidgets.QVBoxLayout(self)
+
+        # Add help text for keyboard navigation
+        help_label = QtWidgets.QLabel("Press Escape key to close this dialog")
+        help_label.setStyleSheet("color: #666666; font-size: 10pt;")
+        main_layout.addWidget(help_label)
 
         # Create dropdown for selecting clustering method
         method_layout = QtWidgets.QHBoxLayout()
@@ -159,7 +182,9 @@ class ClusteringDialog(QtWidgets.QDialog):
 
         # Create button to select columns for clustering
         self.pushButtonSelectColumns = QtWidgets.QPushButton()
-        self.pushButtonSelectColumns.setText("Select Columns")
+        self.pushButtonSelectColumns.setText("Select Columns (Recommended)")
+        self.pushButtonSelectColumns.setToolTip("It is highly recommended to select specific columns for clustering to get better results.")
+        self.pushButtonSelectColumns.setStyleSheet("background-color: #e6f2ff; font-weight: bold;")
         self.pushButtonSelectColumns.clicked.connect(self.on_select_columns)
 
         # Create button to apply clustering
@@ -187,6 +212,14 @@ class ClusteringDialog(QtWidgets.QDialog):
         # Create a group box for UMAP settings
         self.groupBoxUMAP = QtWidgets.QGroupBox("UMAP Settings")
         umap_layout = QtWidgets.QFormLayout()
+
+        # Add checkbox for UMAP enhancement
+        self.checkBoxUMAPEnhancement = QtWidgets.QCheckBox("Enhance clustering with UMAP")
+        self.checkBoxUMAPEnhancement.setToolTip("Use UMAP for dimensionality reduction before applying clustering algorithm")
+        self.checkBoxUMAPEnhancement.setChecked(self._use_umap_enhancement)
+        self.checkBoxUMAPEnhancement.stateChanged.connect(self.on_umap_enhancement_changed)
+        umap_layout.addRow(self.checkBoxUMAPEnhancement)
+
         umap_layout.addRow("Number of Neighbors:", self.spinBoxUMAPNeighbors)
         umap_layout.addRow("Minimum Distance:", self.doubleSpinBoxUMAPMinDist)
         umap_layout.addRow("Number of Components:", self.spinBoxUMAPComponents)
@@ -264,6 +297,13 @@ class ClusteringDialog(QtWidgets.QDialog):
         logging.log(0, f"Changing UMAP n_components to {value}")
         self._umap_n_components = value
 
+    def on_umap_enhancement_changed(self, state):
+        """
+        Handle changes to the UMAP enhancement checkbox.
+        """
+        logging.log(0, f"Changing UMAP enhancement to {bool(state)}")
+        self._use_umap_enhancement = bool(state)
+
     def on_clustering_method_changed(self, method):
         """
         Handle changes to the clustering method.
@@ -295,9 +335,9 @@ class ClusteringDialog(QtWidgets.QDialog):
                 # Update button text to show number of selected columns
                 num_selected = len(self._cluster_columns)
                 if num_selected > 0:
-                    self.pushButtonSelectColumns.setText(f"Select Columns ({num_selected})")
+                    self.pushButtonSelectColumns.setText(f"Select Columns (Recommended) ({num_selected})")
                 else:
-                    self.pushButtonSelectColumns.setText("Select Columns")
+                    self.pushButtonSelectColumns.setText("Select Columns (Recommended)")
 
     def on_apply_clustering(self):
         """
@@ -325,9 +365,11 @@ class ClusteringDialog(QtWidgets.QDialog):
             # No columns selected, ask user if they want to use default (x, y, z) values
             reply = QtWidgets.QMessageBox.question(
                 self,
-                "No Columns Selected",
-                "No columns are selected for clustering. Do you want to select columns now?\n\n"
-                "If you click 'No', clustering will use the current X, Y, and Z axis values.",
+                "Select Columns for Clustering",
+                "It is recommended to select specific columns for clustering to get better results.\n\n"
+                "Would you like to select columns now?\n\n"
+                "If you click 'No', clustering will use only the current X, Y, and Z axis values, "
+                "which may not provide optimal clustering results.",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
                 QtWidgets.QMessageBox.Yes
             )
@@ -338,7 +380,8 @@ class ClusteringDialog(QtWidgets.QDialog):
 
                 # If still no columns selected after dialog, return
                 if not self._cluster_columns:
-                    return
+                    return 
+            # If user clicked No, continue with clustering using X, Y, Z values
 
         # Update UI for clustering in progress
         self.pushButtonApplyClustering.setEnabled(False)
@@ -362,6 +405,13 @@ class ClusteringDialog(QtWidgets.QDialog):
                 params = {
                     "n_clusters": self._cluster_n_clusters
                 }
+
+            # Add UMAP enhancement parameters if enabled
+            if self._use_umap_enhancement:
+                params["use_umap_enhancement"] = True
+                params["umap_n_neighbors"] = self._umap_n_neighbors
+                params["umap_min_dist"] = self._umap_min_dist
+                params["umap_n_components"] = self._umap_n_components
 
             self.parent().start_clustering_from_dialog(
                 self._cluster_method,
@@ -409,9 +459,11 @@ class ClusteringDialog(QtWidgets.QDialog):
             # No columns selected, ask user if they want to use default (x, y, z) values
             reply = QtWidgets.QMessageBox.question(
                 self,
-                "No Columns Selected",
-                "No columns are selected for UMAP. Do you want to select columns now?\n\n"
-                "If you click 'No', UMAP will use the current X, Y, and Z axis values.",
+                "Select Columns for UMAP",
+                "It is recommended to select specific columns for UMAP to get better results.\n\n"
+                "Would you like to select columns now?\n\n"
+                "If you click 'No', UMAP will use only the current X, Y, and Z axis values, "
+                "which may not provide optimal dimensionality reduction results.",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
                 QtWidgets.QMessageBox.Yes
             )
@@ -423,6 +475,7 @@ class ClusteringDialog(QtWidgets.QDialog):
                 # If still no columns selected after dialog, return
                 if not self._cluster_columns:
                     return
+            # If user clicked No, continue with UMAP using X, Y, Z values
 
         # Notify parent to create UMAP plot
         if self.parent() is not None and hasattr(self.parent(), 'create_umap_plot'):
