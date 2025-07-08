@@ -100,9 +100,12 @@ class CurveWidget(QtWidgets.QGroupBox):
         self.curve_color = "#ff0000"  # Default color is red
 
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(0)  # Reduce spacing between elements
+        layout.setContentsMargins(0, 0, 0, 0)  # Reduce margins
 
         # Equation input
         eq_layout = QtWidgets.QHBoxLayout()
+        eq_layout.setSpacing(0)  # Reduce spacing
         eq_layout.addWidget(QtWidgets.QLabel("Equation: y = "))
         self.equation_edit = QtWidgets.QLineEdit(equation)
         eq_layout.addWidget(self.equation_edit)
@@ -110,6 +113,7 @@ class CurveWidget(QtWidgets.QGroupBox):
 
         # Color picker
         color_layout = QtWidgets.QHBoxLayout()
+        color_layout.setSpacing(0)  # Reduce spacing
         color_layout.addWidget(QtWidgets.QLabel("Color:"))
         self.color_button = QtWidgets.QPushButton()
         self.color_button.setFixedSize(24, 24)
@@ -223,25 +227,23 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         self.predefined_equations = []  # List to store predefined equations
 
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(0)  # Reduce spacing between elements
+        layout.setContentsMargins(0, 0, 0, 0)  # Reduce margins
 
-        # Predefined equations dropdown
+        # Predefined equations dropdown with add button
         predefined_layout = QtWidgets.QHBoxLayout()
-        predefined_layout.addWidget(QtWidgets.QLabel("Predefined Equation:"))
+        predefined_layout.setSpacing(0)  # Reduce spacing
+        predefined_layout.addWidget(QtWidgets.QLabel("Equation:"))
         self.predefined_combo = QtWidgets.QComboBox()
         self.predefined_combo.addItem("Custom Equation")  # Default option
         predefined_layout.addWidget(self.predefined_combo)
+        self.add_button = QtWidgets.QPushButton("Add Curve")
+        predefined_layout.addWidget(self.add_button)
         layout.addLayout(predefined_layout)
-
-        # Add curve button
-        buttons_layout = QtWidgets.QHBoxLayout()
-        self.add_button = QtWidgets.QPushButton("Add Custom Curve")
-        buttons_layout.addWidget(self.add_button)
-        self.add_predefined_button = QtWidgets.QPushButton("Add Selected Predefined Curve")
-        buttons_layout.addWidget(self.add_predefined_button)
-        layout.addLayout(buttons_layout)
 
         # Number of points control
         points_layout = QtWidgets.QHBoxLayout()
+        points_layout.setSpacing(0)  # Reduce spacing
         points_layout.addWidget(QtWidgets.QLabel("Number of points:"))
         self.points_spinbox = QtWidgets.QSpinBox()
         self.points_spinbox.setMinimum(10)
@@ -257,15 +259,32 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         self.scroll_widget = QtWidgets.QWidget()
         self.scroll_layout = QtWidgets.QVBoxLayout(self.scroll_widget)
         self.scroll_layout.setAlignment(Qt.AlignTop)  # Align widgets to the top
+        self.scroll_layout.setSpacing(0)  # Reduce spacing between curve widgets
+        self.scroll_layout.setContentsMargins(0, 0, 0, 0)  # Reduce margins
         self.scroll_area.setWidget(self.scroll_widget)
         layout.addWidget(self.scroll_area)
 
         # Connect signals
-        self.add_button.clicked.connect(lambda: self.add_curve())
-        self.add_predefined_button.clicked.connect(self.add_predefined_curve)
+        self.add_button.clicked.connect(self.add_selected_curve)
 
         # Load predefined equations
         self.load_predefined_equations()
+
+    def add_selected_curve(self):
+        """
+        Add a curve based on the selected item in the predefined_combo.
+        If "Custom Equation" is selected, add a custom curve.
+        Otherwise, add the selected predefined curve.
+        """
+        # Get the selected equation index
+        index = self.predefined_combo.currentIndex()
+
+        # If "Custom Equation" is selected (index 0), add a custom curve
+        if index == 0:
+            self.add_curve()
+        else:
+            # Otherwise, add the selected predefined curve
+            self.add_predefined_curve()
 
     def load_predefined_equations(self):
         """
@@ -292,11 +311,6 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         """
         # Get the selected equation index (subtract 1 because the first item is "Custom Equation")
         index = self.predefined_combo.currentIndex() - 1
-
-        # If "Custom Equation" is selected, just add a default curve
-        if index < 0:
-            self.add_curve()
-            return
 
         # Get the selected equation
         equation_data = self.predefined_equations[index]
