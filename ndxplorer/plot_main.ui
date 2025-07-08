@@ -249,7 +249,7 @@
               <item row="2" column="0">
                <widget class="QToolButton" name="toolButton_3">
                 <property name="enabled">
-                 <bool>false</bool>
+                 <bool>true</bool>
                 </property>
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
@@ -258,7 +258,7 @@
                  </sizepolicy>
                 </property>
                 <property name="text">
-                 <string>save</string>
+                 <string>table</string>
                 </property>
                </widget>
               </item>

@@ -17,6 +17,9 @@ except ImportError:
 class ColumnSelectionDialog(QtWidgets.QDialog):
     """
     Dialog for selecting columns to use in clustering.
+    Supports keyboard navigation:
+    - Up/Down arrow keys to navigate through columns
+    - Ctrl+Space to toggle selection of the focused column
     """
     def __init__(self, parent=None, column_names=None, selected_columns=None):
         logging.log(0, f"Initializing ColumnSelectionDialog with {len(column_names) if column_names else 0} columns")
@@ -28,12 +31,21 @@ class ColumnSelectionDialog(QtWidgets.QDialog):
         self.column_names = column_names or []
         self.selected_columns = selected_columns or set()
 
+        # Track the currently focused checkbox
+        self.current_focus_index = -1
+        self.visible_checkboxes = []
+
         # Create layout
         layout = QtWidgets.QVBoxLayout()
 
         # Add label
         label = QtWidgets.QLabel("Select columns to use for clustering:")
         layout.addWidget(label)
+
+        # Add help text for keyboard navigation
+        help_label = QtWidgets.QLabel("Navigation: Use Up/Down keys to move, Ctrl+Space to toggle selection")
+        help_label.setStyleSheet("color: #666666; font-size: 10pt;")
+        layout.addWidget(help_label)
 
         # Add filter line edit
         filter_layout = QtWidgets.QHBoxLayout()
@@ -60,6 +72,12 @@ class ColumnSelectionDialog(QtWidgets.QDialog):
             checkbox.setChecked(column in self.selected_columns)
             self.checkboxes[column] = checkbox
             self.scroll_layout.addWidget(checkbox)
+            self.visible_checkboxes.append(checkbox)
+
+        # Set focus on the first checkbox if any exist
+        if self.visible_checkboxes:
+            self.current_focus_index = 0
+            self.update_focus()
 
         # Add select all / deselect all buttons
         buttons_layout = QtWidgets.QHBoxLayout()
@@ -90,21 +108,81 @@ class ColumnSelectionDialog(QtWidgets.QDialog):
         logging.log(0, f"Selecting all {len(self.checkboxes)} columns")
         for checkbox in self.checkboxes.values():
             checkbox.setChecked(True)
+        # Maintain focus after selection
+        self.update_focus()
 
     def deselect_all(self):
         """Deselect all columns"""
         logging.log(0, f"Deselecting all {len(self.checkboxes)} columns")
         for checkbox in self.checkboxes.values():
             checkbox.setChecked(False)
+        # Maintain focus after deselection
+        self.update_focus()
 
     def filter_columns(self, text):
         """Filter the checkboxes based on the text entered in the line edit"""
         logging.log(0, f"Filtering columns with text: '{text}'")
         filter_text = text.lower()
+        self.visible_checkboxes = []
+
         for column, checkbox in self.checkboxes.items():
             # Show checkbox if column name contains filter text (case-insensitive)
             # or if filter text is empty
-            checkbox.setVisible(not filter_text or filter_text in column.lower())
+            is_visible = not filter_text or filter_text in column.lower()
+            checkbox.setVisible(is_visible)
+            if is_visible:
+                self.visible_checkboxes.append(checkbox)
+
+        # Reset focus index if no checkboxes are visible
+        if not self.visible_checkboxes:
+            self.current_focus_index = -1
+        # Adjust focus index if it's out of bounds
+        elif self.current_focus_index >= len(self.visible_checkboxes):
+            self.current_focus_index = len(self.visible_checkboxes) - 1
+
+        # Update visual focus
+        self.update_focus()
+
+    def update_focus(self):
+        """Update the visual focus indicator for the currently focused checkbox"""
+        # Reset all checkboxes to normal style
+        for checkbox in self.visible_checkboxes:
+            checkbox.setStyleSheet("")
+
+        # Set style for the focused checkbox
+        if 0 <= self.current_focus_index < len(self.visible_checkboxes):
+            focused_checkbox = self.visible_checkboxes[self.current_focus_index]
+            focused_checkbox.setStyleSheet("QCheckBox { background-color: lightblue; }")
+
+            # Ensure the focused checkbox is visible in the scroll area
+            self.scroll_area.ensureWidgetVisible(focused_checkbox)
+
+    def keyPressEvent(self, event):
+        """Handle keyboard navigation"""
+        key = event.key()
+        modifiers = event.modifiers()
+
+        if key == QtCore.Qt.Key_Up:
+            # Move focus up
+            if self.visible_checkboxes and self.current_focus_index > 0:
+                self.current_focus_index -= 1
+                self.update_focus()
+            event.accept()
+        elif key == QtCore.Qt.Key_Down:
+            # Move focus down
+            if self.visible_checkboxes and self.current_focus_index < len(self.visible_checkboxes) - 1:
+                self.current_focus_index += 1
+                self.update_focus()
+            event.accept()
+        elif key == QtCore.Qt.Key_Space and modifiers == QtCore.Qt.ControlModifier:
+            # Toggle checkbox state with Ctrl+Space
+            if 0 <= self.current_focus_index < len(self.visible_checkboxes):
+                checkbox = self.visible_checkboxes[self.current_focus_index]
+                checkbox.setChecked(not checkbox.isChecked())
+            event.accept()
+        else:
+            # Pass other keys to parent class
+            super(ColumnSelectionDialog, self).keyPressEvent(event)
 
     def get_selected_columns(self):
         """Get the set of selected column names"""
