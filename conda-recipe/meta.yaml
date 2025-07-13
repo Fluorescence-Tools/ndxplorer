@@ -33,7 +33,6 @@ requirements:
     - pandas
     - pyqtgraph
     - typing-extensions
-    - qscintilla2
     - matplotlib
     - scipy
     - guidata 3.0.*
