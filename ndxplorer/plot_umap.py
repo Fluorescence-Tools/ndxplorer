@@ -1,0 +1,340 @@
+"""
+UMAP plotting functionality for NDXplorer.
+
+This module provides functions for creating and displaying UMAP plots
+in separate windows using PyQtGraph.
+"""
+
+from typing import Dict, List, Optional, Tuple, Set, Any
+import numpy as np
+import pandas as pd
+import logging
+
+# Delay import of heavy libraries
+umap = None
+
+try:
+    from chisurf.gui import QtGui, QtCore, QtWidgets
+except ImportError:
+    from qtpy import QtCore
+    from qtpy import QtGui, QtWidgets
+
+import matplotlib.pyplot as plt
+import pyqtgraph as pg
+
+# Import for 3D plotting
+try:
+    import pyqtgraph.opengl as gl
+except ImportError:
+    gl = None
+
+
+def create_umap_plot(parent, columns: Set[str], params: Dict[str, Any], 
+                     data_source, x_values, y_values, z_values, 
+                     cluster_labels=None):
+    """
+    Create and display a UMAP plot in a separate window using PyQtGraph.
+
+    Args:
+        parent: The parent widget (used for message boxes and window ownership)
+        columns: Set of column names to use for UMAP
+        params: Dictionary of parameters for UMAP
+            n_neighbors: Number of neighbors to consider for each point
+            min_dist: Minimum distance between points in the embedding
+            n_components: Number of components (dimensions) for the embedding
+        data_source: The data source containing the data to plot
+        x_values: The x values for the plot
+        y_values: The y values for the plot
+        z_values: The z values for the plot
+        cluster_labels: Optional array of cluster labels for coloring points
+    """
+    logging.log(0, f"Creating UMAP plot with params: {params}")
+
+    # Lazy import of umap
+    if umap is None:
+        try:
+            import umap
+            logging.info("Imported umap library")
+        except ImportError:
+            umap = None
+
+    # Check if UMAP is available
+    if not umap:
+        QtWidgets.QMessageBox.warning(
+            parent,
+            "UMAP Not Available",
+            "UMAP is not installed. Please install it using pip or conda."
+        )
+        return
+
+    # Store the UMAP windows as instance variables to prevent garbage collection
+    if not hasattr(parent, 'umap_windows'):
+        parent.umap_windows = []
+
+    # Close any existing UMAP windows
+    for window in parent.umap_windows:
+        window.close()
+    parent.umap_windows = []
+
+    # Get the data for UMAP based on selected columns
+    if columns:
+        # Use selected columns
+        df = data_source.data
+        selected_data = []
+
+        for column in columns:
+            if column in df.columns:
+                # Convert to numeric and handle errors
+                values = pd.to_numeric(df[column], errors='coerce').values
+                selected_data.append(values)
+
+        if not selected_data:  # If no valid columns were found
+            logging.warning("No valid columns selected for UMAP. Using x, y, z values.")
+            data = np.column_stack((x_values, y_values, z_values))
+        else:
+            data = np.column_stack(selected_data)
+    else:
+        # If no columns are selected, use x, y, z values
+        logging.info("No columns selected for UMAP. Using x, y, z values.")
+        data = np.column_stack((x_values, y_values, z_values))
+
+    # Remove any rows with NaN or Inf values
+    mask = ~np.any(np.isnan(data) | np.isinf(data), axis=1)
+    clean_data = data[mask]
+
+    # Check if we have enough data points
+    if len(clean_data) < params['n_neighbors']:
+        QtWidgets.QMessageBox.warning(
+            parent,
+            "Not Enough Data",
+            f"Not enough data points for UMAP. Need at least {params['n_neighbors']} (n_neighbors parameter)."
+        )
+        return
+
+    try:
+        # Create and fit the UMAP reducer
+        reducer = umap.UMAP(
+            n_neighbors=params['n_neighbors'],
+            min_dist=params['min_dist'],
+            n_components=params['n_components'],
+            random_state=42  # For reproducibility
+        )
+
+        # Fit and transform the data
+        embedding = reducer.fit_transform(clean_data)
+
+        # Create the plot based on the number of components
+        if params['n_components'] == 2:
+            create_2d_umap_plot(parent, embedding, mask, cluster_labels)
+        elif params['n_components'] == 3:
+            create_3d_umap_plot(parent, embedding, mask, cluster_labels)
+
+    except Exception as e:
+        logging.error(f"Error during UMAP: {str(e)}")
+        QtWidgets.QMessageBox.critical(
+            parent,
+            "UMAP Error",
+            f"An error occurred during UMAP: {str(e)}"
+        )
+
+
+def create_2d_umap_plot(parent, embedding, mask, cluster_labels=None):
+    """
+    Create and display a 2D UMAP plot.
+
+    Args:
+        parent: The parent widget
+        embedding: The UMAP embedding (2D array)
+        mask: Mask for filtering data points
+        cluster_labels: Optional array of cluster labels for coloring points
+    """
+    # Create a new window for the UMAP plot
+    umap_window = QtWidgets.QMainWindow()
+    umap_window.setWindowTitle('UMAP Projection')
+    umap_window.resize(800, 600)
+
+    # Add the window to the list of UMAP windows
+    parent.umap_windows.append(umap_window)
+
+    # Create central widget and layout
+    central_widget = QtWidgets.QWidget()
+    layout = QtWidgets.QVBoxLayout(central_widget)
+
+    # Create plot widget
+    plot_widget = pg.PlotWidget(title='UMAP Projection')
+    plot_widget.setLabel('bottom', 'UMAP 1')
+    plot_widget.setLabel('left', 'UMAP 2')
+
+    # If cluster labels are available, color points by cluster
+    if cluster_labels is not None:
+        # Get cluster labels for non-filtered points
+        filtered_cluster_labels = cluster_labels[mask]
+
+        # Get unique cluster labels
+        unique_labels = np.unique(filtered_cluster_labels)
+
+        # Create a colormap
+        colors = plt.cm.viridis(np.linspace(0, 1, len(unique_labels)))
+
+        # Create a legend
+        legend = pg.LegendItem(offset=(70, 30))
+        legend.setParentItem(plot_widget.graphicsItem())
+
+        # Create a scatter plot item for each cluster
+        for i, label in enumerate(unique_labels):
+            mask_label = filtered_cluster_labels == label
+
+            # Convert color to RGBA format for PyQtGraph
+            color = colors[i]
+            rgba = (int(color[0]*255), int(color[1]*255), int(color[2]*255), int(color[3]*100))
+
+            scatter_item = pg.ScatterPlotItem(
+                x=embedding[mask_label, 0],
+                y=embedding[mask_label, 1],
+                size=5,
+                pen=None,
+                brush=pg.mkBrush(*rgba),
+                name=f"Cluster {label}"
+            )
+            plot_widget.addItem(scatter_item)
+
+            # Add item to legend
+            legend.addItem(scatter_item, f"Cluster {label}")
+    else:
+        # Create scatter plot item with default color
+        scatter = pg.ScatterPlotItem(
+            x=embedding[:, 0],
+            y=embedding[:, 1],
+            size=5,
+            pen=None,
+            brush=pg.mkBrush(255, 255, 255, 100)
+        )
+        plot_widget.addItem(scatter)
+
+    # Add plot widget to layout
+    layout.addWidget(plot_widget)
+
+    # Set central widget
+    umap_window.setCentralWidget(central_widget)
+
+    # Show the main plot window
+    umap_window.show()
+    # Bring the window to the front
+    umap_window.activateWindow()
+    umap_window.raise_()
+
+
+def create_3d_umap_plot(parent, embedding, mask, cluster_labels=None):
+    """
+    Create and display a 3D UMAP plot.
+
+    Args:
+        parent: The parent widget
+        embedding: The UMAP embedding (3D array)
+        mask: Mask for filtering data points
+        cluster_labels: Optional array of cluster labels for coloring points
+    """
+    # Check if OpenGL is available
+    if gl is None:
+        QtWidgets.QMessageBox.warning(
+            parent,
+            "OpenGL Not Available",
+            "PyQtGraph OpenGL is not available. Cannot create 3D plot."
+        )
+        return
+
+    # Create a new window for the UMAP plot
+    umap_window = QtWidgets.QMainWindow()
+    umap_window.setWindowTitle('UMAP Projection (3D)')
+    umap_window.resize(800, 600)
+
+    # Add the window to the list of UMAP windows
+    parent.umap_windows.append(umap_window)
+
+    # Create central widget and layout
+    central_widget = QtWidgets.QWidget()
+    layout = QtWidgets.QVBoxLayout(central_widget)
+
+    # Create 3D view widget
+    view_widget = gl.GLViewWidget()
+
+    # If cluster labels are available, color points by cluster
+    if cluster_labels is not None:
+        # Get cluster labels for non-filtered points
+        filtered_cluster_labels = cluster_labels[mask]
+
+        # Get unique cluster labels
+        unique_labels = np.unique(filtered_cluster_labels)
+
+        # Create a colormap
+        colors = plt.cm.viridis(np.linspace(0, 1, len(unique_labels)))
+
+        # Create a scatter plot for each cluster
+        for i, label in enumerate(unique_labels):
+            mask_label = filtered_cluster_labels == label
+
+            # Convert color to RGBA format for PyQtGraph
+            color = colors[i]
+
+            scatter_item = gl.GLScatterPlotItem(
+                pos=embedding[mask_label],
+                size=5,
+                color=(color[0], color[1], color[2], 0.5),
+                pxMode=True
+            )
+            view_widget.addItem(scatter_item)
+
+        # Create a separate 2D plot widget for the legend
+        legend_widget = pg.PlotWidget(title='Legend')
+        legend_widget.setFixedHeight(len(unique_labels) * 30 + 50)  # Adjust height based on number of clusters
+        legend_widget.getPlotItem().hideAxis('left')
+        legend_widget.getPlotItem().hideAxis('bottom')
+
+        # Create a legend
+        legend = pg.LegendItem(offset=(10, 10))
+        legend.setParentItem(legend_widget.getPlotItem())
+
+        # Add items to the legend
+        for i, label in enumerate(unique_labels):
+            color = colors[i]
+            rgba = (int(color[0]*255), int(color[1]*255), int(color[2]*255), int(color[3]*100))
+
+            # Create a dummy scatter item for the legend
+            dummy_scatter = pg.ScatterPlotItem(
+                x=[0], y=[0],
+                size=5,
+                pen=None,
+                brush=pg.mkBrush(*rgba)
+            )
+
+            # Add to legend
+            legend.addItem(dummy_scatter, f"Cluster {label}")
+
+        # Add legend widget to layout
+        layout.addWidget(legend_widget)
+    else:
+        # Create 3D scatter plot with default color
+        scatter_plot = gl.GLScatterPlotItem(
+            pos=embedding,
+            size=5,
+            color=(1, 1, 1, 0.5),
+            pxMode=True
+        )
+        view_widget.addItem(scatter_plot)
+
+    # Add axes
+    axes = gl.GLAxisItem()
+    axes.setSize(x=1, y=1, z=1)
+    view_widget.addItem(axes)
+
+    # Add view widget to layout
+    layout.addWidget(view_widget)
+
+    # Set central widget
+    umap_window.setCentralWidget(central_widget)
+
+    # Show the main plot window
+    umap_window.show()
+    # Bring the window to the front
+    umap_window.activateWindow()
+    umap_window.raise_()
