@@ -510,6 +510,10 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.parent.update_plots()
 
     def addSelection(self, idx, xmin, xmax, invert=False, enabled=True, name=""):
+        # Ensure xmin < xmax
+        if xmin > xmax:
+            xmin, xmax = xmax, xmin
+            logging.log(0, f"Swapped xmin and xmax to ensure min-max ordering: ({xmin}, {xmax})")
 
         table = self.tableWidget
         row = table.rowCount()
@@ -521,13 +525,27 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         table.setItem(row, 0, tmp)
 
         tmp = QtWidgets.QTableWidgetItem()
+        tmp.setText(str(xmin))
         tmp.setData(0, xmin)
         tmp.setFlags(QtCore.Qt.ItemIsEnabled)
+        tmp.setForeground(QtGui.QBrush(QtGui.QColor(0, 0, 0)))  # Set text color to black
+        tmp.setBackground(QtGui.QBrush(QtGui.QColor(255, 255, 255)))  # Set background color to white
+        font = QtGui.QFont()
+        font.setPointSize(10)  # Set font size
+        tmp.setFont(font)
+        tmp.setTextAlignment(QtCore.Qt.AlignCenter)  # Center align the text
         table.setItem(row, 1, tmp)
 
         tmp = QtWidgets.QTableWidgetItem()
-        tmp.setFlags(QtCore.Qt.ItemIsEnabled)
+        tmp.setText(str(xmax))
         tmp.setData(0, xmax)
+        tmp.setFlags(QtCore.Qt.ItemIsEnabled)
+        tmp.setForeground(QtGui.QBrush(QtGui.QColor(0, 0, 0)))  # Set text color to black
+        tmp.setBackground(QtGui.QBrush(QtGui.QColor(255, 255, 255)))  # Set background color to white
+        font = QtGui.QFont()
+        font.setPointSize(10)  # Set font size
+        tmp.setFont(font)
+        tmp.setTextAlignment(QtCore.Qt.AlignCenter)  # Center align the text
         table.setItem(row, 2, tmp)
 
         cb_invert_x = QtWidgets.QCheckBox(table)
