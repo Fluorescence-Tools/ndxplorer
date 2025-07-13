@@ -5,20 +5,10 @@ Supports keyboard navigation:
 """
 from qtpy.QtCore import Signal
 
-try:
-    import hdbscan
-except ImportError:
-    hdbscan = None
-
-try:
-    from sklearn.cluster import KMeans
-except ImportError:
-    KMeans = None
-
-try:
-    import umap
-except ImportError:
-    umap = None
+# Delay imports of heavy libraries
+hdbscan = None
+KMeans = None
+umap = None
 
 try:
     from chisurf import logging
@@ -345,20 +335,38 @@ class ClusteringDialog(QtWidgets.QDialog):
         """
         logging.log(0, f"Applying clustering with method: {self._cluster_method}, columns: {self._cluster_columns}")
         # Check if the required library is available
-        if self._cluster_method == "hdbscan" and not hdbscan:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "HDBSCAN Not Available",
-                "HDBSCAN is not installed. Please install it using pip or conda."
-            )
-            return
-        elif self._cluster_method == "kmeans" and not KMeans:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "scikit-learn Not Available",
-                "scikit-learn is not installed. Please install it using pip or conda."
-            )
-            return
+        if self._cluster_method == "hdbscan":
+            # Lazy import of hdbscan
+            if hdbscan is None:
+                try:
+                    import hdbscan
+                    logging.info("Imported hdbscan library")
+                except ImportError:
+                    hdbscan = None
+
+            if not hdbscan:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "HDBSCAN Not Available",
+                    "HDBSCAN is not installed. Please install it using pip or conda."
+                )
+                return
+        elif self._cluster_method == "kmeans":
+            # Lazy import of KMeans
+            if KMeans is None:
+                try:
+                    from sklearn.cluster import KMeans
+                    logging.info("Imported KMeans library")
+                except ImportError:
+                    KMeans = None
+
+            if not KMeans:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "scikit-learn Not Available",
+                    "scikit-learn is not installed. Please install it using pip or conda."
+                )
+                return
 
         # Check if any columns are selected for clustering
         if not self._cluster_columns:
@@ -444,6 +452,14 @@ class ClusteringDialog(QtWidgets.QDialog):
         Create and display a UMAP plot in a separate window.
         """
         logging.log(0, "Creating UMAP plot")
+
+        # Lazy import of umap
+        if umap is None:
+            try:
+                import umap
+                logging.info("Imported umap library")
+            except ImportError:
+                umap = None
 
         # Check if UMAP is available
         if not umap:
