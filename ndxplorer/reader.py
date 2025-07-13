@@ -48,6 +48,9 @@ def read_burst_analysis(
     Reads .bur files and any additional files specified,
     including files that have only headers or are completely empty.
     Column names are preserved exactly as in the source files.
+
+    Combines "Mean Macro Time (ms)" values sequentially across files,
+    converts them to seconds, and renames the column to "Mean Macro Time (s)".
     """
     # ensure a QApplication
     app = QApplication.instance() or QApplication([])
@@ -85,6 +88,10 @@ def read_burst_analysis(
     progress.show()
 
     pieces = []
+    macro_time_offset = 0.0  # Keep track of the cumulative macro time offset
+    macro_time_column = "Mean Macro Time (ms)"
+    macro_time_column_seconds = "Mean Macro Time (s)"
+
     for idx, bur_file in enumerate(bur_files, start=1):
         # --- main .bur ---
         df_main = _read_file(bur_file)
@@ -115,7 +122,32 @@ def read_burst_analysis(
 
         # skip every Nth row
         if skip_nth_row > 1:
-            combined = combined[ combined.index % skip_nth_row != 0 ]
+            combined = combined[combined.index % skip_nth_row != 0]
+
+        # Adjust macro times if the column exists
+        if macro_time_column in combined.columns and not combined.empty:
+            # Convert macro times from milliseconds to seconds and add the current offset
+            combined[macro_time_column] = combined[macro_time_column].astype(float) / 1000.0 + (macro_time_offset / 1000.0)
+
+            # Rename the column to indicate it's now in seconds
+            combined.rename(columns={macro_time_column: macro_time_column_seconds}, inplace=True)
+
+            # Update the offset for the next file
+            # Use the last value in the macro time column as the "max" for the next file
+            # This ensures that "max is always the last" as required
+
+            # We need to check the original DataFrames for the macro time column
+            # because we've already renamed it in the combined DataFrame
+            # Iterate through DataFrames in reverse order to find the last one with the macro time column
+            last_value = 0
+            for df in reversed(dfs):
+                if macro_time_column in df.columns and not df.empty:
+                    # Get the last value in milliseconds (before conversion to seconds)
+                    last_value = df[macro_time_column].astype(float).iloc[-1]
+                    break  # Use the first last value we find (from the last DataFrame with the column)
+
+            # Update the offset by adding the last macro time value (still in milliseconds)
+            macro_time_offset += last_value
 
         pieces.append(combined)
 
@@ -130,6 +162,8 @@ def read_burst_analysis(
         if any(len(df) for df in pieces)
         else pieces[0].iloc[0:0]  # zero‐row with correct cols if no data at all
     )
+
+    # The macro time column has already been converted to seconds and renamed
 
     ds = DataSource()
     ds.data = final_df
@@ -163,4 +197,3 @@ def read_csv(filenames):
     ds = DataSource()
     ds.data = dfn
     return ds
-
