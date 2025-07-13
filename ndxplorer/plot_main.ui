@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1024</width>
-    <height>600</height>
+    <height>581</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -166,29 +166,47 @@
               <property name="spacing">
                <number>0</number>
               </property>
-              <item row="4" column="0">
-               <widget class="QDoubleSpinBox" name="doubleSpinBox_vmin">
-                <property name="decimals">
-                 <number>4</number>
+              <item row="2" column="0">
+               <widget class="QToolButton" name="toolButton_3">
+                <property name="enabled">
+                 <bool>true</bool>
                 </property>
-                <property name="maximum">
-                 <double>999999.000000000000000</double>
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
                 </property>
-                <property name="stepType">
-                 <enum>QAbstractSpinBox::AdaptiveDecimalStepType</enum>
+                <property name="text">
+                 <string>table</string>
                 </property>
                </widget>
               </item>
               <item row="4" column="1">
-               <widget class="QDoubleSpinBox" name="doubleSpinBox_vmax">
-                <property name="decimals">
-                 <number>4</number>
+               <widget class="QLineEdit" name="lineEditCountTotal">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
                 </property>
-                <property name="maximum">
-                 <double>999999.000000000000000</double>
+                <property name="maximumSize">
+                 <size>
+                  <width>16777215</width>
+                  <height>16777215</height>
+                 </size>
                 </property>
-                <property name="stepType">
-                 <enum>QAbstractSpinBox::AdaptiveDecimalStepType</enum>
+                <property name="baseSize">
+                 <size>
+                  <width>0</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="maxLength">
+                 <number>10</number>
+                </property>
+                <property name="readOnly">
+                 <bool>true</bool>
                 </property>
                </widget>
               </item>
@@ -246,19 +264,13 @@
                 </property>
                </widget>
               </item>
-              <item row="2" column="0">
-               <widget class="QToolButton" name="toolButton_3">
-                <property name="enabled">
-                 <bool>true</bool>
-                </property>
+              <item row="4" column="0">
+               <widget class="QLineEdit" name="lineEditCountCurrent">
                 <property name="sizePolicy">
-                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                 <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
                   <horstretch>0</horstretch>
                   <verstretch>0</verstretch>
                  </sizepolicy>
-                </property>
-                <property name="text">
-                 <string>table</string>
                 </property>
                </widget>
               </item>
@@ -275,43 +287,12 @@
                 </property>
                </widget>
               </item>
-              <item row="5" column="0">
-               <widget class="QLineEdit" name="lineEditCountCurrent">
-                <property name="sizePolicy">
-                 <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
-                  <horstretch>0</horstretch>
-                  <verstretch>0</verstretch>
-                 </sizepolicy>
+              <item row="5" column="0" colspan="2">
+               <layout class="QHBoxLayout" name="horizontalLayout_3">
+                <property name="spacing">
+                 <number>0</number>
                 </property>
-               </widget>
-              </item>
-              <item row="5" column="1">
-               <widget class="QLineEdit" name="lineEditCountTotal">
-                <property name="sizePolicy">
-                 <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
-                  <horstretch>0</horstretch>
-                  <verstretch>0</verstretch>
-                 </sizepolicy>
-                </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>16777215</width>
-                  <height>16777215</height>
-                 </size>
-                </property>
-                <property name="baseSize">
-                 <size>
-                  <width>0</width>
-                  <height>0</height>
-                 </size>
-                </property>
-                <property name="maxLength">
-                 <number>10</number>
-                </property>
-                <property name="readOnly">
-                 <bool>true</bool>
-                </property>
-               </widget>
+               </layout>
               </item>
              </layout>
             </item>
@@ -330,7 +311,7 @@
               <item>
                <widget class="QCheckBox" name="checkBoxLogCounts">
                 <property name="enabled">
-                 <bool>false</bool>
+                 <bool>true</bool>
                 </property>
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Preferred" vsizetype="Fixed">

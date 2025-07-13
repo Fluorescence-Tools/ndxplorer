@@ -1,45 +1,46 @@
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple
 
-import sys
-import os
-import json
-import yaml
-import typing
-
-try:
-    import hdbscan
-except ImportError:
-    hdbscan = None
-
-try:
-    from sklearn.cluster import KMeans
-except ImportError:
-    KMeans = None
-
-try:
-    import umap
-except ImportError:
-    umap = None
-
-from . plot_control import SurfacePlotWidget
-from qtpy.QtCore import QThread, Signal
-from . parameter_editor import ParameterEditor
-from . curve_overlay import CurveOverlayWidget, CurveEvaluator
-try:
-    from chisurf.gui.tools.code_editor import CodeEditor
-except:
-    from . qsci_editor import CodeEditor
 try:
     from chisurf import logging
 except:
     import logging
     logging.basicConfig()
 
-from . data_source import DataSource
-from guidata.widgets.dataframeeditor import DataFrameEditor
-
+import os
+import json
+import yaml
+import typing
 import pathlib
-import pandas as pd
+
+# Import settings functions
+from .settings import get_settings_path, ensure_default_settings
+
+import numpy as np
+
+# Delay imports of heavy libraries
+hdbscan = None
+KMeans = None
+umap = None
+
+from . plot_control import SurfacePlotWidget
+from . parameter_editor import ParameterEditor
+from . curve_overlay import CurveOverlayWidget, CurveEvaluator
+from . import reader
+from . import writer
+from .clustering_dialog import ClusteringDialog
+from .column_selection_dialog import ColumnSelectionDialog
+from . import plot_umap
+from .clustering import ClusteringManager, ClusteringWorker
+from .widgets import ScientificSpinBox
+from .mouse_event_filter import MouseEventFilter
+from guiqwt.colormap import get_colormap_list
+
+try:
+    from chisurf.gui.tools.code_editor import CodeEditor
+except ImportError:
+    from ndxplorer.widgets.code_editor import CodeEditor
+
+from . data_source import DataSource
 
 try:
     from chisurf.gui import QtGui, QtCore, uic, QtWidgets
@@ -49,52 +50,19 @@ except ImportError:
     from qtpy import QtGui, QtWidgets
     from qtpy.QtGui import QFont, QImage
 
-from qwt.plot import QwtPlot
-from qwt.plot_canvas import QwtPlotCanvas
-
 import guiqwt.signals
 import guiqwt.plot
 import guiqwt.image
 import guiqwt.curve
 import guiqwt.styles
+
 from guiqwt.plot import CurveDialog
 from guiqwt.builder import make
+from guidata.widgets.dataframeeditor import DataFrameEditor
+from qwt.plot import QwtPlot
+from qwt.plot_canvas import QwtPlotCanvas
+from .image_items import FixedImageItem
 
-# Custom ImageItem class that fixes the float to int conversion issue
-class FixedImageItem(guiqwt.image.ImageItem):
-    def draw(self, painter, xMap, yMap, canvasRect):
-        x1, y1, x2, y2 = canvasRect.getCoords()
-        i1, i2 = xMap.invTransform(x1), xMap.invTransform(x2)
-        j1, j2 = yMap.invTransform(y1), yMap.invTransform(y2)
-
-        xl, yt, xr, yb = self.boundingRect().getCoords()
-        dest = (
-            xMap.transform(xl),
-            yMap.transform(yt),
-            xMap.transform(xr) + 1,
-            yMap.transform(yb) + 1,
-        )
-
-        # Convert float to int for W and H
-        W = int(canvasRect.right())
-        H = int(canvasRect.bottom())
-        if self._offscreen.shape != (H, W):
-            self._offscreen = np.empty((H, W), np.uint32)
-            self._image = QImage(self._offscreen, W, H, QImage.Format_ARGB32)
-            self._image.ndarray = self._offscreen
-            self.notify_new_offscreen()
-        self.draw_image(painter, canvasRect, (i1, j1, i2, j2), dest, xMap, yMap)
-        self.draw_border(painter, xMap, yMap, canvasRect)
-
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from guiqwt.colormap import get_colormap_list
-
-from . import reader
-from . import writer
-from .clustering_dialog import ClusteringDialog
-from .column_selection_dialog import ColumnSelectionDialog
 
 
 class NDXplorer(QtWidgets.QMainWindow):
@@ -110,6 +78,18 @@ class NDXplorer(QtWidgets.QMainWindow):
         self._cached_values_p13 = None
         self._cached_values_mask_inf = None
         self._cached_values_mask_nan = None
+        # Clear the new cache variables
+        self._cached_filtered_values = None
+        self._cached_values_mask_id = None
+        # Clear axis cache variables
+        self._cached_x_values = None
+        self._cached_x_param_idx = None
+        self._cached_y_values = None
+        self._cached_y_param_idx = None
+        self._cached_z_values = None
+        self._cached_z_param_idx = None
+        # Clear histogram cache
+        self._cached_hist_params = None
 
     @property
     def data_source(self) -> DataSource:
@@ -137,17 +117,65 @@ class NDXplorer(QtWidgets.QMainWindow):
     @property
     def x_values(self) -> np.ndarray:
         logging.log(0, f"Getting x_values for parameter: {self.plot_control.p1[1]}")
-        return self.values[self.plot_control.p1[0]].astype('float64')
+        # Check if we have a cached result that's still valid
+        if hasattr(self, '_cached_x_values') and self._cached_x_values is not None:
+            # Check if the parameter index and values cache are still valid
+            if (getattr(self, '_cached_x_param_idx', None) == self.plot_control.p1[0] and
+                getattr(self, '_cached_values_mask_id', None) == id(self.value_mask)):
+                logging.log(0, "Using cached x_values")
+                return self._cached_x_values
+
+        # Get the values and extract the x column
+        values = self.values
+        x_values = values[self.plot_control.p1[0]].astype('float64')
+
+        # Cache the result and parameter index
+        self._cached_x_values = x_values
+        self._cached_x_param_idx = self.plot_control.p1[0]
+
+        return x_values
 
     @property
     def y_values(self) -> np.ndarray:
         logging.log(0, f"Getting y_values for parameter: {self.plot_control.p2[1]}")
-        return self.values[self.plot_control.p2[0]].astype('float64')
+        # Check if we have a cached result that's still valid
+        if hasattr(self, '_cached_y_values') and self._cached_y_values is not None:
+            # Check if the parameter index and values cache are still valid
+            if (getattr(self, '_cached_y_param_idx', None) == self.plot_control.p2[0] and
+                getattr(self, '_cached_values_mask_id', None) == id(self.value_mask)):
+                logging.log(0, "Using cached y_values")
+                return self._cached_y_values
+
+        # Get the values and extract the y column
+        values = self.values
+        y_values = values[self.plot_control.p2[0]].astype('float64')
+
+        # Cache the result and parameter index
+        self._cached_y_values = y_values
+        self._cached_y_param_idx = self.plot_control.p2[0]
+
+        return y_values
 
     @property
     def z_values(self)-> np.ndarray:
         logging.log(0, f"Getting z_values for parameter: {self.plot_control.p3[1]}")
-        return self.values[self.plot_control.p3[0]].astype('float64')
+        # Check if we have a cached result that's still valid
+        if hasattr(self, '_cached_z_values') and self._cached_z_values is not None:
+            # Check if the parameter index and values cache are still valid
+            if (getattr(self, '_cached_z_param_idx', None) == self.plot_control.p3[0] and
+                getattr(self, '_cached_values_mask_id', None) == id(self.value_mask)):
+                logging.log(0, "Using cached z_values")
+                return self._cached_z_values
+
+        # Get the values and extract the z column
+        values = self.values
+        z_values = values[self.plot_control.p3[0]].astype('float64')
+
+        # Cache the result and parameter index
+        self._cached_z_values = z_values
+        self._cached_z_param_idx = self.plot_control.p3[0]
+
+        return z_values
 
     @property
     def value_mask(self):
@@ -272,6 +300,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         logging.log(0, "Getting values with masking")
 
+        # Check if we have a cached result that's still valid
+        if hasattr(self, '_cached_filtered_values') and self._cached_filtered_values is not None:
+            # The value_mask property already checks if the mask is still valid
+            # If it returns the cached mask, we can use our cached filtered values
+            if getattr(self, '_cached_values_mask_id', None) == id(self.value_mask):
+                logging.log(0, "Using cached filtered values")
+                return self._cached_filtered_values
+
         mask = self.value_mask
         all_values = self.data_source.values
 
@@ -282,6 +318,10 @@ class NDXplorer(QtWidgets.QMainWindow):
         nD = re.shape[0]
         re = re.reshape((oCol, int(nD / oCol)))
         logging.log(0, f"Reshaped data shape: {re.shape}")
+
+        # Cache the result and the mask ID for future use
+        self._cached_filtered_values = re
+        self._cached_values_mask_id = id(mask)
 
         return re
 
@@ -466,7 +506,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             data_source=None,  # type: DataSource
             settings_json_fn=None,  # type: str
             parent=None,
-            cmap: str = 'jet',
+            cmap: str = 'gist_earth',
             theme_file = "theme.qss"
     ) -> None:
         if isinstance(data_source, DataSource):
@@ -529,6 +569,31 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.verticalLayout_15.addWidget(self.equation_editor)
         self.verticalLayout_10.addWidget(self.curve_overlay_widget)
 
+        # Create scientific notation spin boxes for vmin and vmax
+        self.doubleSpinBox_vmin = ScientificSpinBox(self, format_str="%.2e")
+        self.doubleSpinBox_vmax = ScientificSpinBox(self, format_str="%.2e")
+
+        # Set initial values and ranges
+        self.doubleSpinBox_vmin.setRange(-1e10, 1e10)
+        self.doubleSpinBox_vmax.setRange(-1e10, 1e10)
+        self.doubleSpinBox_vmin.setValue(0.0)
+        self.doubleSpinBox_vmax.setValue(1.0)
+        self.doubleSpinBox_vmin.setSingleStep(0.1)
+        self.doubleSpinBox_vmax.setSingleStep(0.1)
+
+        # Create a container widget for the spin boxes
+        spin_box_layout = self.horizontalLayout_3
+        spin_box_layout.setContentsMargins(0, 0, 0, 0)
+        spin_box_layout.setSpacing(0)  # Minimal spacing between widgets
+
+        # Add all widgets to a single row for maximum compactness
+        spin_box_layout.addWidget(self.doubleSpinBox_vmin)
+        spin_box_layout.addWidget(self.doubleSpinBox_vmax)
+
+        # Connect value changed signals to update colormap
+        self.doubleSpinBox_vmin.valueChanged.connect(self.on_vmin_vmax_changed)
+        self.doubleSpinBox_vmax.valueChanged.connect(self.on_vmin_vmax_changed)
+
         # Connect curve overlay signals
         self.curve_overlay_widget.curvesChanged.connect(self.update_curve_overlays)
 
@@ -566,6 +631,19 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Store the last Z selection range to detect changes
         self._last_z_range = None
 
+        # Initialize and connect the checkBoxEnableZ
+        self.checkBoxEnableZ = self.plot_control.checkBoxEnableZ
+        self.checkBoxEnableZ.setToolTip("When checked, the Z-axis plot is displayed")
+        self.checkBoxEnableZ.stateChanged.connect(self.on_enable_z_changed)
+
+        # Initialize and connect the checkBoxWeight
+        self.checkBoxWeight = self.plot_control.checkBoxWeight
+        self.checkBoxWeight.setToolTip("If checked, histograms are weighted by selected z axis")
+        self.checkBoxWeight.stateChanged.connect(self.on_weight_changed)
+
+        # Set initial visibility of z-axis plot based on checkbox state
+        # This will be properly set after the z-axis plot is created
+
         # Create a timer to check for Z selection range changes
         self.z_range_check_timer = QtCore.QTimer(self)
         self.z_range_check_timer.timeout.connect(self.check_z_range_changes)
@@ -589,11 +667,14 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         self.plot_control.verticalLayout_4.addWidget(self.g_zplot)
 
+        # Set initial visibility of z-axis plot based on checkbox state
+        self.g_zplot.setVisible(self.checkBoxEnableZ.isChecked())
+
         # x-axis
         win_x = CurveDialog()
         self.g_xplot = win_x.get_plot()
-        self.g_xplot.enableAxis(QwtPlot.xBottom, True)
-        self.g_xplot.enableAxis(QwtPlot.xTop, False)
+        self.g_xplot.enableAxis(QwtPlot.xBottom, False)
+        self.g_xplot.enableAxis(QwtPlot.xTop, True)
         self.g_xplot.enableAxis(QwtPlot.yLeft, False)
         self.g_xplot.enableAxis(QwtPlot.yRight, False)
 
@@ -611,8 +692,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.g_yplot = win_y.get_plot()
         self.g_yplot.enableAxis(QwtPlot.xBottom, False)
         self.g_yplot.enableAxis(QwtPlot.xTop, False)
-        self.g_yplot.enableAxis(QwtPlot.yLeft, True)
-        self.g_yplot.enableAxis(QwtPlot.yRight, False)
+        self.g_yplot.enableAxis(QwtPlot.yLeft, False)
+        self.g_yplot.enableAxis(QwtPlot.yRight, True)
 
         curveparam = guiqwt.styles.CurveParam()
         curveparam.curvestyle = "Steps"
@@ -661,32 +742,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Set background color to white
         self.g_2dplot.canvas().setStyleSheet("background-color: white;")
 
-        # Disable zoom and panning on the 2D plot
-        self.g_2dplot.canvas().setMouseTracking(False)
-
-        # Create an event filter to ignore mouse events for zoom and panning
-        class MouseEventFilter(QtCore.QObject):
-            def eventFilter(self, obj, event):
-                # Allow right-click events for context menu
-                if event.type() == QtCore.QEvent.MouseButtonPress and event.button() == QtCore.Qt.RightButton:
-                    return False  # Process right-click events normally
-
-                # Ignore other mouse events that would trigger zoom and panning
-                if event.type() in [QtCore.QEvent.MouseButtonPress, 
-                                   QtCore.QEvent.MouseButtonRelease,
-                                   QtCore.QEvent.MouseButtonDblClick,
-                                   QtCore.QEvent.MouseMove,
-                                   QtCore.QEvent.Wheel]:
-                    return True  # Ignore mouse events
-
-                return False  # Process other events normally
-
-        # Install the event filter on the canvas
-        self.mouse_event_filter = MouseEventFilter(self)
-        self.g_2dplot.canvas().installEventFilter(self.mouse_event_filter)
+        # Enable mouse tracking for region selection
+        self.g_2dplot.canvas().setMouseTracking(True)
 
         # Create a separate plot for curve overlays
         self.overlay_plot = guiqwt.curve.CurvePlot(parent=self)
+
+        # Install the event filter on the overlay plot canvas
+        self.mouse_event_filter = MouseEventFilter(self)
+        self.overlay_plot.canvas().installEventFilter(self.mouse_event_filter)
 
         # Disable grid lines in the overlay plot
         self.overlay_plot.grid.setVisible(False)
@@ -731,7 +795,11 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Load settings
         ###############
         if settings_json_fn is None:
-            settings_json_fn = pathlib.Path(__file__).parent / "settings" / "mfd.settings.json"
+            # Ensure default settings exist in the user's settings folder
+            ensure_default_settings()
+            # Get the path to the settings folder
+            settings_path = get_settings_path()
+            settings_json_fn = settings_path / "mfd.settings.json"
         self.onLoad_settings(settings_json_fn=str(settings_json_fn))
 
         # Parameter control
@@ -743,9 +811,11 @@ class NDXplorer(QtWidgets.QMainWindow):
                 equations=self.equations
             )
             self.update_plots()
+        # Get the settings path
+        settings_path = get_settings_path()
         self.parameter_control = ParameterEditor(
             parent=self,
-            json_file=str(pathlib.Path(__file__).parent / "settings/mfd.constants.json"),
+            json_file=str(settings_path / "mfd.constants.json"),
             callback=parameter_update
         )
         self.verticalLayout_4.addWidget(self.parameter_control)
@@ -784,9 +854,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.plot_control.comboBoxSelY.currentIndexChanged.connect(self.update_spinbox_limits)
         self.plot_control.comboBoxSelZ.currentIndexChanged.connect(self.update_spinbox_limits)
 
-        # In your __init__ or setup method, after creating the spin boxes:
-        self.doubleSpinBox_vmin.valueChanged.connect(self.on_vmin_vmax_changed)
-        self.doubleSpinBox_vmax.valueChanged.connect(self.on_vmin_vmax_changed)
+        # Connections for spin boxes are already set up above
 
         ##########################################################
         #      Arrange Docks and window positions                #
@@ -829,6 +897,22 @@ class NDXplorer(QtWidgets.QMainWindow):
         #    (But remember, this does NOT fix comboBoxSelX/Y/Z)
         self.plot_control.onClearSelection()
 
+        # 2.5. Clear all curve overlays
+        if hasattr(self, 'curve_overlay_widget'):
+            self.curve_overlay_widget.clear_curves()
+
+        # 2.6. Clear clustering data
+        if hasattr(self, '_cluster_labels'):
+            self._cluster_labels = None
+
+        # 2.7. Clear cluster probabilities if they exist
+        if hasattr(self, '_cluster_probabilities'):
+            self._cluster_probabilities = None
+
+        # 2.8. Hide clustering dialog if it's visible
+        if hasattr(self, 'clustering_dialog') and self.clustering_dialog is not None and self.clustering_dialog.isVisible():
+            self.clustering_dialog.hide()
+
         # 3. Update once so 'plot_control.update()' sees empty _data_source =>
         #    repopulates combo boxes with the default dataset columns
         self.update()
@@ -844,8 +928,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.plot_control.comboBoxSelY.setCurrentIndex(ix_prox)
         self.plot_control.comboBoxSelZ.setCurrentIndex(ix_r)
 
-        # 5. Trigger a final update for correct plots
-        self.update()
+        # 5. Directly call update_plots to ensure all graphs are cleared
+        self.update_plots()
 
     def copy_1d_hists_to_clipboard_csv(self):
         try:
@@ -1071,18 +1155,42 @@ class NDXplorer(QtWidgets.QMainWindow):
         with open(settings_json_fn, "r") as fp:
             d = json.load(fp)
             self.settings.update(d)
-        fn_axis = pathlib.Path(settings_json_fn).parent / self.settings["axis"]
+
+        # Check if colormap is specified in settings and apply it
+        if "colormap" in self.settings:
+            self.set_default_colormap(self.settings["colormap"])
+
+        # Get the settings directory and default settings directory
+        settings_dir = pathlib.Path(settings_json_fn).parent
+        default_settings_dir = pathlib.Path(__file__).parent / "settings"
+
+        # Load axis settings
+        fn_axis = settings_dir / self.settings["axis"]
+        if not fn_axis.exists():
+            # Fall back to default settings directory
+            fn_axis = default_settings_dir / self.settings["axis"]
         with open(str(fn_axis), "r") as fp:
             d = json.load(fp)
             self.plot_control.axis_settings.update(d)
-        fn_equations = pathlib.Path(settings_json_fn).parent / self.settings["equations"]
+
+        # Load equations
+        fn_equations = settings_dir / self.settings["equations"]
+        if not fn_equations.exists():
+            # Fall back to default settings directory
+            fn_equations = default_settings_dir / self.settings["equations"]
         with open(str(fn_equations), "r") as fp:
             d = yaml.load(fp, Loader=yaml.FullLoader)
             self.equations = d
-        fn_constants = pathlib.Path(settings_json_fn).parent / self.settings["constants"]
+
+        # Load constants
+        fn_constants = settings_dir / self.settings["constants"]
+        if not fn_constants.exists():
+            # Fall back to default settings directory
+            fn_constants = default_settings_dir / self.settings["constants"]
         with open(str(fn_constants), "r") as fp:
             d = json.load(fp)
             self.constants.update(d)
+
         self.equation_editor.load_file(str(fn_equations))
 
     def open_files(
@@ -1136,6 +1244,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         p1, p1_name = self.plot_control.p1
         p2, p2_name = self.plot_control.p2
         self.g_yplot.set_axis_title("top", p2_name)
+        self.g_yplot.set_axis_title("right", p2_name)
         self.g_xplot.set_axis_title("top", p1_name)
 
     def get_bins(self, arange, scale, n_1d, n_2d):
@@ -1183,6 +1292,45 @@ class NDXplorer(QtWidgets.QMainWindow):
         return bins
 
     def update_histograms(self):
+        # Check if we need to recompute histograms
+        # We can skip recomputation if the data, bins, and weights haven't changed
+        recompute_needed = True
+
+        # Get current parameters for comparison
+        p1_idx = self.plot_control.p1[0]
+        p2_idx = self.plot_control.p2[0]
+        p3_idx = self.plot_control.p3[0]
+        use_weights = hasattr(self, 'checkBoxWeight') and self.checkBoxWeight.isChecked()
+        z_enabled = hasattr(self, 'checkBoxEnableZ') and self.checkBoxEnableZ.isChecked()
+
+        # Check if we have cached parameters that match current settings
+        if hasattr(self, '_cached_hist_params') and self._cached_hist_params is not None:
+            cached_params = self._cached_hist_params
+            mask_id = getattr(self, '_cached_values_mask_id', None)
+
+            # Compare current parameters with cached ones
+            if (cached_params.get('p1_idx') == p1_idx and
+                cached_params.get('p2_idx') == p2_idx and
+                cached_params.get('p3_idx') == p3_idx and
+                cached_params.get('use_weights') == use_weights and
+                cached_params.get('z_enabled') == z_enabled and
+                cached_params.get('mask_id') == mask_id and
+                cached_params.get('normed_x') == self.plot_control.normed_hist_x and
+                cached_params.get('normed_y') == self.plot_control.normed_hist_y and
+                cached_params.get('normed_z') == self.plot_control.normed_hist_z and
+                cached_params.get('x_bins_1d') == str(self.get_x_bins()[0]) and
+                cached_params.get('y_bins_1d') == str(self.get_y_bins()[0]) and
+                (not z_enabled or cached_params.get('z_bins_1d') == str(self.get_z_bins()[0]))):
+
+                # All parameters match, no need to recompute
+                recompute_needed = False
+                logging.log(0, "Using cached histograms")
+
+        if not recompute_needed and '_histogram' in self.__dict__ and self._histogram:
+            # Update GUI with cached data
+            self.lineEditCountCurrent.setText(str(len(self.x_values)))
+            return
+
         # Get the values that are already filtered by value_mask
         # These properties use self.values which applies the value_mask
         d1 = self.x_values
@@ -1195,21 +1343,68 @@ class NDXplorer(QtWidgets.QMainWindow):
         y_bins_1d, y_bins_2d = self.get_y_bins()
         z_bins_1d, _ = self.get_z_bins()
 
+        # Check if we should weight histograms by z-axis
+        weights = None
+        if use_weights:
+            # Make sure weights have the same shape as the data arrays
+            if len(d3) == len(d1):
+                weights = d3
+            else:
+                logging.warning(f"Weights array shape ({len(d3)}) doesn't match data array shape ({len(d1)}). Disabling weights.")
+
         # X, Y, Z Histogram
         ###################
         # Use the filtered data for all histograms
-        self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, density=self.plot_control.normed_hist_x)[::-1]
-        self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, density=self.plot_control.normed_hist_y)[::-1]
-        self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, density=self.plot_control.normed_hist_z)[::-1]
+        try:
+            self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, weights=weights, density=self.plot_control.normed_hist_x)[::-1]
+        except ValueError as e:
+            logging.warning(f"Could not compute X histogram with weights: {str(e)}")
+            # Fallback to histogram without weights
+            self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, density=self.plot_control.normed_hist_x)[::-1]
+
+        try:
+            self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, weights=weights, density=self.plot_control.normed_hist_y)[::-1]
+        except ValueError as e:
+            logging.warning(f"Could not compute Y histogram with weights: {str(e)}")
+            # Fallback to histogram without weights
+            self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, density=self.plot_control.normed_hist_y)[::-1]
+
+        # Only compute z histogram if z-axis is enabled
+        if z_enabled:
+            # Don't use weights for z histogram if weights is d3 (would be self-weighting)
+            z_weights = None if weights is d3 else weights
+            try:
+                self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, weights=z_weights, density=self.plot_control.normed_hist_z)[::-1]
+            except ValueError as e:
+                logging.warning(f"Could not compute Z histogram: {str(e)}")
+                # Create a simple histogram without weights as fallback
+                self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, density=self.plot_control.normed_hist_z)[::-1]
 
         # 2D Histogram
         ####################
         try:
-            # Use the filtered data for the 2D histogram if dynamic selection is enabled
-            H, x_edges, y_edges = np.histogram2d(x=d1, y=d2, bins=[x_bins_2d, y_bins_2d], density=True)
+            # Use the filtered data for the 2D histogram
+            # weights should already be checked for shape compatibility above
+            H, x_edges, y_edges = np.histogram2d(x=d1, y=d2, bins=[x_bins_2d, y_bins_2d], weights=weights, density=True)
             self._histogram["2d"] = H, x_edges, y_edges
-        except ValueError:
-            logging.log(1, "Did not compute 2D histogram")
+        except ValueError as e:
+            logging.warning(f"Could not compute 2D histogram: {str(e)}")
+
+        # Cache the parameters used for this computation
+        self._cached_hist_params = {
+            'p1_idx': p1_idx,
+            'p2_idx': p2_idx,
+            'p3_idx': p3_idx,
+            'use_weights': use_weights,
+            'z_enabled': z_enabled,
+            'mask_id': getattr(self, '_cached_values_mask_id', None),
+            'normed_x': self.plot_control.normed_hist_x,
+            'normed_y': self.plot_control.normed_hist_y,
+            'normed_z': self.plot_control.normed_hist_z,
+            'x_bins_1d': str(x_bins_1d),
+            'y_bins_1d': str(y_bins_1d),
+            'z_bins_1d': str(z_bins_1d)
+        }
 
     def copy_2d_hist_to_clipboard_json(self):
         try:
@@ -1275,30 +1470,57 @@ class NDXplorer(QtWidgets.QMainWindow):
                             This is useful when update_plots is called after clustering is done
                             or when loading data.
         """
-        # If there's no data (or fewer than 3 columns), display the background image
+        # Invalidate the values cache to ensure we're using the latest data
+        # This is especially important when selections have changed
+        self.invalidate_values_cache()
+
+        # If there's no data (or fewer than 3 columns), display an empty plot
         if self._data_source.empty or self._data_source.values.shape[0] == 0:
-            # Clear any old histogram displays
-            self.g_xhist_m.set_data([], [])
-            self.g_yhist_m.set_data([], [])
-            self.g_zhist_m.set_data([], [])
+            # Set valid initial data for the curve items (single point at 0,0)
+            # This prevents errors when autoscaling with empty data
+            self.g_xhist_m.set_data([0, 1], [0, 0])
+            self.g_yhist_m.set_data([0, 0], [0, 1])
+            self.g_zhist_m.set_data([0, 1], [0, 0])
 
-            # Construct the path to the background image
-            bg_path = os.path.join(os.path.dirname(__file__), 'ui', 'background.png')
-            try:
-                # Load the background image using matplotlib's imread
-                bg_img = plt.imread(bg_path)
-            except Exception as e:
-                logging.error("Could not load background image: %s", e)
-                bg_img = np.zeros((1, 1))  # fallback to an empty array if needed
+            # Create an empty array for the 2D plot
+            empty_img = np.zeros((1, 1))
 
-            # Set the background image in the 2D histogram axis
-            self.cax.set_data(bg_img)
+            # Set the empty image in the 2D histogram axis
+            self.cax.set_data(empty_img)
 
             # Set default axis scales for empty data
             self.g_2dplot.setAxisScale(QwtPlot.xBottom, 0, 1)
             self.g_2dplot.setAxisScale(QwtPlot.yLeft, 0, 1)
 
-            # Replot the 2D plot
+            # Set default axis scales for x and y histograms
+            self.g_xplot.setAxisScale(QwtPlot.xBottom, 0, 1)
+            self.g_xplot.setAxisScale(QwtPlot.xTop, 0, 1)  # Link top axis to bottom axis
+            self.g_xplot.setAxisScale(QwtPlot.yLeft, 0, 1)
+
+            self.g_yplot.setAxisScale(QwtPlot.yLeft, 0, 1)
+            self.g_yplot.setAxisScale(QwtPlot.yRight, 0, 1)  # Link right axis to left axis
+            self.g_yplot.setAxisScale(QwtPlot.xBottom, 0, 1)
+
+            # Set default axis scales for z histogram
+            self.g_zplot.setAxisScale(QwtPlot.xBottom, 0, 1)
+            self.g_zplot.setAxisScale(QwtPlot.yLeft, 0, 1)
+
+            # Replot all plots with the valid initial data
+            try:
+                self.g_xplot.replot()
+            except ValueError as e:
+                logging.warning(f"Error reploting x-plot: {e}")
+
+            try:
+                self.g_yplot.replot()
+            except ValueError as e:
+                logging.warning(f"Error reploting y-plot: {e}")
+
+            try:
+                self.g_zplot.replot()
+            except ValueError as e:
+                logging.warning(f"Error reploting z-plot: {e}")
+
             self.g_2dplot.replot()
             return
 
@@ -1308,11 +1530,20 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Apply HDBSCAN clustering if enabled and not skipped
         # Skip clustering when loading data (skip_clustering=True)
-        if self._use_clustering and self._cluster_labels is None and hdbscan and not skip_clustering:
-            # Start the clustering in a separate thread
-            self.on_apply_clustering()
-            # Return early to avoid updating the plots until clustering is done
-            return
+        if self._use_clustering and self._cluster_labels is None and not skip_clustering:
+            # Lazy import of hdbscan
+            if hdbscan is None:
+                try:
+                    import hdbscan
+                    logging.info("Imported hdbscan library")
+                except ImportError:
+                    hdbscan = None
+
+            if hdbscan:
+                # Start the clustering in a separate thread
+                self.on_apply_clustering()
+                # Return early to avoid updating the plots until clustering is done
+                return
 
         # Update histograms
         self.update_histograms()
@@ -1332,12 +1563,26 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Plot with X=counts, Y=bin_edges[1:]
         self.g_yhist_m.set_data(y_counts, y_bin_edges[1:])
 
-        # 3. Z histogram
-        # _histogram["z"] = (bin_edges, counts)
-        z_bin_edges = self._histogram["z"][0]
-        z_counts = self._histogram["z"][1]
-        # Plot with X=bin_edges[1:], Y=counts
-        self.g_zhist_m.set_data(z_bin_edges[1:], z_counts)
+        # 3. Z histogram - only if enabled
+        if hasattr(self, 'checkBoxEnableZ') and self.checkBoxEnableZ.isChecked() and "z" in self._histogram:
+            # _histogram["z"] = (bin_edges, counts)
+            z_bin_edges = self._histogram["z"][0]
+            z_counts = self._histogram["z"][1]
+            # Plot with X=bin_edges[1:], Y=counts
+            self.g_zhist_m.set_data(z_bin_edges[1:], z_counts)
+
+            # Z histogram => x-axis: bin edges, y-axis: counts
+            y_max_z = np.max(z_counts) if len(z_counts) else 1
+            self.g_zplot.setAxisScale(QwtPlot.yLeft, 0, y_max_z * 1.05)
+            self.g_zplot.setAxisScale(QwtPlot.xBottom, z_bin_edges[0], z_bin_edges[-1])
+        else:
+            # Set valid initial data for the z histogram when disabled
+            # This prevents errors when autoscaling with empty data
+            self.g_zhist_m.set_data([0, 1], [0, 0])
+
+            # Set default axis scales for z histogram
+            self.g_zplot.setAxisScale(QwtPlot.xBottom, 0, 1)
+            self.g_zplot.setAxisScale(QwtPlot.yLeft, 0, 1)
 
         # ----------------------------------------------------
         # Manually set axis scales to start at 0 for the count axis
@@ -1346,16 +1591,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         y_max_x = np.max(x_counts) if len(x_counts) else 1
         self.g_xplot.setAxisScale(QwtPlot.yLeft, 0, y_max_x * 1.05)
         self.g_xplot.setAxisScale(QwtPlot.xBottom, x_bin_edges[0], x_bin_edges[-1])
+        # Link top axis to bottom axis
+        self.g_xplot.setAxisScale(QwtPlot.xTop, x_bin_edges[0], x_bin_edges[-1])
 
         # Y histogram => x-axis: counts, y-axis: bin edges
         x_max_y = np.max(y_counts) if len(y_counts) else 1
         self.g_yplot.setAxisScale(QwtPlot.xBottom, 0, x_max_y * 1.05)
         self.g_yplot.setAxisScale(QwtPlot.yLeft, y_bin_edges[0], y_bin_edges[-1])
-
-        # Z histogram => x-axis: bin edges, y-axis: counts
-        y_max_z = np.max(z_counts) if len(z_counts) else 1
-        self.g_zplot.setAxisScale(QwtPlot.yLeft, 0, y_max_z * 1.05)
-        self.g_zplot.setAxisScale(QwtPlot.xBottom, z_bin_edges[0], z_bin_edges[-1])
+        # Link right axis to left axis
+        self.g_yplot.setAxisScale(QwtPlot.yRight, y_bin_edges[0], y_bin_edges[-1])
 
         # ----------------------------------------------------
         # 2D histogram updates as before
@@ -1376,9 +1620,34 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # ----------------------------------------------------
         # Finally replot everything
-        self.g_xplot.replot()
-        self.g_yplot.replot()
-        self.g_zplot.replot()
+
+        # Only replot x-plot if it has valid data
+        if "x" in self._histogram:
+            x_counts = self._histogram["x"][1]
+            if len(x_counts) > 0 and not np.all(np.isnan(x_counts)):
+                try:
+                    self.g_xplot.replot()
+                except ValueError as e:
+                    logging.warning(f"Error reploting x-plot: {e}")
+
+        # Only replot y-plot if it has valid data
+        if "y" in self._histogram:
+            y_counts = self._histogram["y"][1]
+            if len(y_counts) > 0 and not np.all(np.isnan(y_counts)):
+                try:
+                    self.g_yplot.replot()
+                except ValueError as e:
+                    logging.warning(f"Error reploting y-plot: {e}")
+
+        # Only replot z-plot if it has valid data
+        if hasattr(self, 'checkBoxEnableZ') and self.checkBoxEnableZ.isChecked() and "z" in self._histogram:
+            z_counts = self._histogram["z"][1]
+            if len(z_counts) > 0 and not np.all(np.isnan(z_counts)):
+                try:
+                    self.g_zplot.replot()
+                except ValueError as e:
+                    logging.warning(f"Error reploting z-plot: {e}")
+
         self.g_2dplot.replot()  # Replot the 2D plot to apply the axis scale changes
 
     def update_spinbox_limits(self, low_pct=0.1, high_pct=99):
@@ -1558,46 +1827,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
 
 
-    # Worker class for performing clustering in a separate thread
-    class ClusteringWorker(QThread):
-        # Signal emitted when clustering is done
-        clustering_done = Signal(tuple)
-        # Signal emitted when an error occurs
-        clustering_error = Signal(str)
-        # Signal emitted to report progress
-        progress_updated = Signal(int)
-
-        def __init__(self, parent, method, params):
-            super().__init__(parent)
-            self.parent = parent
-            self.method = method
-            self.params = params
-            self._stop_requested = False
-
-        def stop(self):
-            """Request the worker to stop processing"""
-            self._stop_requested = True
-            logging.info("Clustering stop requested")
-
-        def run(self):
-            try:
-                # Perform clustering in the worker thread
-                result = self.parent.perform_clustering(
-                    method=self.method,
-                    **self.params,
-                    worker=self  # Pass the worker instance to allow progress updates and cancellation
-                )
-                # Emit signal with the result only if not stopped
-                if not self._stop_requested:
-                    self.clustering_done.emit(result)
-            except Exception as e:
-                # Log the error
-                logging.error(f"Error in clustering worker thread: {str(e)}")
-                # Emit error signal only if not stopped
-                if not self._stop_requested:
-                    self.clustering_error.emit(str(e))
-                    # Emit done signal with None values to ensure the UI is updated
-                    self.clustering_done.emit((None, None))
+    # Clustering functionality has been moved to clustering.py
 
     def on_apply_clustering(self):
         """
@@ -1614,24 +1844,42 @@ class NDXplorer(QtWidgets.QMainWindow):
         cluster_columns = self.clustering_dialog._cluster_columns
 
         # Check if the required library is available
-        if cluster_method == "hdbscan" and not hdbscan:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "HDBSCAN Not Available",
-                "HDBSCAN is not installed. Please install it using pip or conda."
-            )
-            if self.clustering_dialog is not None:
-                self.clustering_dialog.checkBoxClustering.setChecked(False)
-            return
-        elif cluster_method == "kmeans" and not KMeans:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "scikit-learn Not Available",
-                "scikit-learn is not installed. Please install it using pip or conda."
-            )
-            if self.clustering_dialog is not None:
-                self.clustering_dialog.checkBoxClustering.setChecked(False)
-            return
+        if cluster_method == "hdbscan":
+            # Lazy import of hdbscan
+            if hdbscan is None:
+                try:
+                    import hdbscan
+                    logging.info("Imported hdbscan library")
+                except ImportError:
+                    hdbscan = None
+
+            if not hdbscan:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "HDBSCAN Not Available",
+                    "HDBSCAN is not installed. Please install it using pip or conda."
+                )
+                if self.clustering_dialog is not None:
+                    self.clustering_dialog.checkBoxClustering.setChecked(False)
+                return
+        elif cluster_method == "kmeans":
+            # Lazy import of KMeans
+            if KMeans is None:
+                try:
+                    from sklearn.cluster import KMeans
+                    logging.info("Imported KMeans library")
+                except ImportError:
+                    KMeans = None
+
+            if not KMeans:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "scikit-learn Not Available",
+                    "scikit-learn is not installed. Please install it using pip or conda."
+                )
+                if self.clustering_dialog is not None:
+                    self.clustering_dialog.checkBoxClustering.setChecked(False)
+                return
 
         # Check if any columns are selected for clustering
         if not cluster_columns:
@@ -1668,8 +1916,8 @@ class NDXplorer(QtWidgets.QMainWindow):
             # Delete the old worker
             self.clustering_worker.deleteLater()
 
-        # Create a new worker thread
-        self.clustering_worker = self.ClusteringWorker(
+        # Create a new worker thread using the imported ClusteringWorker class
+        self.clustering_worker = ClusteringWorker(
             self, 
             cluster_method,
             params
@@ -1801,6 +2049,7 @@ class NDXplorer(QtWidgets.QMainWindow):
     def perform_clustering(self, method=None, worker=None, **kwargs) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """
         Perform clustering on the current data using the specified method.
+        This is now a wrapper around the ClusteringManager's perform_clustering method.
 
         Args:
             method: The clustering method to use. If None, uses the method from clustering dialog.
@@ -1822,249 +2071,40 @@ class NDXplorer(QtWidgets.QMainWindow):
             - cluster_labels: Array of cluster labels for each data point
             - cluster_probabilities: Array of cluster membership probabilities (or None for K-means)
         """
+        if not hasattr(self, '_clustering_manager'):
+            self._clustering_manager = ClusteringManager(self._data_source)
+        else:
+            # Update data source in case it has changed
+            self._clustering_manager._data_source = self._data_source
+
         if method is None:
             method = self.clustering_dialog._cluster_method
-
-        if method == "hdbscan" and not hdbscan:
-            logging.error("HDBSCAN is not installed. Cannot perform clustering.")
-            return None, None
-        elif method == "kmeans" and not KMeans:
-            logging.error("scikit-learn is not installed. Cannot perform clustering.")
-            return None, None
-
-        if self._data_source.empty:
-            return None, None
 
         # Extract parameters for the selected method
         if method == "hdbscan":
             min_samples = kwargs.get("min_samples", self.clustering_dialog._cluster_min_samples)
             min_cluster_size = kwargs.get("min_cluster_size", self.clustering_dialog._cluster_min_cluster_size)
+            kwargs["min_samples"] = min_samples
+            kwargs["min_cluster_size"] = min_cluster_size
         elif method == "kmeans":
             n_clusters = kwargs.get("n_clusters", self.clustering_dialog._cluster_n_clusters)
-
-        # Report progress: 10% - Starting data preparation
-        if worker:
-            worker.progress_updated.emit(10)
-            # Check if stop was requested
-            if worker._stop_requested:
-                logging.info("Clustering cancelled during data preparation")
-                return None, None
+            kwargs["n_clusters"] = n_clusters
 
         # Get the data for clustering based on selected columns
         if self.clustering_dialog._cluster_columns:
-            # Use selected columns
-            df = self._data_source.data
-            selected_data = []
-
-            for column in self.clustering_dialog._cluster_columns:
-                if column in df.columns:
-                    # Convert to numeric and handle errors
-                    values = pd.to_numeric(df[column], errors='coerce').values
-                    selected_data.append(values)
-
-            if not selected_data:  # If no valid columns were found
-                logging.warning("No valid columns selected for clustering. Using x, y, z values.")
-                data = np.column_stack((self.x_values, self.y_values, self.z_values))
-            else:
-                data = np.column_stack(selected_data)
+            kwargs["columns"] = self.clustering_dialog._cluster_columns
         else:
             # If no columns are selected, use x, y, z values
-            logging.info("No columns selected for clustering. Using x, y, z values.")
-            data = np.column_stack((self.x_values, self.y_values, self.z_values))
+            kwargs["x_values"] = self.x_values
+            kwargs["y_values"] = self.y_values
+            kwargs["z_values"] = self.z_values
 
-        # Report progress: 20% - Data collected
-        if worker:
-            worker.progress_updated.emit(20)
-            # Check if stop was requested
-            if worker._stop_requested:
-                logging.info("Clustering cancelled after data collection")
-                return None, None
+        # Perform clustering using the ClusteringManager
+        result = self._clustering_manager.perform_clustering(method=method, worker=worker, **kwargs)
 
-        # Remove any rows with NaN or Inf values
-        mask = ~np.any(np.isnan(data) | np.isinf(data), axis=1)
-        clean_data = data[mask]
-
-        # Report progress: 30% - Data cleaned
-        if worker:
-            worker.progress_updated.emit(30)
-            # Check if stop was requested
-            if worker._stop_requested:
-                logging.info("Clustering cancelled after data cleaning")
-                return None, None
-
-        # Check if UMAP enhancement is enabled
-        use_umap_enhancement = kwargs.get("use_umap_enhancement", False)
-
-        # Apply UMAP dimensionality reduction if enhancement is enabled
-        if use_umap_enhancement and umap is not None:
-            logging.info("Applying UMAP dimensionality reduction before clustering")
-
-            # Get UMAP parameters
-            umap_n_neighbors = kwargs.get("umap_n_neighbors", 15)
-            umap_min_dist = kwargs.get("umap_min_dist", 0.1)
-            umap_n_components = kwargs.get("umap_n_components", 2)
-
-            # Check if we have enough data points for UMAP
-            if len(clean_data) < umap_n_neighbors:
-                logging.warning(f"Not enough data points for UMAP. Need at least {umap_n_neighbors} (n_neighbors parameter).")
-                return None, None
-
-            # Report progress: 35% - Starting UMAP
-            if worker:
-                worker.progress_updated.emit(35)
-                # Check if stop was requested
-                if worker._stop_requested:
-                    logging.info("Clustering cancelled before UMAP")
-                    return None, None
-
-            try:
-                # Create and fit the UMAP reducer
-                reducer = umap.UMAP(
-                    n_neighbors=umap_n_neighbors,
-                    min_dist=umap_min_dist,
-                    n_components=umap_n_components,
-                    random_state=42  # For reproducibility
-                )
-
-                # Fit and transform the data
-                clean_data = reducer.fit_transform(clean_data)
-                logging.info(f"Data dimensionality reduced to {umap_n_components} using UMAP")
-
-            except Exception as e:
-                logging.error(f"Error during UMAP dimensionality reduction: {str(e)}")
-                # Continue with original data if UMAP fails
-                logging.info("Continuing with original data")
-
-        # Check if we have enough data points
-        if method == "hdbscan" and len(clean_data) < min_cluster_size:
-            logging.warning(f"Not enough data points for HDBSCAN clustering. Need at least {min_cluster_size}.")
-            return None, None
-        elif method == "kmeans" and len(clean_data) < n_clusters:
-            logging.warning(f"Not enough data points for K-means clustering. Need at least {n_clusters} (one per cluster).")
-            return None, None
-
-        try:
-            # Report progress: 40% - Starting clustering algorithm
-            if worker:
-                worker.progress_updated.emit(40)
-                # Check if stop was requested
-                if worker._stop_requested:
-                    logging.info("Clustering cancelled before algorithm start")
-                    return None, None
-
-            if method == "hdbscan":
-                # Create and fit the HDBSCAN clusterer
-                clusterer = hdbscan.HDBSCAN(
-                    min_samples=min_samples,
-                    min_cluster_size=min_cluster_size,
-                    prediction_data=True
-                )
-
-                # This is the most CPU-intensive part
-                clusterer.fit(clean_data)
-
-                # Report progress: 70% - HDBSCAN clustering completed
-                if worker:
-                    worker.progress_updated.emit(70)
-                    # Check if stop was requested
-                    if worker._stop_requested:
-                        logging.info("Clustering cancelled after HDBSCAN fit")
-                        return None, None
-
-                # Get cluster labels and probabilities
-                labels = clusterer.labels_
-                probabilities = clusterer.probabilities_
-
-                # Create full-sized arrays with NaN for filtered points
-                full_labels = np.full(len(data), -1, dtype=np.int32)
-                full_probabilities = np.zeros(len(data))
-
-                # Fill in the values for non-filtered points
-                full_labels[mask] = labels
-                full_probabilities[mask] = probabilities
-
-            elif method == "kmeans":
-                # Create and fit the K-means clusterer
-                clusterer = KMeans(
-                    n_clusters=n_clusters,
-                    random_state=42  # For reproducibility
-                )
-
-                # This is the most CPU-intensive part
-                clusterer.fit(clean_data)
-
-                # Report progress: 70% - K-means clustering completed
-                if worker:
-                    worker.progress_updated.emit(70)
-                    # Check if stop was requested
-                    if worker._stop_requested:
-                        logging.info("Clustering cancelled after K-means fit")
-                        return None, None
-
-                # Get cluster labels
-                labels = clusterer.labels_
-
-                # Create full-sized arrays with NaN for filtered points
-                full_labels = np.full(len(data), -1, dtype=np.int32)
-
-                # Fill in the values for non-filtered points
-                full_labels[mask] = labels
-
-                # For K-means, we don't have probabilities, so we use the distance to the cluster center
-                # as a proxy for probability (inverse of distance)
-                distances = np.zeros(len(clean_data))
-
-                # Report progress: 80% - Starting distance calculations
-                if worker:
-                    worker.progress_updated.emit(80)
-                    # Check if stop was requested
-                    if worker._stop_requested:
-                        logging.info("Clustering cancelled before distance calculations")
-                        return None, None
-
-                # Calculate distances in batches to reduce CPU load and allow cancellation
-                batch_size = 1000
-                for batch_start in range(0, len(clean_data), batch_size):
-                    batch_end = min(batch_start + batch_size, len(clean_data))
-
-                    # Check if stop was requested before processing each batch
-                    if worker and worker._stop_requested:
-                        logging.info(f"Clustering cancelled during distance calculations at batch {batch_start}-{batch_end}")
-                        return None, None
-
-                    for i in range(batch_start, batch_end):
-                        cluster_idx = labels[i]
-                        if cluster_idx >= 0:  # Skip noise points
-                            center = clusterer.cluster_centers_[cluster_idx]
-                            distances[i] = np.linalg.norm(clean_data[i] - center)
-
-                    # Update progress during batch processing
-                    if worker:
-                        progress = 80 + int((batch_end / len(clean_data)) * 10)
-                        worker.progress_updated.emit(progress)
-
-                # Normalize distances to [0, 1] range and invert (closer = higher probability)
-                if len(distances) > 0:
-                    max_dist = np.max(distances) if np.max(distances) > 0 else 1
-                    probabilities = 1 - (distances / max_dist)
-                else:
-                    probabilities = np.array([])
-
-                # Create full-sized array for probabilities
-                full_probabilities = np.zeros(len(data))
-                full_probabilities[mask] = probabilities
-
-            else:
-                logging.error(f"Unsupported clustering method: {method}")
-                return None, None
-
-            # Report progress: 90% - Updating data frame
-            if worker:
-                worker.progress_updated.emit(90)
-                # Check if stop was requested
-                if worker._stop_requested:
-                    logging.info("Clustering cancelled before data frame update")
-                    return None, None
+        # If clustering was successful, update the data frame
+        if result[0] is not None and result[1] is not None:
+            full_labels, full_probabilities = result
 
             # Add cluster labels and probabilities to the data frame
             df = self._data_source.data
@@ -2072,23 +2112,11 @@ class NDXplorer(QtWidgets.QMainWindow):
             df['Cluster Probability'] = full_probabilities
             self._data_source.data = df  # Update the data frame to trigger parameter_names update
 
-            # Update the plot control to include the new columns
-            # Note: This should be done in the main thread, not here
-            # We'll handle this in the on_clustering_done method
-
-            # Report progress: 100% - Clustering completed
-            if worker:
-                worker.progress_updated.emit(100)
-
             # Store the data shape used for clustering
-            self._cluster_data_shape = len(data)
+            self._cluster_data_shape = self._clustering_manager._cluster_data_shape
             logging.log(0, f"Stored cluster data shape: {self._cluster_data_shape}")
 
-            return full_labels, full_probabilities
-
-        except Exception as e:
-            logging.error(f"Error during {method} clustering: {str(e)}")
-            return None, None
+        return result
 
     def keyPressEvent(self, event):
         """
@@ -2156,6 +2184,37 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.update_histograms()
             self.update_plots(skip_clustering=True)
 
+    def on_enable_z_changed(self, state):
+        """
+        Handle changes to the enable Z checkbox.
+
+        Args:
+            state: The new state of the checkbox (Qt.Checked or Qt.Unchecked)
+        """
+        # Show or hide the z-axis plot based on the checkbox state
+        self.g_zplot.setVisible(bool(state))
+
+        # Update histograms and plots to reflect the new state
+        # This will skip z-axis histogram computation if disabled
+        self.update_histograms()
+        self.update_plots(skip_clustering=True)
+
+    def on_weight_changed(self, state):
+        """
+        Handle changes to the weight checkbox.
+
+        Args:
+            state: The new state of the checkbox (Qt.Checked or Qt.Unchecked)
+        """
+        # If weight is checked, ensure that z-axis is enabled
+        if bool(state) and not self.checkBoxEnableZ.isChecked():
+            self.checkBoxEnableZ.setChecked(True)
+            # on_enable_z_changed will be called automatically due to the signal connection
+        else:
+            # Update histograms and plots to reflect the new state
+            self.update_histograms()
+            self.update_plots(skip_clustering=True)
+
     def on_dynamic_selection_changed(self, state):
         """
         Handle changes to the dynamic selection checkbox.
@@ -2180,260 +2239,22 @@ class NDXplorer(QtWidgets.QMainWindow):
                 min_dist: Minimum distance between points in the embedding
                 n_components: Number of components (dimensions) for the embedding
         """
-        logging.log(0, f"Creating UMAP plot with params: {params}")
+        # Get cluster labels if available
+        cluster_labels = None
+        if hasattr(self, '_cluster_labels') and self._cluster_labels is not None:
+            cluster_labels = self._cluster_labels
 
-        # Check if UMAP is available
-        if not umap:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "UMAP Not Available",
-                "UMAP is not installed. Please install it using pip or conda."
-            )
-            return
-
-        # Store the UMAP windows as instance variables to prevent garbage collection
-        if not hasattr(self, 'umap_windows'):
-            self.umap_windows = []
-
-        # Close any existing UMAP windows
-        for window in self.umap_windows:
-            window.close()
-        self.umap_windows = []
-
-        # Get the data for UMAP based on selected columns
-        if columns:
-            # Use selected columns
-            df = self._data_source.data
-            selected_data = []
-
-            for column in columns:
-                if column in df.columns:
-                    # Convert to numeric and handle errors
-                    values = pd.to_numeric(df[column], errors='coerce').values
-                    selected_data.append(values)
-
-            if not selected_data:  # If no valid columns were found
-                logging.warning("No valid columns selected for UMAP. Using x, y, z values.")
-                data = np.column_stack((self.x_values, self.y_values, self.z_values))
-            else:
-                data = np.column_stack(selected_data)
-        else:
-            # If no columns are selected, use x, y, z values
-            logging.info("No columns selected for UMAP. Using x, y, z values.")
-            data = np.column_stack((self.x_values, self.y_values, self.z_values))
-
-        # Remove any rows with NaN or Inf values
-        mask = ~np.any(np.isnan(data) | np.isinf(data), axis=1)
-        clean_data = data[mask]
-
-        # Check if we have enough data points
-        if len(clean_data) < params['n_neighbors']:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Not Enough Data",
-                f"Not enough data points for UMAP. Need at least {params['n_neighbors']} (n_neighbors parameter)."
-            )
-            return
-
-        try:
-            # Create and fit the UMAP reducer
-            reducer = umap.UMAP(
-                n_neighbors=params['n_neighbors'],
-                min_dist=params['min_dist'],
-                n_components=params['n_components'],
-                random_state=42  # For reproducibility
-            )
-
-            # Fit and transform the data
-            embedding = reducer.fit_transform(clean_data)
-
-            # Import pyqtgraph
-            import pyqtgraph as pg
-
-            # Create the plot based on the number of components
-            if params['n_components'] == 2:
-                # Create a new window for the UMAP plot
-                umap_window = QtWidgets.QMainWindow()
-                umap_window.setWindowTitle('UMAP Projection')
-                umap_window.resize(800, 600)
-
-                # Add the window to the list of UMAP windows
-                self.umap_windows.append(umap_window)
-
-                # Create central widget and layout
-                central_widget = QtWidgets.QWidget()
-                layout = QtWidgets.QVBoxLayout(central_widget)
-
-                # Create plot widget
-                plot_widget = pg.PlotWidget(title='UMAP Projection')
-                plot_widget.setLabel('bottom', 'UMAP 1')
-                plot_widget.setLabel('left', 'UMAP 2')
-
-                # If cluster labels are available, color points by cluster
-                if hasattr(self, '_cluster_labels') and self._cluster_labels is not None:
-                    # Get cluster labels for non-filtered points
-                    cluster_labels = self._cluster_labels[mask]
-
-                    # Get unique cluster labels
-                    unique_labels = np.unique(cluster_labels)
-
-                    # Create a colormap
-                    colors = plt.cm.viridis(np.linspace(0, 1, len(unique_labels)))
-
-                    # Create a legend
-                    legend = pg.LegendItem(offset=(70, 30))
-                    legend.setParentItem(plot_widget.graphicsItem())
-
-                    # Create a scatter plot item for each cluster
-                    for i, label in enumerate(unique_labels):
-                        mask_label = cluster_labels == label
-
-                        # Convert color to RGBA format for PyQtGraph
-                        color = colors[i]
-                        rgba = (int(color[0]*255), int(color[1]*255), int(color[2]*255), int(color[3]*100))
-
-                        scatter_item = pg.ScatterPlotItem(
-                            x=embedding[mask_label, 0],
-                            y=embedding[mask_label, 1],
-                            size=5,
-                            pen=None,
-                            brush=pg.mkBrush(*rgba),
-                            name=f"Cluster {label}"
-                        )
-                        plot_widget.addItem(scatter_item)
-
-                        # Add item to legend
-                        legend.addItem(scatter_item, f"Cluster {label}")
-                else:
-                    # Create scatter plot item with default color
-                    scatter = pg.ScatterPlotItem(
-                        x=embedding[:, 0],
-                        y=embedding[:, 1],
-                        size=5,
-                        pen=None,
-                        brush=pg.mkBrush(255, 255, 255, 100)
-                    )
-                    plot_widget.addItem(scatter)
-
-                # Add plot widget to layout
-                layout.addWidget(plot_widget)
-
-                # Set central widget
-                umap_window.setCentralWidget(central_widget)
-
-                # Show the main plot window
-                umap_window.show()
-                # Bring the window to the front
-                umap_window.activateWindow()
-                umap_window.raise_()
-
-            elif params['n_components'] == 3:
-                # Import pyqtgraph.opengl for 3D plotting
-                import pyqtgraph.opengl as gl
-
-                # Create a new window for the UMAP plot
-                umap_window = QtWidgets.QMainWindow()
-                umap_window.setWindowTitle('UMAP Projection (3D)')
-                umap_window.resize(800, 600)
-
-                # Add the window to the list of UMAP windows
-                self.umap_windows.append(umap_window)
-
-                # Create central widget and layout
-                central_widget = QtWidgets.QWidget()
-                layout = QtWidgets.QVBoxLayout(central_widget)
-
-                # Create 3D view widget
-                view_widget = gl.GLViewWidget()
-
-                # If cluster labels are available, color points by cluster
-                if hasattr(self, '_cluster_labels') and self._cluster_labels is not None:
-                    # Get cluster labels for non-filtered points
-                    cluster_labels = self._cluster_labels[mask]
-
-                    # Get unique cluster labels
-                    unique_labels = np.unique(cluster_labels)
-
-                    # Create a colormap
-                    colors = plt.cm.viridis(np.linspace(0, 1, len(unique_labels)))
-
-                    # Create a scatter plot for each cluster
-                    for i, label in enumerate(unique_labels):
-                        mask_label = cluster_labels == label
-
-                        # Convert color to RGBA format for PyQtGraph
-                        color = colors[i]
-
-                        scatter_item = gl.GLScatterPlotItem(
-                            pos=embedding[mask_label],
-                            size=5,
-                            color=(color[0], color[1], color[2], 0.5),
-                            pxMode=True
-                        )
-                        view_widget.addItem(scatter_item)
-
-                    # Create a separate 2D plot widget for the legend
-                    legend_widget = pg.PlotWidget(title='Legend')
-                    legend_widget.setFixedHeight(len(unique_labels) * 30 + 50)  # Adjust height based on number of clusters
-                    legend_widget.getPlotItem().hideAxis('left')
-                    legend_widget.getPlotItem().hideAxis('bottom')
-
-                    # Create a legend
-                    legend = pg.LegendItem(offset=(10, 10))
-                    legend.setParentItem(legend_widget.getPlotItem())
-
-                    # Add items to the legend
-                    for i, label in enumerate(unique_labels):
-                        color = colors[i]
-                        rgba = (int(color[0]*255), int(color[1]*255), int(color[2]*255), int(color[3]*100))
-
-                        # Create a dummy scatter item for the legend
-                        dummy_scatter = pg.ScatterPlotItem(
-                            x=[0], y=[0],
-                            size=5,
-                            pen=None,
-                            brush=pg.mkBrush(*rgba)
-                        )
-
-                        # Add to legend
-                        legend.addItem(dummy_scatter, f"Cluster {label}")
-
-                    # Add legend widget to layout
-                    layout.addWidget(legend_widget)
-                else:
-                    # Create 3D scatter plot with default color
-                    scatter_plot = gl.GLScatterPlotItem(
-                        pos=embedding,
-                        size=5,
-                        color=(1, 1, 1, 0.5),
-                        pxMode=True
-                    )
-                    view_widget.addItem(scatter_plot)
-
-                # Add axes
-                axes = gl.GLAxisItem()
-                axes.setSize(x=1, y=1, z=1)
-                view_widget.addItem(axes)
-
-                # Add view widget to layout
-                layout.addWidget(view_widget)
-
-                # Set central widget
-                umap_window.setCentralWidget(central_widget)
-
-                # Show the main plot window
-                umap_window.show()
-                # Bring the window to the front
-                umap_window.activateWindow()
-                umap_window.raise_()
-
-        except Exception as e:
-            logging.error(f"Error during UMAP: {str(e)}")
-            QtWidgets.QMessageBox.critical(
-                self,
-                "UMAP Error",
-                f"An error occurred during UMAP: {str(e)}"
-            )
+        # Call the UMAP plot function from the plot_umap module
+        plot_umap.create_umap_plot(
+            parent=self,
+            columns=columns,
+            params=params,
+            data_source=self._data_source,
+            x_values=self.x_values,
+            y_values=self.y_values,
+            z_values=self.z_values,
+            cluster_labels=cluster_labels
+        )
 
     def update_2d_plot(self):
         try:
@@ -2443,6 +2264,11 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         log_counts = self.checkBoxLogCounts.isChecked()
         if log_counts:
+            # Handle zeros and negative values before taking log10
+            # Add a small positive value to avoid log(0) which would give -inf
+            # This ensures we can see more details in the 2D histogram
+            min_positive = np.min(new_data[new_data > 0]) if np.any(new_data > 0) else 1e-10
+            new_data = np.maximum(new_data, min_positive / 10)  # Replace zeros/negatives with a small value
             new_data = np.log10(new_data)
             new_data = np.nan_to_num(new_data)
 
@@ -2459,135 +2285,74 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Update curve overlays
         self.update_curve_overlays()
 
+    def bin_to_value(self, bin_idx, edges):
+        """Convert a bin index to a value (center of the bin).
+
+        Args:
+            bin_idx: The bin index
+            edges: The bin edges array
+
+        Returns:
+            The center value of the bin, or None if the bin index is invalid
+        """
+        if bin_idx < 0 or bin_idx >= len(edges) - 1:
+            return None
+        return (edges[bin_idx] + edges[bin_idx + 1]) / 2
+
+    def value_to_bin(self, value, edges):
+        """Convert a value to a bin index with linear interpolation.
+
+        Args:
+            value: The value to convert
+            edges: The bin edges array
+
+        Returns:
+            The bin index (as a float for interpolation), or None if the value is outside the range
+        """
+        for i in range(len(edges) - 1):
+            if edges[i] <= value <= edges[i + 1]:
+                # Calculate the relative position within the bin (0.0 to 1.0)
+                bin_width = edges[i + 1] - edges[i]
+                if bin_width == 0:  # Avoid division by zero
+                    return float(i)
+                relative_pos = (value - edges[i]) / bin_width
+                # Return the bin index plus the relative position
+                return float(i) + relative_pos
+        return None
+
     def bin_to_x_value(self, bin_idx, x_edges):
         """Convert a bin index to an x value (center of the bin)."""
-        if bin_idx < 0 or bin_idx >= len(x_edges) - 1:
-            return None
-        return (x_edges[bin_idx] + x_edges[bin_idx + 1]) / 2
+        return self.bin_to_value(bin_idx, x_edges)
 
     def bin_to_y_value(self, bin_idx, y_edges):
         """Convert a bin index to a y value (center of the bin)."""
-        if bin_idx < 0 or bin_idx >= len(y_edges) - 1:
-            return None
-        return (y_edges[bin_idx] + y_edges[bin_idx + 1]) / 2
+        return self.bin_to_value(bin_idx, y_edges)
 
     def x_value_to_bin(self, x_value, x_edges):
         """Convert an x value to a bin index with linear interpolation."""
-        for i in range(len(x_edges) - 1):
-            if x_edges[i] <= x_value <= x_edges[i + 1]:
-                # Calculate the relative position within the bin (0.0 to 1.0)
-                bin_width = x_edges[i + 1] - x_edges[i]
-                if bin_width == 0:  # Avoid division by zero
-                    return float(i)
-                relative_pos = (x_value - x_edges[i]) / bin_width
-                # Return the bin index plus the relative position
-                return float(i) + relative_pos
-        return None
+        return self.value_to_bin(x_value, x_edges)
 
     def y_value_to_bin(self, y_value, y_edges):
         """Convert a y value to a bin index with linear interpolation."""
-        for i in range(len(y_edges) - 1):
-            if y_edges[i] <= y_value <= y_edges[i + 1]:
-                # Calculate the relative position within the bin (0.0 to 1.0)
-                bin_width = y_edges[i + 1] - y_edges[i]
-                if bin_width == 0:  # Avoid division by zero
-                    return float(i)
-                relative_pos = (y_value - y_edges[i]) / bin_width
-                # Return the bin index plus the relative position
-                return float(i) + relative_pos
-        return None
+        return self.value_to_bin(y_value, y_edges)
+
 
     def update_curve_overlays(self):
         """Update the curve overlays on the 2D histogram."""
-        # Remove existing curve items
-        for curve_item in self.curve_items:
-            self.overlay_plot.del_item(curve_item)
-        self.curve_items = []
-
         try:
             # Get the 2D histogram data and edges
-            _, x_edges, y_edges = self._histogram["2d"]
+            histogram_data = self._histogram["2d"]
         except (ValueError, KeyError):
             return
 
-        # Get visible curves from the overlay widget
-        visible_curves = self.curve_overlay_widget.get_visible_curves()
+        # Call the update_curve_overlays method in the CurveOverlayWidget class
+        self.curve_overlay_widget.update_curve_overlays(
+            overlay_plot=self.overlay_plot,
+            histogram_data=histogram_data,
+            plot_control=self.plot_control,
+            curve_evaluator=self.curve_evaluator,
+            value_to_bin_func=self.value_to_bin
+        )
 
-        # Get the number of points to use for curve computation
-        num_points = self.curve_overlay_widget.get_num_points()
-
-        # Synchronize the overlay plot's axes with the main plot
-        self.overlay_plot.setAxisScale(QwtPlot.xBottom, 0, len(x_edges) - 1)
-        self.overlay_plot.setAxisScale(QwtPlot.yLeft, 0, len(y_edges) - 1)
-
-        for equation, parameters, color in visible_curves:
-            # Create x values array with the specified number of points
-            # Use the same scaling function (linear or logarithmic) that was used to create the bins
-            x_min = x_edges[0]
-            x_max = x_edges[-1]
-
-            # Check if x-axis is using logarithmic scale
-            if self.plot_control.scale_x == "log":
-                if x_min <= 0:
-                    x_min = 1e-6
-                if x_max <= 0:
-                    x_max = 1e-6
-                x_values = np.logspace(np.log10(x_min), np.log10(x_max), num_points)
-            else:
-                x_values = np.linspace(x_min, x_max, num_points)
-
-            # Evaluate the equation
-            y_values = self.curve_evaluator.evaluate(equation, x_values, parameters)
-
-            if y_values is None:
-                continue  # Skip if evaluation failed
-
-            # Convert x and y values to bin coordinates for plotting
-            # Note: The 2D histogram is rotated 90 degrees in the plot
-            x_coords = []
-            y_coords = []
-
-            # Check if y-axis is using logarithmic scale and adjust y values accordingly
-            if self.plot_control.scale_y == "log":
-                # For logarithmic y-axis, we need to ensure y values are positive
-                y_values = np.maximum(y_values, 1e-6)
-
-            for i, (x, y) in enumerate(zip(x_values, y_values)):
-                # Check if y is within the y range
-                if y < y_edges[0] or y > y_edges[-1]:
-                    continue
-
-                # Convert to bin coordinates
-                # Note: The 2D histogram is rotated 90 degrees in the plot
-                # so we need to swap x and y coordinates
-                y_bin = self.y_value_to_bin(y, y_edges)
-                if y_bin is None:
-                    continue
-
-                # Convert x value to bin index
-                x_bin = self.x_value_to_bin(x, x_edges)
-                if x_bin is None:
-                    continue
-
-                # Add points to the curve
-                # The y-coordinate is the bin index (not the value)
-                # The x-coordinate is the bin index (not the value)
-                x_coords.append(x_bin)  # x bin index
-                y_coords.append(y_bin)  # y bin index
-
-            if not x_coords:
-                continue  # Skip if no valid points
-
-            # Create a curve item
-            curveparam = guiqwt.styles.CurveParam()
-            curveparam.line.color = color  # Use the selected color
-            curveparam.line.width = 2.0
-            curve_item = guiqwt.curve.CurveItem(curveparam=curveparam)
-            curve_item.set_data(x_coords, y_coords)
-
-            # Add the curve to the overlay plot
-            self.overlay_plot.add_item(curve_item)
-            self.curve_items.append(curve_item)
-
-        # Redraw the overlay plot to update the display
-        self.overlay_plot.replot()
+        # Update the curve_items reference to maintain backward compatibility
+        self.curve_items = self.curve_overlay_widget.curve_items
