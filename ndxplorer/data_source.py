@@ -122,8 +122,10 @@ class DataSource(object):
     @property
     def values(self):
         # type: () -> np.ndarray
-        v = np.array(self._data_numeric).T
-        return v
+        # Cache the transposed array to avoid recreating it on each call
+        if not hasattr(self, '_cached_values_array') or self._cached_values_array is None:
+            self._cached_values_array = np.array(self._data_numeric).T
+        return self._cached_values_array
 
     def clear(self):
         self.data = pd.DataFrame()
@@ -222,6 +224,9 @@ class DataSource(object):
         self._data = v
         self._parameter_names = list(self._data.columns)
         self._data_numeric = v.apply(pd.to_numeric, errors='coerce')
+        # Invalidate the cached values array when data changes
+        if hasattr(self, '_cached_values_array'):
+            self._cached_values_array = None
 
     @property
     def size(self):
