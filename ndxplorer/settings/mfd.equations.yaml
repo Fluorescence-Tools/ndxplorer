@@ -24,3 +24,5 @@
     (1-d['FRET efficiency'])*c['tauD0x']
 - Var_tauD(A)):
     d['Tau (green)']*d['<tauD(A)>x'] - d['<tauD(A)>x']**(2.0)
+- Total count rate green + red:
+    d['Green Count Rate (KHz)'] + d['Red Count Rate (KHz)']
