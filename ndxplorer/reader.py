@@ -1,5 +1,10 @@
-from typing import List, Union
+from typing import List, Union, Optional, BinaryIO, TextIO
 import pathlib
+import os
+import tempfile
+import zipfile
+import io
+import shutil
 
 import json
 import pandas as pd
@@ -11,6 +16,20 @@ from PyQt5.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QCoreApplication
+
+"""
+NDXplorer Reader Module
+
+This module provides functions for reading various data formats for the NDXplorer application.
+It supports:
+- CSV files (regular and zipped)
+- MFD HDF5 files (regular and zipped)
+- Burst analysis directories (regular and zipped)
+
+For zipped CSV files, pandas is used to read the data directly from the zip archive.
+For zipped MFD folders, the zip is extracted to a temporary directory before processing.
+For zipped HDF5 files, the file is extracted to a temporary location before reading.
+"""
 
 
 class ProgressWindow(QDialog):
@@ -51,12 +70,159 @@ def read_burst_analysis(
 
     Combines "Mean Macro Time (ms)" values sequentially across files,
     converts them to seconds, and renames the column to "Mean Macro Time (s)".
+    
+    Supports multiple input formats:
+    1. Regular directories with bi4_bur or bur subdirectories
+    2. Zipped MFD folders with the standard directory structure
+    3. Zip files created by the burst selector, which may have .bur files directly in the zip
+       or in various subdirectories
+    
+    For zip files, the function first tries to find .bur files directly in the zip.
+    If found, it extracts them to a temporary directory with the expected structure.
+    If no .bur files are found or if direct processing fails, it falls back to
+    extracting the entire zip file and looking for the standard directory structure.
     """
     # ensure a QApplication
     app = QApplication.instance() or QApplication([])
     base_path = pathlib.Path(base_path)
     additional_endings = additional_endings or ["bg4", "br4", "by4", "bv4"]
+    
+    # Check if the path is a zip file
+    if base_path.is_file() and base_path.suffix.lower() == '.zip':
+        # First, try to process the zip file directly to see if it contains .bur files
+        # This is for zip files created by the burst selector
+        try:
+            with zipfile.ZipFile(base_path, 'r') as zip_file:
+                # Get all files in the zip
+                all_files = zip_file.namelist()
+                print(f"Files in zip: {all_files}")
+                
+                # Look for .bur files in the zip
+                bur_files = [f for f in all_files if f.endswith('.bur')]
+                print(f"Found .bur files: {bur_files}")
+                
+                # If we found .bur files, process them directly from the zip
+                if bur_files:
+                    # Create a temporary directory to extract only the .bur files
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        temp_path = pathlib.Path(temp_dir)
+                        
+                        # Create bi4_bur directory in the temp directory
+                        bur_dir = temp_path / "bi4_bur"
+                        bur_dir.mkdir(exist_ok=True)
+                        
+                        # Extract all .bur files to the bi4_bur directory
+                        for bur_file in bur_files:
+                            try:
+                                # Extract the file
+                                print(f"Extracting {bur_file} to {temp_path}")
+                                zip_file.extract(bur_file, temp_path)
+                                
+                                # Move the file to the bi4_bur directory if it's not already there
+                                extracted_path = temp_path / bur_file
+                                print(f"Extracted path: {extracted_path}, bur_dir: {bur_dir}")
+                                if extracted_path.parent != bur_dir:
+                                    # Make sure parent directories exist
+                                    bur_dir.mkdir(exist_ok=True, parents=True)
+                                    
+                                    # Move the file
+                                    target_path = bur_dir / extracted_path.name
+                                    print(f"Moving {extracted_path} to {target_path}")
+                                    shutil.move(str(extracted_path), str(target_path))
+                            except Exception as e:
+                                print(f"Error processing {bur_file}: {str(e)}")
+                        
+                        # Extract any additional files if they exist
+                        for ending in additional_endings:
+                            additional_files = [f for f in all_files if f.endswith(f'.{ending}')]
+                            print(f"Found additional files for ending '{ending}': {additional_files}")
+                            if additional_files:
+                                try:
+                                    # Create directory for this ending
+                                    ending_dir = temp_path / ending
+                                    ending_dir.mkdir(exist_ok=True)
+                                    print(f"Created directory for {ending}: {ending_dir}")
+                                    
+                                    # Extract and move files
+                                    for add_file in additional_files:
+                                        try:
+                                            print(f"Extracting additional file {add_file} to {temp_path}")
+                                            zip_file.extract(add_file, temp_path)
+                                            extracted_path = temp_path / add_file
+                                            if extracted_path.parent != ending_dir:
+                                                target_path = ending_dir / extracted_path.name
+                                                print(f"Moving additional file {extracted_path} to {target_path}")
+                                                shutil.move(str(extracted_path), str(target_path))
+                                        except Exception as e:
+                                            print(f"Error processing additional file {add_file}: {str(e)}")
+                                except Exception as e:
+                                    print(f"Error processing files with ending '{ending}': {str(e)}")
+                        
+                        # Process the temporary directory
+                        return _process_burst_analysis_dir(
+                            temp_path,
+                            skip_nth_row,
+                            additional_endings,
+                            drop_last_column
+                        )
+        except Exception as e:
+            # If direct processing fails, fall back to the original method
+            print(f"Direct zip processing failed: {str(e)}. Falling back to extraction method.")
+        
+        # If we get here, either no .bur files were found or an error occurred
+        # Fall back to the original method of extracting the entire zip
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = pathlib.Path(temp_dir)
+            
+            # Extract the zip file
+            with zipfile.ZipFile(base_path, 'r') as zip_file:
+                zip_file.extractall(temp_path)
+            
+            # Find the MFD folder in the extracted contents
+            # Look for directories that might contain burst analysis data
+            potential_dirs = [d for d in temp_path.iterdir() if d.is_dir()]
+            
+            # If there's only one directory, use it
+            if len(potential_dirs) == 1:
+                mfd_dir = potential_dirs[0]
+            else:
+                # Try to find a directory with bi4_bur or bur subdirectories
+                mfd_dir = None
+                for d in potential_dirs:
+                    if (d / "bi4_bur").exists() or (d / "bur").exists():
+                        mfd_dir = d
+                        break
+                
+                # If still not found, use the temp directory itself
+                if mfd_dir is None:
+                    mfd_dir = temp_path
+            
+            # Now process the extracted directory
+            return _process_burst_analysis_dir(
+                mfd_dir, 
+                skip_nth_row, 
+                additional_endings, 
+                drop_last_column
+            )
+    else:
+        # Regular directory processing
+        return _process_burst_analysis_dir(
+            base_path, 
+            skip_nth_row, 
+            additional_endings, 
+            drop_last_column
+        )
 
+
+def _process_burst_analysis_dir(
+        base_path: pathlib.Path,
+        skip_nth_row: int = 2,
+        additional_endings: List[str] = None,
+        drop_last_column: bool = True
+) -> DataSource:
+    """
+    Process a burst analysis directory (helper function for read_burst_analysis).
+    """
     # locate .bur files
     dir_main = base_path / "bi4_bur"
     dir_fallback = base_path / "bur"
@@ -173,27 +339,235 @@ def read_burst_analysis(
 
 def read_csv_sampling(filenames, sep='\t'):
     # type: (List[str])->(DataSource)
+    from PyQt5.QtWidgets import QMessageBox
+
+    if not filenames:
+        return DataSource()
+
+    # Read the first file to get parameter names and base DataFrame
     with open(filenames[0], "r") as fp:
         l = fp.readline()
         pn = l.split("\t")
-    values = list()
-    for filename in filenames:
+
+    # Read the first file to get the base DataFrame
+    base_df = pd.read_csv(filenames[0], sep=sep)
+    row_count = len(base_df)
+
+    # If there's only one file, process it as before
+    if len(filenames) == 1:
+        return DataSource(
+            data=base_df,
+            parameter_names=pn
+        )
+
+    # For multiple files, combine horizontally (by columns)
+    combined_df = base_df
+
+    for filename in filenames[1:]:
         df = pd.read_csv(filename, sep=sep)
-        values.append(df)
-    data = pd.concat(values)
+
+        # Check if row count matches
+        if len(df) != row_count:
+            QMessageBox.warning(
+                None, 
+                "Row Count Mismatch",
+                f"File {filename} has {len(df)} rows, but expected {row_count} rows. File will not be opened."
+            )
+            continue
+
+        # Combine DataFrames horizontally, keeping only non-duplicate columns from the new DataFrame
+        # First, identify duplicate columns
+        duplicate_cols = set(combined_df.columns).intersection(set(df.columns))
+
+        # Remove duplicate columns from the new DataFrame
+        df_unique = df.drop(columns=duplicate_cols)
+
+        # Combine with the existing DataFrame
+        combined_df = pd.concat([combined_df, df_unique], axis=1)
+
     return DataSource(
-        data=data,
+        data=combined_df,
         parameter_names=pn
     )
 
 
-def read_csv(filenames):
-    df_files = list()
-    for filename in filenames:
-        df = pd.read_csv(filename, sep="\t")
-        df_files.append(df)
-    dfs = pd.concat(df_files)
-    dfn = dfs.select_dtypes(['number'])
+def read_mfd_hdf5(filenames):
+    """
+    Read MFD HDF5 files, including zipped HDF5 files.
+
+    Args:
+        filenames: List of HDF5 file paths or zipped HDF5 files
+
+    Returns:
+        DataSource object with the data
+    """
+    from PyQt5.QtWidgets import QMessageBox
+
+    if not filenames:
+        return DataSource()
+
+    # Process the first file to get the base DataFrame
+    first_file = filenames[0]
+    base_df = read_hdf5_file(first_file)
+    row_count = len(base_df)
+
+    # If there's only one file, process it as before
+    if len(filenames) == 1:
+        dfn = base_df.select_dtypes(['number'])
+        ds = DataSource()
+        ds.data = dfn
+        return ds
+
+    # For multiple files, combine horizontally (by columns)
+    combined_df = base_df
+
+    for filename in filenames[1:]:
+        df = read_hdf5_file(filename)
+
+        # Check if row count matches
+        if len(df) != row_count:
+            QMessageBox.warning(
+                None, 
+                "Row Count Mismatch",
+                f"File {filename} has {len(df)} rows, but expected {row_count} rows. File will not be opened."
+            )
+            continue
+
+        # Combine DataFrames horizontally, keeping only non-duplicate columns from the new DataFrame
+        # First, identify duplicate columns
+        duplicate_cols = set(combined_df.columns).intersection(set(df.columns))
+
+        # Remove duplicate columns from the new DataFrame
+        df_unique = df.drop(columns=duplicate_cols)
+
+        # Combine with the existing DataFrame
+        combined_df = pd.concat([combined_df, df_unique], axis=1)
+
+    # Select only numeric columns
+    dfn = combined_df.select_dtypes(['number'])
+
     ds = DataSource()
     ds.data = dfn
     return ds
+
+
+def read_hdf5_file(filename):
+    """
+    Read an HDF5 file, handling both regular and zipped HDF5 files.
+    
+    Args:
+        filename: Path to the HDF5 file or zipped HDF5 file
+        
+    Returns:
+        pandas DataFrame containing the HDF5 data
+    """
+    file_path = pathlib.Path(filename)
+    
+    # Check if the file is a zip file
+    if file_path.suffix.lower() == '.zip':
+        with zipfile.ZipFile(file_path, 'r') as zip_file:
+            # Get a list of HDF5 files in the zip
+            hdf5_files = [f for f in zip_file.namelist() if f.lower().endswith(('.h5', '.hdf5'))]
+            
+            if not hdf5_files:
+                raise ValueError(f"No HDF5 files found in the zip archive: {filename}")
+            
+            # Use the first HDF5 file in the archive
+            hdf5_filename = hdf5_files[0]
+            
+            # Extract the HDF5 file to a temporary location
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = pathlib.Path(temp_dir)
+                zip_file.extract(hdf5_filename, temp_path)
+                
+                # Read the extracted HDF5 file
+                extracted_file = temp_path / hdf5_filename
+                return pd.read_hdf(extracted_file, key='results')
+    else:
+        # Regular HDF5 file
+        return pd.read_hdf(filename, key='results')
+
+
+def read_csv(filenames):
+    from PyQt5.QtWidgets import QMessageBox
+
+    if not filenames:
+        return DataSource()
+    
+    # Process the first file to get the base DataFrame
+    first_file = filenames[0]
+    base_df = read_csv_file(first_file)
+    row_count = len(base_df)
+
+    # If there's only one file, process it as before
+    if len(filenames) == 1:
+        dfn = base_df.select_dtypes(['number'])
+        ds = DataSource()
+        ds.data = dfn
+        return ds
+
+    # For multiple files, combine horizontally (by columns)
+    combined_df = base_df
+
+    for filename in filenames[1:]:
+        df = read_csv_file(filename)
+
+        # Check if row count matches
+        if len(df) != row_count:
+            QMessageBox.warning(
+                None, 
+                "Row Count Mismatch",
+                f"File {filename} has {len(df)} rows, but expected {row_count} rows. File will not be opened."
+            )
+            continue
+
+        # Combine DataFrames horizontally, keeping only non-duplicate columns from the new DataFrame
+        # First, identify duplicate columns
+        duplicate_cols = set(combined_df.columns).intersection(set(df.columns))
+
+        # Remove duplicate columns from the new DataFrame
+        df_unique = df.drop(columns=duplicate_cols)
+
+        # Combine with the existing DataFrame
+        combined_df = pd.concat([combined_df, df_unique], axis=1)
+
+    # Select only numeric columns
+    dfn = combined_df.select_dtypes(['number'])
+
+    ds = DataSource()
+    ds.data = dfn
+    return ds
+
+
+def read_csv_file(filename):
+    """
+    Read a CSV file, handling both regular and zipped CSV files.
+    
+    Args:
+        filename: Path to the CSV file or zipped CSV file
+        
+    Returns:
+        pandas DataFrame containing the CSV data
+    """
+    file_path = pathlib.Path(filename)
+    
+    # Check if the file is a zip file
+    if file_path.suffix.lower() == '.zip':
+        with zipfile.ZipFile(file_path, 'r') as zip_file:
+            # Get a list of CSV files in the zip
+            csv_files = [f for f in zip_file.namelist() if f.lower().endswith(('.csv', '.txt', '.dat'))]
+            
+            if not csv_files:
+                raise ValueError(f"No CSV files found in the zip archive: {filename}")
+            
+            # Use the first CSV file in the archive
+            csv_filename = csv_files[0]
+            
+            # Read the CSV file directly from the zip
+            with zip_file.open(csv_filename) as csv_file:
+                # Convert bytes to string for pandas
+                text_io = io.TextIOWrapper(csv_file, encoding='utf-8')
+                return pd.read_csv(text_io, sep="\t")
+    else:
+        # Regular CSV file
+        return pd.read_csv(filename, sep="\t")
