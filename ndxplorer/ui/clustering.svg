@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Group 1 (left) -->
+    <circle cx="7" cy="7" r="2" fill="#6495ED"/>
+    <circle cx="5" cy="10" r="2" fill="#6495ED"/>
+    <circle cx="9" cy="10" r="2" fill="#6495ED"/>
+    <circle cx="7" cy="13" r="2" fill="#6495ED"/>
+    
+    <!-- Group 2 (right) -->
+    <circle cx="17" cy="7" r="2" fill="#FF7F50"/>
+    <circle cx="15" cy="10" r="2" fill="#FF7F50"/>
+    <circle cx="19" cy="10" r="2" fill="#FF7F50"/>
+    <circle cx="17" cy="13" r="2" fill="#FF7F50"/>
+    
+    <!-- Connecting line between groups -->
+    <path d="M10 10 L14 10" stroke-dasharray="2,2"/>
+  </g>
+</svg>
