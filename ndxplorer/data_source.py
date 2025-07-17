@@ -10,6 +10,23 @@ import pandas as pd
 from collections import OrderedDict
 
 
+class CaseInsensitiveDict:
+    """A dictionary wrapper that allows case-insensitive access to keys."""
+
+    def __init__(self, data):
+        self.data = data
+
+    def __getitem__(self, key):
+        if isinstance(key, str) and isinstance(self.data, pd.DataFrame):
+            # For DataFrame, try to find a case-insensitive match among column names
+            for col in self.data.columns:
+                if col.lower() == key.lower():
+                    return self.data[col]
+            # If no match found, fall back to original key
+            return self.data[key]
+        return self.data[key]
+
+
 def compute_values(
         d,  # type: pd.DataFrame
         constants,  # type: Dict[str, float]
@@ -22,11 +39,13 @@ def compute_values(
     if equation_json_fn is not None:
         with open(equation_json_fn, "r") as fp:
             equations = yaml.loads(fp.read(), object_pairs_hook=OrderedDict)
-    print(equations)
+    # Wrap the DataFrame with case-insensitive access
+    d_case_insensitive = CaseInsensitiveDict(d)
     for eq in equations:
         for key in eq:
             try:
-                d[key] = pd.eval(eq[key], engine=engine)
+                # Use the original DataFrame for assignment but the wrapper for evaluation
+                d[key] = pd.eval(eq[key], local_dict={'d': d_case_insensitive, 'c': c}, engine=engine)
             except:
                 pass
                 # print("Could not compute: %s" % key, file=sys.stderr)
@@ -231,3 +250,86 @@ class DataSource(object):
     @property
     def size(self):
         return self.values.shape[1]
+
+    def merge(self, other_source, mode='columns'):
+        """
+        Merge data from another DataSource into this one.
+
+        :param other_source: Another DataSource object to merge with this one
+        :param mode: How to merge the data - 'columns' or 'rows'
+                    'columns': Add all columns that don't already exist, check that row count matches
+                    'rows': Append rows of existing columns, show warning if there are new columns
+        :return: True if merge was successful, False otherwise
+        """
+        from PyQt5.QtWidgets import QMessageBox
+
+        if mode == 'columns':
+            # Check if row count matches
+            if len(self.data) != len(other_source.data):
+                QMessageBox.warning(
+                    None, 
+                    "Row Count Mismatch",
+                    f"New data has {len(other_source.data)} rows, but current data has {len(self.data)} rows. Data will not be merged."
+                )
+                return False
+
+            # Identify duplicate columns
+            duplicate_cols = set(self.data.columns).intersection(set(other_source.data.columns))
+
+            # Remove duplicate columns from the new DataFrame
+            df_unique = other_source.data.drop(columns=duplicate_cols)
+
+            # Combine with the existing DataFrame
+            combined_df = pd.concat([self.data, df_unique], axis=1)
+
+            # Update this DataSource with the combined data
+            self.data = combined_df
+
+            return True
+
+        elif mode == 'rows':
+            # When appending rows, we need to handle columns differently
+
+            # Get the set of columns in both DataFrames
+            existing_cols = set(self.data.columns)
+            new_cols = set(other_source.data.columns)
+
+            # Check if there are new columns in the other source
+            new_unique_cols = new_cols - existing_cols
+            if new_unique_cols:
+                QMessageBox.warning(
+                    None,
+                    "New Columns Found",
+                    f"New data contains columns not in the current data: {', '.join(new_unique_cols)}. "
+                    f"Only rows of existing columns will be appended."
+                )
+
+            # Get common columns to append
+            common_cols = existing_cols.intersection(new_cols)
+
+            if not common_cols:
+                QMessageBox.warning(
+                    None,
+                    "No Common Columns",
+                    "New data has no columns in common with the current data. Cannot append rows."
+                )
+                return False
+
+            # Create a new DataFrame with only the common columns from the other source
+            other_common_df = other_source.data[list(common_cols)]
+
+            # Append the rows
+            combined_df = pd.concat([self.data, other_common_df], axis=0, ignore_index=True)
+
+            # Update this DataSource with the combined data
+            self.data = combined_df
+
+            return True
+
+        else:
+            QMessageBox.warning(
+                None,
+                "Invalid Merge Mode",
+                f"Invalid merge mode: {mode}. Must be 'columns' or 'rows'."
+            )
+            return False
