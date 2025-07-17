@@ -115,5 +115,26 @@
         "n_bins_2d": 31, 
         "scale": "lin", 
         "min": -0.05
+    },
+    "X pixel": {
+        "n_bins_1d": 256.0,
+        "max": 256.0,
+        "n_bins_2d": 256,
+        "scale": "lin",
+        "min": 0.0
+    },
+    "Y pixel": {
+        "n_bins_1d": 256.0,
+        "max": 256.0,
+        "n_bins_2d": 256,
+        "scale": "lin",
+        "min": 0.0
+    },
+    "Total count rate green + red": {
+        "n_bins_1d": 81.0,
+        "max": 1000.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
     }
 }

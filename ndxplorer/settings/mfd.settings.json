@@ -2,5 +2,6 @@
   "equations": "mfd.equations.yaml",
   "constants": "mfd.constants.json",
   "axis": "mfd.axis.json",
+  "axis_labels": "axis_labels.yaml",
   "colormap": "gist_earth"
 }
