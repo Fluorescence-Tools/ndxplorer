@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1024</width>
-    <height>581</height>
+    <width>922</width>
+    <height>620</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -166,85 +166,6 @@
               <property name="spacing">
                <number>0</number>
               </property>
-              <item row="2" column="0">
-               <widget class="QToolButton" name="toolButton_3">
-                <property name="enabled">
-                 <bool>true</bool>
-                </property>
-                <property name="sizePolicy">
-                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
-                  <horstretch>0</horstretch>
-                  <verstretch>0</verstretch>
-                 </sizepolicy>
-                </property>
-                <property name="text">
-                 <string>table</string>
-                </property>
-               </widget>
-              </item>
-              <item row="4" column="1">
-               <widget class="QLineEdit" name="lineEditCountTotal">
-                <property name="sizePolicy">
-                 <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
-                  <horstretch>0</horstretch>
-                  <verstretch>0</verstretch>
-                 </sizepolicy>
-                </property>
-                <property name="maximumSize">
-                 <size>
-                  <width>16777215</width>
-                  <height>16777215</height>
-                 </size>
-                </property>
-                <property name="baseSize">
-                 <size>
-                  <width>0</width>
-                  <height>0</height>
-                 </size>
-                </property>
-                <property name="maxLength">
-                 <number>10</number>
-                </property>
-                <property name="readOnly">
-                 <bool>true</bool>
-                </property>
-               </widget>
-              </item>
-              <item row="2" column="1">
-               <widget class="QToolButton" name="toolButton_2">
-                <property name="enabled">
-                 <bool>false</bool>
-                </property>
-                <property name="sizePolicy">
-                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
-                  <horstretch>0</horstretch>
-                  <verstretch>0</verstretch>
-                 </sizepolicy>
-                </property>
-                <property name="text">
-                 <string>load</string>
-                </property>
-               </widget>
-              </item>
-              <item row="3" column="1">
-               <widget class="QToolButton" name="toolButtonClearPlot">
-                <property name="enabled">
-                 <bool>true</bool>
-                </property>
-                <property name="sizePolicy">
-                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
-                  <horstretch>0</horstretch>
-                  <verstretch>0</verstretch>
-                 </sizepolicy>
-                </property>
-                <property name="toolTip">
-                 <string>Clear plot</string>
-                </property>
-                <property name="text">
-                 <string>clear</string>
-                </property>
-               </widget>
-              </item>
               <item row="3" column="0">
                <widget class="QToolButton" name="toolButtonUpdatePlot">
                 <property name="enabled">
@@ -260,21 +181,34 @@
                  <string>Update plot</string>
                 </property>
                 <property name="text">
-                 <string>update</string>
-                </property>
-               </widget>
-              </item>
-              <item row="4" column="0">
-               <widget class="QLineEdit" name="lineEditCountCurrent">
-                <property name="sizePolicy">
-                 <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
-                  <horstretch>0</horstretch>
-                  <verstretch>0</verstretch>
-                 </sizepolicy>
+                 <string>Update</string>
                 </property>
                </widget>
               </item>
               <item row="6" column="0" colspan="2">
+               <layout class="QHBoxLayout" name="horizontalLayout_3">
+                <property name="spacing">
+                 <number>0</number>
+                </property>
+               </layout>
+              </item>
+              <item row="2" column="0">
+               <widget class="QToolButton" name="toolButton_3">
+                <property name="enabled">
+                 <bool>true</bool>
+                </property>
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="text">
+                 <string>Table</string>
+                </property>
+               </widget>
+              </item>
+              <item row="7" column="0" colspan="2">
                <widget class="QComboBox" name="comboBoxCmap">
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
@@ -288,11 +222,81 @@
                </widget>
               </item>
               <item row="5" column="0" colspan="2">
-               <layout class="QHBoxLayout" name="horizontalLayout_3">
+               <layout class="QHBoxLayout" name="horizontalLayout_4">
                 <property name="spacing">
                  <number>0</number>
                 </property>
+                <item>
+                 <widget class="QLineEdit" name="lineEditCountCurrent">
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLineEdit" name="lineEditCountTotal">
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
+                  </property>
+                  <property name="maximumSize">
+                   <size>
+                    <width>16777215</width>
+                    <height>16777215</height>
+                   </size>
+                  </property>
+                  <property name="baseSize">
+                   <size>
+                    <width>0</width>
+                    <height>0</height>
+                   </size>
+                  </property>
+                  <property name="maxLength">
+                   <number>10</number>
+                  </property>
+                  <property name="readOnly">
+                   <bool>true</bool>
+                  </property>
+                 </widget>
+                </item>
                </layout>
+              </item>
+              <item row="2" column="1">
+               <widget class="QToolButton" name="toolButtonClearPlot">
+                <property name="enabled">
+                 <bool>true</bool>
+                </property>
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="toolTip">
+                 <string>Clear plot</string>
+                </property>
+                <property name="text">
+                 <string>Clear</string>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="1">
+               <widget class="QToolButton" name="toolButton_AutoContrast">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="text">
+                 <string>Auto contrast</string>
+                </property>
+               </widget>
               </item>
              </layout>
             </item>
@@ -462,7 +466,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1024</width>
+     <width>922</width>
      <height>21</height>
     </rect>
    </property>
@@ -477,6 +481,7 @@
      <addaction name="separator"/>
      <addaction name="actionOpenCsv"/>
      <addaction name="separator"/>
+     <addaction name="actionOpenMfdHdf5"/>
      <addaction name="actionOpenParisDataset"/>
      <addaction name="actionOpenChiSurfSampling"/>
     </widget>
@@ -526,6 +531,8 @@
     <addaction name="action_dock_Overlays_view"/>
     <addaction name="action_dock_Equations_view"/>
     <addaction name="actionUMAP"/>
+    <addaction name="separator"/>
+    <addaction name="actionAxisControl"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -716,6 +723,11 @@
     <string>ChiSurf-Sampling</string>
    </property>
   </action>
+  <action name="actionOpenMfdHdf5">
+   <property name="text">
+    <string>Analysis file (*.zip, *.hdf)</string>
+   </property>
+  </action>
   <action name="actionLoad_settings">
    <property name="text">
     <string>Load settings</string>
@@ -723,7 +735,7 @@
   </action>
   <action name="actionOpenParisDataset">
    <property name="text">
-    <string>Burst Analysis</string>
+    <string>Analysis-Folder</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+I</string>
@@ -775,6 +787,9 @@
   <action name="actionOpenCsv">
    <property name="text">
     <string>Import Text files (*.csv,*.dat)</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+O</string>
    </property>
   </action>
   <action name="actionSelect_working_path">
@@ -861,6 +876,14 @@
   <action name="actionUMAP">
    <property name="text">
     <string>UMAP</string>
+   </property>
+  </action>
+  <action name="actionAxisControl">
+   <property name="text">
+    <string>Axis Control</string>
+   </property>
+   <property name="toolTip">
+    <string>Control the visibility of axes in plots</string>
    </property>
   </action>
  </widget>
