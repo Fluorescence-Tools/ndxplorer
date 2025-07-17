@@ -337,12 +337,7 @@ class ClusteringDialog(QtWidgets.QDialog):
         # Check if the required library is available
         if self._cluster_method == "hdbscan":
             # Lazy import of hdbscan
-            if hdbscan is None:
-                try:
-                    import hdbscan
-                    logging.info("Imported hdbscan library")
-                except ImportError:
-                    hdbscan = None
+            import hdbscan
 
             if not hdbscan:
                 QtWidgets.QMessageBox.warning(
