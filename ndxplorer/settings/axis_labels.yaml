@@ -1,0 +1,13 @@
+# Configuration for axis labels in ndxplorer
+# This file controls whether axis labels are displayed or hidden
+
+enable_all_labels: false
+axis_labels:
+  y_plot:
+    top: false
+    right: false
+  x_plot:
+    top: false
+  z_plot:
+    bottom: false
+    left: false
