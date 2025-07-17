@@ -261,15 +261,15 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.actionUpdatePlots.triggered.connect(self.parent.update_plots)
 
         # Auto range
-        self.actionAuto_range_x.triggered.connect(self.onAutoRangeX)
-        self.actionAuto_range_x.triggered.connect(self.onUpdate_axis_scales)
-        self.actionAuto_range_y.triggered.connect(self.onAutoRangeY)
-        self.actionAuto_range_y.triggered.connect(self.onUpdate_axis_scales)
-        self.actionAuto_range_z.triggered.connect(self.onAutoRangeZ)
-        self.actionAuto_range_z.triggered.connect(self.onUpdate_axis_scales)
+        self.actionAuto_range_x.triggered.connect(self.on_auto_range_x)
+        self.actionAuto_range_x.triggered.connect(self.update_axis_scales)
+        self.actionAuto_range_y.triggered.connect(self.on_auto_range_y)
+        self.actionAuto_range_y.triggered.connect(self.update_axis_scales)
+        self.actionAuto_range_z.triggered.connect(self.on_auto_range_z)
+        self.actionAuto_range_z.triggered.connect(self.update_axis_scales)
         self.actionAuto_range_z.triggered.connect(self.auto_selection_range)
-        self.actionUpdate_axis_scales.triggered.connect(self.onUpdate_axis_scales)
-        self.actionAuto_range_x.triggered.connect(self.onUpdate_axis_scales)
+        self.actionUpdate_axis_scales.triggered.connect(self.update_axis_scales)
+        self.actionAuto_range_x.triggered.connect(self.update_axis_scales)
 
         # Selection table
         self.actionSelectionTableClicked.triggered.connect(self.onSelectionTableClicked)
@@ -288,14 +288,14 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.spinBoxZmax.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
 
         # Change parameter plotted on axis
-        self.actionX_axis_changed.triggered.connect(self.onX_axis_changed)
-        self.actionY_axis_changed.triggered.connect(self.onY_axis_changed)
-        self.actionZ_axis_changed.triggered.connect(self.onZ_axis_changed)
+        self.actionX_axis_changed.triggered.connect(self.on_x_axis_changed)
+        self.actionY_axis_changed.triggered.connect(self.on_y_axis_changed)
+        self.actionZ_axis_changed.triggered.connect(self.on_z_axis_changed)
 
         # Update axis settings
-        self.actionUpdate_x_axis_settings.triggered.connect(self.onUpdate_x_axis_settings)
-        self.actionUpdate_y_axis_settings.triggered.connect(self.onUpdate_y_axis_settings)
-        self.actionUpdate_z_axis_settings.triggered.connect(self.onUpdate_z_axis_settings)
+        self.actionUpdate_x_axis_settings.triggered.connect(self.update_x_axis_settings)
+        self.actionUpdate_y_axis_settings.triggered.connect(self.update_y_axis_settings)
+        self.actionUpdate_z_axis_settings.triggered.connect(self.update_z_axis_settings)
 
         # Connect spinBoxCluster to update plots when value changes
         self.spinBoxCluster.valueChanged.connect(self.onClusterSelectionChanged)
@@ -315,35 +315,63 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             )
         logging.log(0, f"Axis settings updated for {name}: {self.axis_settings[str(name)]}")
 
-    def onUpdate_x_axis_settings(self):
-        logging.log(0, "onUpdate_x_axis_settings")
-        self.set_axis_settings(
-            self.p1[1],
-            self.xmin, self.xmax,
-            self.scale_x,
-            self.n_xhist_1d,
-            self.n_xhist_2d
-        )
+    def update_axis_settings(self, axis):
+        """
+        Update settings for the specified axis.
 
-    def onUpdate_y_axis_settings(self):
-        logging.log(0, "onUpdate_y_axis_settings")
-        self.set_axis_settings(
-            self.p2[1],
-            self.ymin, self.ymax,
-            self.scale_y,
-            self.n_yhist_1d,
-            self.n_yhist_2d
-        )
+        Args:
+            axis (str): The axis to update ('x', 'y', or 'z')
+        """
+        axis = axis.lower()
+        logging.log(0, f"update_axis_settings for {axis} axis")
 
-    def onUpdate_z_axis_settings(self):
-        logging.log(0, "onUpdate_z_axis_settings")
-        self.set_axis_settings(
-            self.p3[1],
-            self.zmin, self.zmax,
-            self.scale_z,
-            self.n_zhist_1d,
-            None
-        )
+        if axis == 'x':
+            self.set_axis_settings(
+                self.p1[1],
+                self.xmin, self.xmax,
+                self.scale_x,
+                self.n_xhist_1d,
+                self.n_xhist_2d
+            )
+        elif axis == 'y':
+            self.set_axis_settings(
+                self.p2[1],
+                self.ymin, self.ymax,
+                self.scale_y,
+                self.n_yhist_1d,
+                self.n_yhist_2d
+            )
+        elif axis == 'z':
+            self.set_axis_settings(
+                self.p3[1],
+                self.zmin, self.zmax,
+                self.scale_z,
+                self.n_zhist_1d,
+                None
+            )
+        else:
+            logging.log(0, f"Invalid axis: {axis}")
+
+    def update_x_axis_settings(self):
+        """Update settings for the X axis"""
+        self.update_axis_settings('x')
+
+    # Keep the old method name for backward compatibility
+    onUpdate_x_axis_settings = update_x_axis_settings
+
+    def update_y_axis_settings(self):
+        """Update settings for the Y axis"""
+        self.update_axis_settings('y')
+
+    # Keep the old method name for backward compatibility
+    onUpdate_y_axis_settings = update_y_axis_settings
+
+    def update_z_axis_settings(self):
+        """Update settings for the Z axis"""
+        self.update_axis_settings('z')
+
+    # Keep the old method name for backward compatibility
+    onUpdate_z_axis_settings = update_z_axis_settings
 
     def onClusterSelectionChanged(self, value):
         """
@@ -356,61 +384,131 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         # Update plots with skip_clustering=True to avoid re-clustering the data
         self.parent.update_plots(skip_clustering=True)
 
-    def onX_axis_changed(self):
-        _, name = self.p1
+    def on_axis_changed(self, axis):
+        """
+        Handle changes to any axis (X, Y, or Z).
+
+        This method updates the histogram bins, range, and scale settings for the specified axis
+        based on the currently selected parameter. If settings for the parameter exist in 
+        axis_settings, those are used; otherwise, auto-range is applied.
+
+        Args:
+            axis (str): The axis to update ('x', 'y', or 'z')
+        """
+        axis = axis.lower()
+
+        # Define mappings for each axis to its properties
+        axis_properties = {
+            'x': {
+                'property': self.p1,
+                'hist_1d': 'n_xhist_1d',
+                'hist_2d': 'n_xhist_2d',
+                'min': 'xmin',
+                'max': 'xmax',
+                'scale': 'scale_x',
+                'auto_range': self.on_auto_range_x,
+                'parent_min': 'xmin',
+                'parent_max': 'xmax'
+            },
+            'y': {
+                'property': self.p2,
+                'hist_1d': 'n_yhist_1d',
+                'hist_2d': 'n_yhist_2d',
+                'min': 'ymin',
+                'max': 'ymax',
+                'scale': 'scale_y',
+                'auto_range': self.on_auto_range_y,
+                'parent_min': 'ymin',
+                'parent_max': 'ymax'
+            },
+            'z': {
+                'property': self.p3,
+                'hist_1d': 'n_zhist_1d',
+                'hist_2d': None,  # Z axis doesn't have 2D histogram bins
+                'min': 'zmin',
+                'max': 'zmax',
+                'scale': 'scale_z',
+                'auto_range': self.on_auto_range_z,
+                'parent_min': 'zmin',
+                'parent_max': 'zmax'
+            }
+        }
+
+        # Check if the axis is valid
+        if axis not in axis_properties:
+            logging.log(0, f"Invalid axis: {axis}")
+            return
+
+        # Get the properties for this axis
+        props = axis_properties[axis]
+        _, name = props['property']
+
         if name in self.axis_settings:
             d = self.axis_settings[name]
-            self.n_xhist_1d = d.get('n_bins_1d', 50)
-            self.n_xhist_2d = d.get('n_bins_2d', 50)
-            self.xmin = d.get('min', self.parent.xmin)
-            self.xmax = d.get('max', self.parent.xmax)
-            self.scale_x = d.get('scale', "lin")
-            logging.log(0, f"X axis changed to settings: {d}")
+
+            # Set the 1D histogram bins
+            setattr(self, props['hist_1d'], d.get('n_bins_1d', 50))
+
+            # Set the 2D histogram bins if applicable
+            if props['hist_2d'] is not None:
+                # Special handling for pixel - adjust 2d hist bins to max value
+                if "pixel" in name.lower():
+                    setattr(self, props['hist_2d'], int(d.get('max', 256)))
+                    logging.log(0, f"{name} selected: Setting {props['hist_2d']} to {getattr(self, props['hist_2d'])}")
+                else:
+                    setattr(self, props['hist_2d'], d.get('n_bins_2d', 50))
+
+            # Set the min, max, and scale
+            setattr(self, props['min'], d.get('min', getattr(self.parent, props['parent_min'])))
+            setattr(self, props['max'], d.get('max', getattr(self.parent, props['parent_max'])))
+            setattr(self, props['scale'], d.get('scale', "lin"))
+
+            logging.log(0, f"{axis.upper()} axis changed to settings: {d}")
         else:
-            logging.log(0, f"X axis settings for {name} not found. Using auto range.")
-            self.onAutoRangeX()
+            logging.log(0, f"{axis.upper()} axis settings for {name} not found. Using auto range.")
+            props['auto_range']()
 
         self.parent.update_plots()
 
-    def onY_axis_changed(self):
-        _, name = self.p2
-        if name in self.axis_settings:
-            d = self.axis_settings[name]
-            self.n_yhist_1d = d.get('n_bins_1d', 50)
-            self.n_yhist_2d = d.get('n_bins_2d', 50)
-            self.ymin = d.get('min', self.parent.ymin)
-            self.ymax = d.get('max', self.parent.ymax)
-            self.scale_y = d.get('scale', "lin")
-            logging.log(0, f"Y axis changed to settings: {d}")
-        else:
-            logging.log(0, f"Y axis settings for {name} not found. Using auto range.")
-            self.onAutoRangeY()
+    def on_x_axis_changed(self):
+        """Call the combined axis change method for X axis"""
+        self.on_axis_changed('x')
 
-        self.parent.update_plots()
+    # Keep the old method name for backward compatibility
+    onX_axis_changed = on_x_axis_changed
 
-    def onZ_axis_changed(self):
-        _, name = self.p3
-        if name in self.axis_settings:
-            d = self.axis_settings[name]
-            self.n_zhist_1d = d.get('n_bins_1d', 50)
-            self.zmin = d.get('min', self.parent.zmin)
-            self.zmax = d.get('max', self.parent.zmax)
-            self.scale_z = d.get('scale', "lin")
-            logging.log(0, f"Z axis changed to settings: {d}")
-        else:
-            logging.log(0, f"Z axis settings for {name} not found. Using auto range.")
-            self.onAutoRangeZ()
+    def on_y_axis_changed(self):
+        """Call the combined axis change method for Y axis"""
+        self.on_axis_changed('y')
 
-        self.parent.update_plots()
+    # Keep the old method name for backward compatibility
+    onY_axis_changed = on_y_axis_changed
 
-    def onUpdate_axis_scales(self):
+    def on_z_axis_changed(self):
+        """Call the combined axis change method for Z axis"""
+        self.on_axis_changed('z')
+
+    # Keep the old method name for backward compatibility
+    onZ_axis_changed = on_z_axis_changed
+
+    def update_axis_scales(self):
+        """Update all axis scales based on current settings and refresh plots"""
+        # Set y-plot axes
         self.parent.g_yplot.set_axis_scale("left", self.scale_y)
+        self.parent.g_yplot.set_axis_scale("right", self.scale_y)
+
+        # Set x-plot axes
         self.parent.g_xplot.set_axis_scale("bottom", self.scale_x)
+        self.parent.g_xplot.set_axis_scale("top", self.scale_x)
+
+        # Set z-plot axes
         self.parent.g_zplot.set_axis_scale("bottom", self.scale_z)
-        # self.parent.g_xyplot.set_axis_scale("bottom", self.scale_x)
-        # self.parent.g_xyplot.set_axis_scale("left", self.scale_y)
+
         self.parent.update_plots()
-        logging.log(0, "Axis scales updated")
+        logging.log(0, "Axis scales updated for all plot axes")
+
+    # Keep the old method name for backward compatibility
+    onUpdate_axis_scales = update_axis_scales
 
     def auto_selection_range(self):
         z = self.parent.z_values
@@ -476,8 +574,9 @@ class SurfacePlotWidget(QtWidgets.QWidget):
                 )
         logging.log(0, f"Selections loaded from file: {fn}")
 
-    def onAutoRangeX(self):
-        logging.log(0, "onAutoRangeX")
+    def on_auto_range_x(self):
+        """Set X axis range to auto values from parent"""
+        logging.log(0, "on_auto_range_x")
         self.spinBoxXmin.blockSignals(True)
         self.spinBoxXmax.blockSignals(True)
         self.spinBoxXmin.setValue(self.parent.xmin)
@@ -485,8 +584,12 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.spinBoxXmin.blockSignals(False)
         self.spinBoxXmax.blockSignals(False)
 
-    def onAutoRangeY(self):
-        logging.log(0, "onAutoRangeY")
+    # Keep the old method name for backward compatibility
+    onAutoRangeX = on_auto_range_x
+
+    def on_auto_range_y(self):
+        """Set Y axis range to auto values from parent"""
+        logging.log(0, "on_auto_range_y")
         self.spinBoxYmin.blockSignals(True)
         self.spinBoxYmax.blockSignals(True)
         self.spinBoxYmin.setValue(self.parent.ymin)
@@ -494,14 +597,21 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.spinBoxYmin.blockSignals(False)
         self.spinBoxYmax.blockSignals(False)
 
-    def onAutoRangeZ(self):
-        logging.log(0, "onAutoRangeZ")
+    # Keep the old method name for backward compatibility
+    onAutoRangeY = on_auto_range_y
+
+    def on_auto_range_z(self):
+        """Set Z axis range to auto values from parent"""
+        logging.log(0, "on_auto_range_z")
         self.spinBoxZmin.blockSignals(True)
         self.spinBoxZmax.blockSignals(True)
         self.spinBoxZmin.setValue(self.parent.zmin)
         self.spinBoxZmax.setValue(self.parent.zmax)
         self.spinBoxZmin.blockSignals(False)
         self.spinBoxZmax.blockSignals(False)
+
+    # Keep the old method name for backward compatibility
+    onAutoRangeZ = on_auto_range_z
 
     def onSelectionTableClicked(self):
         logging.log(0, "onSelectionTableClicked")

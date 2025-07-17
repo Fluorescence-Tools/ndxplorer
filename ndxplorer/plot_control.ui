@@ -453,14 +453,14 @@
         <property name="spacing">
          <number>0</number>
         </property>
-        <item row="0" column="13">
+        <item row="1" column="13">
          <widget class="QSpinBox" name="spinBoxBin2DZ">
           <property name="enabled">
            <bool>false</bool>
           </property>
          </widget>
         </item>
-        <item row="0" column="12">
+        <item row="1" column="12">
          <widget class="QSpinBox" name="spinBoxBin1DZ">
           <property name="toolTip">
            <string>Number of 1D bins.</string>
@@ -476,14 +476,14 @@
           </property>
          </widget>
         </item>
-        <item row="1" column="1" colspan="16">
+        <item row="2" column="1" colspan="16">
          <layout class="QHBoxLayout" name="horizontalLayout_3">
           <property name="spacing">
            <number>0</number>
           </property>
          </layout>
         </item>
-        <item row="1" column="0">
+        <item row="2" column="0">
          <widget class="QLabel" name="label_7">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
@@ -496,7 +496,7 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="14">
+        <item row="1" column="14">
          <widget class="QCheckBox" name="checkBoxNormZ">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
@@ -518,7 +518,14 @@
           </property>
          </widget>
         </item>
-        <item row="1" column="17">
+        <item row="1" column="0">
+         <widget class="QCheckBox" name="checkBoxEnableZ">
+          <property name="text">
+           <string>enable</string>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="17">
          <widget class="QToolButton" name="toolButtonAutoZ">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
@@ -531,7 +538,20 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="17">
+        <item row="1" column="11">
+         <widget class="QComboBox" name="comboBoxSelZ">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="editable">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="17">
          <widget class="QToolButton" name="toolButtonSetZAxis">
           <property name="enabled">
            <bool>true</bool>
@@ -556,7 +576,7 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="16">
+        <item row="1" column="16">
          <widget class="QCheckBox" name="checkBoxAutoScaleZ">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
@@ -581,7 +601,7 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="15">
+        <item row="1" column="15">
          <widget class="QCheckBox" name="checkBoxLogZ">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
@@ -603,33 +623,20 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="11">
-         <widget class="QComboBox" name="comboBoxSelZ">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="editable">
-           <bool>true</bool>
-          </property>
-         </widget>
-        </item>
         <item row="0" column="0">
-         <widget class="QCheckBox" name="checkBoxEnableZ">
-          <property name="text">
-           <string>enable</string>
-          </property>
-         </widget>
-        </item>
-        <item row="0" column="1">
          <widget class="QCheckBox" name="checkBoxWeight">
           <property name="toolTip">
            <string>If checked histogram as are weighted by selected axis</string>
           </property>
           <property name="text">
            <string>weight</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="11" colspan="7">
+         <widget class="QComboBox" name="comboBoxWeight">
+          <property name="editable">
+           <bool>true</bool>
           </property>
          </widget>
         </item>
