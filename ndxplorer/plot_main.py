@@ -33,6 +33,7 @@ from . import plot_umap
 from .clustering import ClusteringManager, ClusteringWorker
 from .widgets import ScientificSpinBox
 from .mouse_event_filter import MouseEventFilter
+from .axis_control_dialog import AxisControlDialog
 from guiqwt.colormap import get_colormap_list
 
 try:
@@ -638,8 +639,16 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Initialize and connect the checkBoxWeight
         self.checkBoxWeight = self.plot_control.checkBoxWeight
-        self.checkBoxWeight.setToolTip("If checked, histograms are weighted by selected z axis")
+        self.checkBoxWeight.setToolTip("If checked, histograms are weighted by selected parameter")
         self.checkBoxWeight.stateChanged.connect(self.on_weight_changed)
+
+        # Initialize comboBoxWeight
+        self.comboBoxWeight = self.plot_control.comboBoxWeight
+        self.comboBoxWeight.setToolTip("Select parameter to use as weights")
+        self.comboBoxWeight.setEnabled(self.checkBoxWeight.isChecked())
+        # Connect signal to update histograms when selection changes
+        self.comboBoxWeight.currentIndexChanged.connect(self.on_weight_param_changed)
+        # Initial population will be done in on_weight_changed
 
         # Set initial visibility of z-axis plot based on checkbox state
         # This will be properly set after the z-axis plot is created
@@ -725,6 +734,36 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Create an image item with our fixed subclass
         self.cax = FixedImageItem(data=d)
         self.g_2dplot.add_item(self.cax)
+        
+        # Load background image
+        bg_image_path = os.path.join(os.path.dirname(__file__), 'ui', 'background.png')
+        if os.path.exists(bg_image_path):
+            # Load the image using QImage
+            bg_qimage = QImage(bg_image_path)
+            if not bg_qimage.isNull():
+                # Convert QImage to numpy array
+                bg_qimage = bg_qimage.convertToFormat(QImage.Format_RGBA8888)
+                width = bg_qimage.width()
+                height = bg_qimage.height()
+                ptr = bg_qimage.bits()
+                ptr.setsize(height * width * 4)
+                arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 4))
+                
+                # Create a 2D array from the image (using the first channel)
+                bg_data = arr[:, :, 0].copy()
+                
+                # Create a FixedImageItem for the background
+                self.bg_image_item = FixedImageItem(data=bg_data)
+                self.g_2dplot.add_item(self.bg_image_item)
+                
+                # Initially show the background image
+                self.bg_image_item.setVisible(True)
+            else:
+                logging.warning(f"Failed to load background image: {bg_image_path}")
+                self.bg_image_item = None
+        else:
+            logging.warning(f"Background image not found: {bg_image_path}")
+            self.bg_image_item = None
 
         # Set default colormap
         self.set_default_colormap(cmap)
@@ -829,6 +868,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.actionOpenChiSurfSampling.triggered.connect(self.onOpenChiSurfSampling)
         self.actionOpenParisDataset.triggered.connect(self.onOpenSmFRET)
         self.actionOpenCsv.triggered.connect(self.onOpenCsv)
+        self.actionOpenMfdHdf5.triggered.connect(self.onOpenMfdHdf5)
         self.actionBurst_IDs.triggered.connect(self.onSaveBurstIDs)
 
         # Settings
@@ -840,9 +880,13 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.actionMask_toggle_changed.triggered.connect(self.onMaskChanged)
         # UMAP
         self.actionUMAP.triggered.connect(self.onShowUMAP)
+        self.actionAxisControl.triggered.connect(self.onShowAxisControl)
 
         # Connect toolButton_3 to show data in DataFrameEditor
         self.toolButton_3.clicked.connect(self.show_dataframe_editor)
+
+        # Connect toolButton_AutoContrast to auto contrast function
+        self.toolButton_AutoContrast.clicked.connect(self.on_auto_contrast)
         self.toolButton_3.setEnabled(True)  # Enable the button
         # Axis range
 
@@ -935,7 +979,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         try:
             x_hist = self._histogram["x"]  # tuple: (bin_edges, counts)
             y_hist = self._histogram["y"]
-            z_hist = self._histogram["z"]
+            z_hist = self._histogram.get("z", ())  # Use get with default empty tuple
         except Exception as e:
             logging.error("1D histogram data not available: {}".format(e))
             return
@@ -946,7 +990,12 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Extract histogram components for X, Y, and Z
         x_edges, x_counts = x_hist
         y_edges, y_counts = y_hist
-        z_edges, z_counts = z_hist
+        
+        # Check if z_hist is not empty before unpacking
+        if z_hist:
+            z_edges, z_counts = z_hist
+        else:
+            z_edges, z_counts = [], []
 
         n_x = len(x_counts)
         n_y = len(y_counts)
@@ -954,39 +1003,48 @@ class NDXplorer(QtWidgets.QMainWindow):
         n_rows = max(n_x, n_y, n_z)
 
         # Write header with columns for each histogram
-        header = "\t".join([
+        header_columns = [
             "X Bin Start", "X Bin End", "X Count",
-            "Y Bin Start", "Y Bin End", "Y Count",
-            "Z Bin Start", "Z Bin End", "Z Count"
-        ])
+            "Y Bin Start", "Y Bin End", "Y Count"
+        ]
+        
+        # Only include Z columns if z_hist exists
+        if z_hist:
+            header_columns.extend(["Z Bin Start", "Z Bin End", "Z Count"])
+            
+        header = "\t".join(header_columns)
         output.write(header + "\n")
 
         # Write each row
         for i in range(n_rows):
+            row_values = []
+            
+            # X histogram values
             if i < n_x:
                 x_bin_start = f"{x_edges[i]:12.4e}"
                 x_bin_end = f"{x_edges[i + 1]:12.4e}"
                 x_count = f"{x_counts[i]:12.4e}"
             else:
                 x_bin_start = x_bin_end = x_count = ""
+            row_values.extend([x_bin_start, x_bin_end, x_count])
+            
+            # Y histogram values
             if i < n_y:
                 y_bin_start = f"{y_edges[i]:12.4e}"
                 y_bin_end = f"{y_edges[i + 1]:12.4e}"
                 y_count = f"{y_counts[i]:12.4e}"
             else:
                 y_bin_start = y_bin_end = y_count = ""
-            if i < n_z:
+            row_values.extend([y_bin_start, y_bin_end, y_count])
+            
+            # Z histogram values (only if z_hist exists)
+            if z_hist and i < n_z:
                 z_bin_start = f"{z_edges[i]:12.4e}"
                 z_bin_end = f"{z_edges[i + 1]:12.4e}"
                 z_count = f"{z_counts[i]:12.4e}"
-            else:
-                z_bin_start = z_bin_end = z_count = ""
-
-            row = "\t".join([
-                x_bin_start, x_bin_end, x_count,
-                y_bin_start, y_bin_end, y_count,
-                z_bin_start, z_bin_end, z_count
-            ])
+                row_values.extend([z_bin_start, z_bin_end, z_count])
+            
+            row = "\t".join(row_values)
             output.write(row + "\n")
 
         csv_text = output.getvalue()
@@ -1020,6 +1078,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.invalidate_values_cache()
         self.update_plots()
 
+    def onShowAxisControl(self) -> None:
+        """
+        Show the Axis Control dialog.
+        This method is triggered when the user clicks the Axis Control action in the View menu.
+        """
+        # Create and show the axis control dialog
+        dialog = AxisControlDialog(parent=self)
+        dialog.exec_()
+        
     def onShowUMAP(self) -> None:
         """
         Show the UMAP plot.
@@ -1131,12 +1198,21 @@ class NDXplorer(QtWidgets.QMainWindow):
             settings_json_fn=None  # type: str
     ):
         if settings_json_fn is None:
+            # Get the default settings path
+            settings_path = get_settings_path()
+            default_filename = str(settings_path / "mfd.axis.json")
+            
+            # Allow user to choose a different location if desired
             settings_json_fn = QtWidgets.QFileDialog.getSaveFileName(
-                self ,
+                self,
                 'Axis settings file',
-                self.working_path,
+                default_filename,
                 'Axis file (*.axis.json)'
-            )
+            )[0]  # getSaveFileName returns a tuple (filename, filter)
+            
+            # If user cancelled, return
+            if not settings_json_fn:
+                return
         with open(settings_json_fn, "w") as fp:
             json.dump(
                 self.plot_control.axis_settings,
@@ -1173,6 +1249,44 @@ class NDXplorer(QtWidgets.QMainWindow):
             d = json.load(fp)
             self.plot_control.axis_settings.update(d)
 
+        # Load axis label settings
+        # This section loads the configuration for enabling/disabling axis labels
+        if "axis_labels" in self.settings:
+            fn_axis_labels = settings_dir / self.settings["axis_labels"]
+            if not fn_axis_labels.exists():
+                # Fall back to default settings directory
+                fn_axis_labels = default_settings_dir / self.settings["axis_labels"]
+            
+            # Initialize default axis label settings
+            # These defaults will be used if the file doesn't exist or has missing settings
+            self.axis_label_settings = {
+                # Global setting to enable/disable all axis labels
+                "enable_all_labels": True,
+                # Individual settings for each plot type and axis
+                "axis_labels": {
+                    # Y-plot axis labels (top and right axes)
+                    "y_plot": {"top": True, "right": True},
+                    # X-plot axis labels (top axis)
+                    "x_plot": {"top": True},
+                    # Z-plot axis labels (bottom and left axes)
+                    "z_plot": {"bottom": True, "left": True}
+                }
+            }
+            
+            # Load settings from file if it exists
+            if fn_axis_labels.exists():
+                try:
+                    with open(str(fn_axis_labels), "r") as fp:
+                        d = yaml.load(fp, Loader=yaml.FullLoader)
+                        if d is not None:
+                            # Update the default settings with values from the file
+                            # This preserves default values for any missing settings
+                            self.axis_label_settings.update(d)
+                except Exception as e:
+                    logging.warning(f"Error loading axis label settings: {e}")
+            else:
+                logging.warning(f"Axis label settings file not found: {fn_axis_labels}")
+
         # Load equations
         fn_equations = settings_dir / self.settings["equations"]
         if not fn_equations.exists():
@@ -1196,7 +1310,9 @@ class NDXplorer(QtWidgets.QMainWindow):
     def open_files(
             self,
             file_handles: typing.List[str] = None,
-            file_type: str = None
+            file_type: str = None,
+            append: bool = False,
+            merge_mode: str = 'columns'
     ):
         wp = str(self.working_path)
         if file_type in ["cs_sampling", "er4"]:
@@ -1205,31 +1321,195 @@ class NDXplorer(QtWidgets.QMainWindow):
             logging.log(0, "Opening files: {}".format(file_handles))
             data_reader = reader.read_csv_sampling
         elif file_type in ["burst_dir"]:
-            file_handles = QtWidgets.QFileDialog.getExistingDirectory(None, 'Open burst analysis folder', self.working_path)
+            file_handles = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open burst analysis folder', self.working_path)
             data_reader = reader.read_burst_analysis
+        elif file_type in ["mfd_hdf5"]:
+            if file_handles is None:
+                file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(self, 'MFD HDF5 files', wp, 'HDF5 files (*.h5);;ZIP files (*.zip);;All Files (*.*)')
+            logging.log(0, "Opening MFD HDF5/Zip files: {}".format(file_handles))
+            
+            # Process each file based on its type
+            if file_handles:
+                # Initialize data sources
+                combined_data_source = None
+                
+                for file_path in file_handles:
+                    # Determine if this is a zip file or an HDF5 file
+                    is_zip = str(file_path).lower().endswith('.zip')
+                    
+                    # Choose the appropriate reader function
+                    if is_zip:
+                        # For zip files, use read_burst_analysis
+                        temp_data_source = reader.read_burst_analysis(file_path)
+                    else:
+                        # For HDF5 files, use read_mfd_hdf5
+                        temp_data_source = reader.read_mfd_hdf5([file_path])
+                    
+                    # Merge with combined data source if we have one
+                    if combined_data_source is None:
+                        combined_data_source = temp_data_source
+                    else:
+                        combined_data_source.merge(temp_data_source, mode=merge_mode)
+                
+                # If append is True and we already have data, merge with existing data
+                if append and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
+                    merge_success = self._data_source.merge(combined_data_source, mode=merge_mode)
+                    # Only update if merge was successful
+                    if merge_success:
+                        self.update()
+                else:
+                    # Replace the existing data source with the new one
+                    self._data_source = combined_data_source
+                    self.update()
+                
+                # Return early since we've handled everything
+                return
+            
+            # If we get here, file_handles was empty, so use read_mfd_hdf5 as a fallback
+            data_reader = reader.read_mfd_hdf5
         else: #if file_type in [None, "csv"]:
             if file_handles is None:
-                file_handles = QtWidgets.QFileDialog.getOpenFileNames(None, 'Comma separated value files', self.working_path, 'Text files (*.*)')
+                file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(self, 'Comma separated value files', self.working_path, 'Text files (*.*)')
             data_reader = reader.read_csv
         if file_handles:
-            # self.working_path = str(pathlib.Path(file_handles[0]).parent)
-            self._data_source = data_reader(file_handles)
-            self.update()
+            logging.log(0, "Opening CSV files: {}".format(file_handles))
+
+            # If append is True and we already have data, merge the new data with the existing data
+            if append and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
+                new_data_source = data_reader(file_handles)
+                merge_success = self._data_source.merge(new_data_source, mode=merge_mode)
+                # Only update if merge was successful
+                if merge_success:
+                    self.update()
+            else:
+                # Replace the existing data source with the new one
+                self._data_source = data_reader(file_handles)
+                self.update()
+
+    def show_merge_dialog(self, title):
+        """
+        Show a dialog to ask the user how to merge new data with existing data.
+
+        Args:
+            title (str): The title of the dialog
+
+        Returns:
+            tuple: (append, merge_mode) where:
+                - append (bool): Whether to append the new data
+                - merge_mode (str): The merge mode ('columns' or 'rows')
+                - None if the dialog was cancelled
+        """
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle(title)
+        layout = QtWidgets.QVBoxLayout()
+
+        # Question label
+        label = QtWidgets.QLabel('How do you want to merge the new data?')
+        layout.addWidget(label)
+
+        # Radio buttons for merge options
+        replace_rb = QtWidgets.QRadioButton('Replace existing data')
+        append_columns_rb = QtWidgets.QRadioButton('Append as columns (add new columns, rows must match)')
+        append_rows_rb = QtWidgets.QRadioButton('Append as rows (add new rows of existing columns)')
+
+        # Set default selection
+        replace_rb.setChecked(True)
+
+        layout.addWidget(replace_rb)
+        layout.addWidget(append_columns_rb)
+        layout.addWidget(append_rows_rb)
+
+        # Buttons
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        dialog.setLayout(layout)
+
+        # Show dialog
+        result = dialog.exec_()
+
+        if result != QtWidgets.QDialog.Accepted:
+            return None
+
+        # Determine append and merge_mode based on selection
+        append = append_columns_rb.isChecked() or append_rows_rb.isChecked()
+        merge_mode = 'columns'
+        if append_columns_rb.isChecked():
+            merge_mode = 'columns'
+        elif append_rows_rb.isChecked():
+            merge_mode = 'rows'
+
+        return append, merge_mode
 
     def onOpenCsv(
             self,
-            filenames: List[str] = None
+            event,
+            filenames: List[str] = None,
+            append: bool = False,
+            merge_mode: str = 'columns'
     ):
-        self.open_files(file_type="csv", file_handles=filenames)
+        # If no filenames provided, check if we should append
+        if filenames is None and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
+            result = self.show_merge_dialog('Open CSV Files')
+            if result is None:
+                return
+            append, merge_mode = result
+
+        self.open_files(file_type="csv", file_handles=filenames, append=append, merge_mode=merge_mode)
 
     def onOpenChiSurfSampling(
             self,
-            filenames=None  # type: List[str]
+            filenames=None,  # type: List[str]
+            append: bool = False,
+            merge_mode: str = 'columns'
     ):
-        self.open_files(file_type="cs_sampling", file_handles=filenames)
+        # If no filenames provided, check if we should append
+        if filenames is None and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
+            result = self.show_merge_dialog('Open ChiSurf Sampling Files')
+            if result is None:
+                return
+            append, merge_mode = result
 
-    def onOpenSmFRET(self):
-        self.open_files(file_type="burst_dir")
+        self.open_files(file_type="cs_sampling", file_handles=filenames, append=append, merge_mode=merge_mode)
+
+    def onOpenMfdHdf5(
+            self,
+            event,
+            filenames=None,  # type: List[str]
+            append: bool = False,
+            merge_mode: str = 'columns'
+    ):
+        """
+        Open MFD HDF5 files.
+
+        Args:
+            filenames: List of HDF5 file paths
+            append: Whether to append to existing data
+            merge_mode: How to merge the data - 'columns' or 'rows'
+        """
+        # If no filenames provided, check if we should append
+        if filenames is None and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
+            result = self.show_merge_dialog('Open MFD HDF5 Files')
+            if result is None:
+                return
+            append, merge_mode = result
+
+        self.open_files(file_type="mfd_hdf5", file_handles=filenames, append=append, merge_mode=merge_mode)
+
+    def onOpenSmFRET(self, merge_mode: str = 'columns'):
+        # Check if we should append
+        append = False
+        if hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
+            result = self.show_merge_dialog('Open SmFRET Files')
+            if result is None:
+                return
+            append, merge_mode = result
+
+        self.open_files(file_type="burst_dir", append=append, merge_mode=merge_mode)
 
     def update(self, *args, **kwargs):
         super(NDXplorer, self).update()
@@ -1241,11 +1521,59 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.plot_control.update()  # plot_control.update() - also updates plots
 
     def update_parameter_names(self):
+        """
+        Update the axis titles with the current parameter names.
+        
+        This method sets the axis titles for the plots based on the selected parameters.
+        It also respects the axis label configuration settings, allowing labels to be
+        enabled or disabled according to the user's preferences.
+        """
+        # Get the current parameter names from the plot control
         p1, p1_name = self.plot_control.p1
         p2, p2_name = self.plot_control.p2
-        self.g_yplot.set_axis_title("top", p2_name)
-        self.g_yplot.set_axis_title("right", p2_name)
-        self.g_xplot.set_axis_title("top", p1_name)
+        
+        # Check if axis label settings are available
+        # These settings are loaded from the axis_labels.yaml file
+        if hasattr(self, 'axis_label_settings'):
+            # Get the global enable/disable setting
+            # If true, all labels are enabled unless individually disabled
+            # If false, all labels are disabled unless individually enabled
+            enable_all_labels = self.axis_label_settings.get('enable_all_labels', True)
+            
+            # Get individual axis label settings for each plot type
+            axis_labels = self.axis_label_settings.get('axis_labels', {})
+            y_plot_settings = axis_labels.get('y_plot', {})
+            x_plot_settings = axis_labels.get('x_plot', {})
+            
+            # Set y-plot top axis title if enabled
+            # The label is shown if either:
+            # 1. enable_all_labels is true and the individual setting is not explicitly false, or
+            # 2. enable_all_labels is false but the individual setting is explicitly true
+            if enable_all_labels or y_plot_settings.get('top', True):
+                self.g_yplot.set_axis_title("top", p2_name)
+            else:
+                # Set empty title to hide the label
+                self.g_yplot.set_axis_title("top", "")
+            
+            # Set y-plot right axis title if enabled
+            if enable_all_labels or y_plot_settings.get('right', True):
+                self.g_yplot.set_axis_title("right", p2_name)
+            else:
+                # Set empty title to hide the label
+                self.g_yplot.set_axis_title("right", "")
+            
+            # Set x-plot top axis title if enabled
+            if enable_all_labels or x_plot_settings.get('top', True):
+                self.g_xplot.set_axis_title("top", p1_name)
+            else:
+                # Set empty title to hide the label
+                self.g_xplot.set_axis_title("top", "")
+        else:
+            # No axis label settings available, use default behavior
+            # All labels are shown by default
+            self.g_yplot.set_axis_title("top", p2_name)
+            self.g_yplot.set_axis_title("right", p2_name)
+            self.g_xplot.set_axis_title("top", p1_name)
 
     def get_bins(self, arange, scale, n_1d, n_2d):
         xmin, xmax = arange
@@ -1301,6 +1629,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         p2_idx = self.plot_control.p2[0]
         p3_idx = self.plot_control.p3[0]
         use_weights = hasattr(self, 'checkBoxWeight') and self.checkBoxWeight.isChecked()
+        weight_param = self.comboBoxWeight.currentText() if use_weights and hasattr(self, 'comboBoxWeight') else ""
         z_enabled = hasattr(self, 'checkBoxEnableZ') and self.checkBoxEnableZ.isChecked()
 
         # Check if we have cached parameters that match current settings
@@ -1313,6 +1642,7 @@ class NDXplorer(QtWidgets.QMainWindow):
                 cached_params.get('p2_idx') == p2_idx and
                 cached_params.get('p3_idx') == p3_idx and
                 cached_params.get('use_weights') == use_weights and
+                cached_params.get('weight_param') == weight_param and
                 cached_params.get('z_enabled') == z_enabled and
                 cached_params.get('mask_id') == mask_id and
                 cached_params.get('normed_x') == self.plot_control.normed_hist_x and
@@ -1343,14 +1673,31 @@ class NDXplorer(QtWidgets.QMainWindow):
         y_bins_1d, y_bins_2d = self.get_y_bins()
         z_bins_1d, _ = self.get_z_bins()
 
-        # Check if we should weight histograms by z-axis
+        # Check if we should weight histograms by selected parameter
         weights = None
         if use_weights:
-            # Make sure weights have the same shape as the data arrays
-            if len(d3) == len(d1):
-                weights = d3
+            # Get the selected parameter from comboBoxWeight
+            weight_param = self.comboBoxWeight.currentText()
+
+            # Find the parameter index in the data source
+            weight_idx = -1
+            if self._data_source is not None and hasattr(self._data_source, 'parameter_names'):
+                param_names = self._data_source.parameter_names
+                if weight_param in param_names:
+                    weight_idx = param_names.index(weight_param)
+
+            # Get the weight values
+            if weight_idx >= 0:
+                # Get the values that are already filtered by value_mask
+                weight_values = self.values[weight_idx].astype('float64')
+
+                # Make sure weights have the same shape as the data arrays
+                if len(weight_values) == len(d1):
+                    weights = weight_values
+                else:
+                    logging.warning(f"Weights array shape ({len(weight_values)}) doesn't match data array shape ({len(d1)}). Disabling weights.")
             else:
-                logging.warning(f"Weights array shape ({len(d3)}) doesn't match data array shape ({len(d1)}). Disabling weights.")
+                logging.warning(f"Weight parameter '{weight_param}' not found in data source. Disabling weights.")
 
         # X, Y, Z Histogram
         ###################
@@ -1371,8 +1718,17 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Only compute z histogram if z-axis is enabled
         if z_enabled:
-            # Don't use weights for z histogram if weights is d3 (would be self-weighting)
-            z_weights = None if weights is d3 else weights
+            # Don't use weights for z histogram if the weight parameter is the same as the z parameter (would be self-weighting)
+            z_weights = None
+            if weights is not None and use_weights:
+                # Get the selected weight parameter and z parameter
+                weight_param = self.comboBoxWeight.currentText()
+                z_param = self.plot_control.p3[1]
+
+                # Only use weights if they're different parameters
+                if weight_param != z_param:
+                    z_weights = weights
+
             try:
                 self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, weights=z_weights, density=self.plot_control.normed_hist_z)[::-1]
             except ValueError as e:
@@ -1396,6 +1752,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             'p2_idx': p2_idx,
             'p3_idx': p3_idx,
             'use_weights': use_weights,
+            'weight_param': weight_param,
             'z_enabled': z_enabled,
             'mask_id': getattr(self, '_cached_values_mask_id', None),
             'normed_x': self.plot_control.normed_hist_x,
@@ -1487,6 +1844,10 @@ class NDXplorer(QtWidgets.QMainWindow):
 
             # Set the empty image in the 2D histogram axis
             self.cax.set_data(empty_img)
+            
+            # Show the background image when there's no data
+            if hasattr(self, 'bg_image_item') and self.bg_image_item is not None:
+                self.bg_image_item.setVisible(True)
 
             # Set default axis scales for empty data
             self.g_2dplot.setAxisScale(QwtPlot.xBottom, 0, 1)
@@ -1547,6 +1908,10 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Update histograms
         self.update_histograms()
+        
+        # Hide the background image when data is loaded
+        if hasattr(self, 'bg_image_item') and self.bg_image_item is not None:
+            self.bg_image_item.setVisible(False)
 
         # ----------------------------------------------------
         # 1. X histogram
@@ -2199,6 +2564,19 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.update_histograms()
         self.update_plots(skip_clustering=True)
 
+    def on_weight_param_changed(self, index):
+        """
+        Handle changes to the selected weight parameter.
+
+        Args:
+            index: The index of the newly selected item in the combobox
+        """
+        # Only update if weight is enabled
+        if self.checkBoxWeight.isChecked():
+            # Update histograms and plots to reflect the new weight parameter
+            self.update_histograms()
+            self.update_plots(skip_clustering=True)
+
     def on_weight_changed(self, state):
         """
         Handle changes to the weight checkbox.
@@ -2206,14 +2584,38 @@ class NDXplorer(QtWidgets.QMainWindow):
         Args:
             state: The new state of the checkbox (Qt.Checked or Qt.Unchecked)
         """
-        # If weight is checked, ensure that z-axis is enabled
-        if bool(state) and not self.checkBoxEnableZ.isChecked():
-            self.checkBoxEnableZ.setChecked(True)
-            # on_enable_z_changed will be called automatically due to the signal connection
-        else:
-            # Update histograms and plots to reflect the new state
-            self.update_histograms()
-            self.update_plots(skip_clustering=True)
+        # Enable/disable comboBoxWeight based on checkbox state
+        is_checked = bool(state)
+        self.comboBoxWeight.setEnabled(is_checked)
+
+        # If weight is checked, populate the comboBoxWeight with available parameters
+        if is_checked:
+            # Save current selection if any
+            current_text = self.comboBoxWeight.currentText()
+
+            # Clear and populate the combobox
+            self.comboBoxWeight.clear()
+
+            # Get parameter names from data source
+            if self._data_source is not None and hasattr(self._data_source, 'parameter_names'):
+                param_names = self._data_source.parameter_names
+                for name in param_names:
+                    self.comboBoxWeight.addItem(name)
+
+                # Restore previous selection if it exists in the new list
+                if current_text and current_text in param_names:
+                    index = self.comboBoxWeight.findText(current_text)
+                    if index >= 0:
+                        self.comboBoxWeight.setCurrentIndex(index)
+                # Otherwise, default to z-axis parameter for backward compatibility
+                elif self.plot_control.p3[1] in param_names:
+                    index = self.comboBoxWeight.findText(self.plot_control.p3[1])
+                    if index >= 0:
+                        self.comboBoxWeight.setCurrentIndex(index)
+
+        # Update histograms and plots to reflect the new state
+        self.update_histograms()
+        self.update_plots(skip_clustering=True)
 
     def on_dynamic_selection_changed(self, state):
         """
@@ -2336,6 +2738,56 @@ class NDXplorer(QtWidgets.QMainWindow):
         """Convert a y value to a bin index with linear interpolation."""
         return self.value_to_bin(y_value, y_edges)
 
+
+    def on_auto_contrast(self):
+        """
+        Automatically adjust vmin and vmax for the 2D histogram based on the data.
+        This function calculates appropriate min and max values for better visualization.
+        """
+        logging.log(0, "Auto contrast triggered")
+        try:
+            # Get the 2D histogram data
+            H, _, _ = self._histogram["2d"]
+
+            # Skip if histogram is empty or contains only zeros
+            if H.size == 0 or np.all(H == 0):
+                logging.log(0, "Histogram is empty or contains only zeros")
+                return
+
+            # Apply log transform if log counts is checked
+            if self.checkBoxLogCounts.isChecked():
+                # Handle zeros and negative values before taking log10
+                min_positive = np.min(H[H > 0]) if np.any(H > 0) else 1e-10
+                H_processed = np.maximum(H, min_positive / 10)  # Replace zeros/negatives with a small value
+                H_processed = np.log10(H_processed)
+                H_processed = np.nan_to_num(H_processed)
+            else:
+                H_processed = H
+
+            # Calculate percentiles for robust min/max values
+            # Ignore zeros which might be a large part of the histogram
+            non_zero_values = H_processed[H_processed > 0]
+            if non_zero_values.size > 0:
+                vmin = np.percentile(non_zero_values, 1)  # 1st percentile for minimum
+                vmax = np.percentile(non_zero_values, 99)  # 99th percentile for maximum
+
+                # Ensure vmin and vmax are different to avoid display issues
+                if vmin == vmax:
+                    vmin = 0.9 * vmin if vmin != 0 else 0
+                    vmax = 1.1 * vmax if vmax != 0 else 1
+
+                logging.log(0, f"Setting auto contrast: vmin={vmin}, vmax={vmax}")
+
+                # Update the UI controls
+                self.vmin = vmin
+                self.vmax = vmax
+
+                # Update the plot
+                self.on_vmin_vmax_changed()
+            else:
+                logging.log(0, "No non-zero values in histogram")
+        except (ValueError, KeyError) as e:
+            logging.log(0, f"Error in auto contrast: {str(e)}")
 
     def update_curve_overlays(self):
         """Update the curve overlays on the 2D histogram."""
