@@ -22,6 +22,21 @@ class CaseInsensitiveDict:
             for col in self.data.columns:
                 if col.lower() == key.lower():
                     return self.data[col]
+            
+            # If exact case-insensitive match not found, try pattern matching
+            # Look for columns that contain the key as a prefix (before any separator like '|')
+            if isinstance(key, str):
+                for col in self.data.columns:
+                    # Check if column starts with the key (case insensitive)
+                    if col.lower().startswith(key.lower()):
+                        return self.data[col]
+                    
+                    # Check if column starts with the key followed by a separator like ' | '
+                    # This handles cases like 'S delayed yellow (kHz)' matching 'S delayed yellow (kHz) | 2048-4096'
+                    parts = col.lower().split('|')
+                    if parts and parts[0].strip() == key.lower().strip():
+                        return self.data[col]
+            
             # If no match found, fall back to original key
             return self.data[key]
         return self.data[key]
