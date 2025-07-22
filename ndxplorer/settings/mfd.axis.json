@@ -15,10 +15,10 @@
     }, 
     "FRET efficiency (PIE)": {
         "n_bins_1d": 81.0,
-        "max": 1.0,
+        "max": 1.1,
         "n_bins_2d": 31,
         "scale": "lin",
-        "min": 0.0
+        "min": -0.1
     },
     "Proximity ratio (PIE)": {
         "n_bins_1d": 81.0,
@@ -33,6 +33,13 @@
         "n_bins_2d": 31,
         "scale": "lin",
         "min": 0.0
+    },
+    "Stoichiometry (PIE)": {
+        "n_bins_1d": 81.0,
+        "max": 1.1,
+        "n_bins_2d": 31,
+        "scale": "lin",
+        "min": -0.1
     },
     "Red Count Rate (KHz)": {
         "n_bins_1d": 81.0, 
