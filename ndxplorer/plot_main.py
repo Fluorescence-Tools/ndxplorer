@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional, Tuple
+from pathlib import Path
 
 try:
     from chisurf import logging
@@ -888,6 +889,10 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Connect toolButton_AutoContrast to auto contrast function
         self.toolButton_AutoContrast.clicked.connect(self.on_auto_contrast)
         self.toolButton_3.setEnabled(True)  # Enable the button
+        
+        # Connect to save parameters
+        self.toolButton_parameter_save.clicked.connect(self.save_parameters)
+        self.actionConstants.triggered.connect(self.save_parameters)
         # Axis range
 
         self.overlay_plot.canvas().setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -1131,16 +1136,137 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.lineEditWorkingPath.blockSignals(False)
 
     def onSaveBurstIDs(self, evt=None, folder=None):
+        """
+        Save burst IDs to a folder and show dialog for microtime histogram.
+        
+        Args:
+            evt: Event that triggered this method (not used)
+            folder: Folder where burst IDs will be saved. If None, a folder selection dialog will be shown.
+        """
         if folder is None:
             folder = QtWidgets.QFileDialog.getExistingDirectory(
                 None, 'Folder for Burst IDs', self.working_path
             )
+        
+        # If user cancelled the dialog, return
+        if not folder:
+            return
+            
         logging.info(f"Saving burst IDs to {folder}...")
         writer.save_burst_ids(
             folder_name=folder,
             selections=self.plot_control.get_selections(),
             data_source=self.data_source
         )
+        
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Process BIDs")
+        
+        # Create layout
+        layout = QtWidgets.QVBoxLayout()
+        
+        # Add message
+        label = QtWidgets.QLabel("Process Burst IDs.")
+        layout.addWidget(label)
+        
+        # Add checkbox (unchecked by default)
+        checkbox = QtWidgets.QCheckBox("Compute microtime histogram")
+        checkbox.setChecked(True)
+        layout.addWidget(checkbox)
+        
+        # Add buttons
+        button_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        # Set layout and show dialog
+        dialog.setLayout(layout)
+        
+        # If dialog is accepted (OK clicked), proceed with export
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            # Get checkbox state for auto_transfer parameter
+            export_chisurf = checkbox.isChecked()
+            if not export_chisurf:
+                logging.info("Skipping auto transfer to ChiSurf.")
+                return
+            else:
+                logging.info("Exporting burst IDs to ChiSurf...")
+            try:
+                # Try to find setup name from photon_selection_parameters.json
+                setup_name = None
+                bid_folder = Path(folder)
+
+                # Look for photon_selection_parameters.json in the Info folder
+                # First check if there's an Info folder in the parent directory
+                logging.info(f"Looking for setup name in {bid_folder}...")
+                info_folder = bid_folder.parent / "Info"
+                if not info_folder.exists():
+                    # Try looking for Info folder in the grandparent directory
+                    info_folder = bid_folder.parent.parent / "Info"
+                    logging.info(f"Looking for setup name in {info_folder}...")
+                
+                if info_folder.exists():
+                    params_file = info_folder / "photon_selection_parameters.json"
+                    if params_file.exists():
+                        try:
+                            with open(params_file, 'r') as f:
+                                params = json.load(f)
+                                setup_name = params.get("selected_setup")
+                                if setup_name:
+                                    logging.info(f"Found setup name '{setup_name}' in photon_selection_parameters.json")
+                        except Exception as e:
+                            logging.error(f"Error reading photon_selection_parameters.json: {e}")
+                
+                # Check if we can import MicrotimeHistogram
+                try:
+                    from chisurf.plugins.microtime_histogram.wizard import MicrotimeHistogram
+                    
+                    # Get or create the MicrotimeHistogram instance
+                    histogram = MicrotimeHistogram.get_instance()
+                    histogram.show()
+                    histogram.raise_()  # Bring window to front
+                    
+                    # Load the BID folder in the existing instance
+                    histogram.load_bid_folder(folder, setup_name=setup_name)
+                    
+                    logging.info(f"Loaded BID folder in existing MicrotimeHistogram instance")
+                    
+                except ImportError:
+                    # Fall back to subprocess approach if import fails
+                    logging.warning("Could not import MicrotimeHistogram directly, falling back to subprocess")
+                    import subprocess
+                    import sys
+                    
+                    cmd = [
+                        sys.executable,
+                        "-m",
+                        "chisurf.plugins.microtime_histogram.__main__"
+                    ]
+                    
+                    # Add arguments
+                    cmd.extend(['--bid-folder', folder])
+                    if auto_transfer:
+                        cmd.append('--auto-transfer')
+                    
+                    # Run the command in a separate process
+                    logging.info(f"Launching microtime histogram plugin with command: {' '.join(cmd)}")
+                    # On Windows, use shell=True to help with command resolution
+                    if sys.platform == 'win32':
+                        subprocess.Popen(cmd, shell=True)
+                    else:
+                        subprocess.Popen(cmd)
+                
+            except Exception as e:
+                logging.error(f"Failed to launch microtime histogram plugin: {str(e)}")
+                # Show error message to user
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Export Error",
+                    f"Failed to export to ChiSurf: {str(e)}"
+                )
 
     def onSaveClusteringData(self, evt=None, folder=None):
         """
@@ -1193,6 +1319,27 @@ class NDXplorer(QtWidgets.QMainWindow):
             parameters=parameters
         )
 
+    def save_parameters(self):
+        """
+        Save the current parameters to a JSON file in the user's settings folder.
+        If chisurf module exists, parameters are saved in the user folder.
+        """
+        # Get the settings path (this will use chisurf user folder if available)
+        settings_path = get_settings_path()
+        
+        # Create the filename for the parameters
+        param_filename = str(settings_path / "mfd.constants.json")
+        
+        # Save the parameters
+        with open(param_filename, "w") as fp:
+            json.dump(
+                self.parameter_control.dict,
+                fp,
+                indent=4
+            )
+        
+        logging.log(0, f"Parameters saved to {param_filename}")
+    
     def onSaveAxisSettings(
             self,
             settings_json_fn=None  # type: str

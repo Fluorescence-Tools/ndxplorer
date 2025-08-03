@@ -624,6 +624,13 @@
        <property name="spacing">
         <number>0</number>
        </property>
+       <item>
+        <widget class="QToolButton" name="toolButton_parameter_save">
+         <property name="text">
+          <string>Save</string>
+         </property>
+        </widget>
+       </item>
       </layout>
      </item>
     </layout>
