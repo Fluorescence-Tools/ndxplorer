@@ -1,10 +1,7 @@
 from __future__ import print_function
 from typing import List, Dict, Optional, Set
 from pathlib import Path
-try:
-    from chisurf import logging
-except ImportError:
-    import logging
+from .logging_config import logging
 import numpy as np
 import json
 import pandas as pd

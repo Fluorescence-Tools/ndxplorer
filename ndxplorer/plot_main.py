@@ -1,17 +1,14 @@
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
-try:
-    from chisurf import logging
-except:
-    import logging
-    logging.basicConfig()
+from .logging_config import logging
 
 import os
 import json
 import yaml
 import typing
 import pathlib
+import importlib.util
 
 # Import settings functions
 from .settings import get_settings_path, ensure_default_settings
@@ -19,9 +16,10 @@ from .settings import get_settings_path, ensure_default_settings
 import numpy as np
 
 # Delay imports of heavy libraries
-hdbscan = None
-KMeans = None
-umap = None
+hdbscan = None  # For clustering
+KMeans = None   # For clustering
+umap = None     # For dimensionality reduction
+napari = None   # For image visualization in external viewer
 
 from . plot_control import SurfacePlotWidget
 from . parameter_editor import ParameterEditor
@@ -74,7 +72,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Manually clear the cached 'values'. Call this whenever something
         changes that would invalidate the mask or the data.
         """
-        logging.log(0, "Invalidating values cache")
+        logging.debug("Invalidating values cache")
         self._cached_values = None
         self._cached_values_selections = None
         self._cached_values_p13 = None
@@ -95,22 +93,22 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def data_source(self) -> DataSource:
-        logging.log(0, "Getting data_source")
+        logging.debug("Getting data_source")
         if self._data_source.empty:
             values = self._default_data_source
-            logging.log(0, "Using default data source")
+            logging.debug("Using default data source")
         else:
             values = self._data_source
-            logging.log(0, f"Using actual data source with {self._data_source.values.shape[1] if not self._data_source.empty else 0} data points")
+            logging.debug(f"Using actual data source with {self._data_source.values.shape[1] if not self._data_source.empty else 0} data points")
         return values
 
     @data_source.setter
     def data_source(self, v: DataSource) -> None:
-        logging.log(0, f"Setting data_source with {v.values.shape[1] if not v.empty else 0} data points")
+        logging.info(f"Setting data_source with {v.values.shape[1] if not v.empty else 0} data points")
         self._data_source = v
         # Whenever the underlying DataSource changes, invalidate the cached 'values'
         self.invalidate_values_cache()
-        logging.log(0, "Computing columns with equations and constants")
+        logging.debug("Computing columns with equations and constants")
         self._data_source.compute_columns(
             constants=self.constants,
             equations=self.equations
@@ -118,13 +116,13 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def x_values(self) -> np.ndarray:
-        logging.log(0, f"Getting x_values for parameter: {self.plot_control.p1[1]}")
+        logging.debug(f"Getting x_values for parameter: {self.plot_control.x_label}")
         # Check if we have a cached result that's still valid
         if hasattr(self, '_cached_x_values') and self._cached_x_values is not None:
             # Check if the parameter index and values cache are still valid
             if (getattr(self, '_cached_x_param_idx', None) == self.plot_control.p1[0] and
                 getattr(self, '_cached_values_mask_id', None) == id(self.value_mask)):
-                logging.log(0, "Using cached x_values")
+                logging.debug("Using cached x_values")
                 return self._cached_x_values
 
         # Get the values and extract the x column
@@ -139,13 +137,13 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def y_values(self) -> np.ndarray:
-        logging.log(0, f"Getting y_values for parameter: {self.plot_control.p2[1]}")
+        logging.debug(f"Getting y_values for parameter: {self.plot_control.y_label}")
         # Check if we have a cached result that's still valid
         if hasattr(self, '_cached_y_values') and self._cached_y_values is not None:
             # Check if the parameter index and values cache are still valid
             if (getattr(self, '_cached_y_param_idx', None) == self.plot_control.p2[0] and
                 getattr(self, '_cached_values_mask_id', None) == id(self.value_mask)):
-                logging.log(0, "Using cached y_values")
+                logging.debug("Using cached y_values")
                 return self._cached_y_values
 
         # Get the values and extract the y column
@@ -160,13 +158,13 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def z_values(self)-> np.ndarray:
-        logging.log(0, f"Getting z_values for parameter: {self.plot_control.p3[1]}")
+        logging.debug(f"Getting z_values for parameter: {self.plot_control.z_label}")
         # Check if we have a cached result that's still valid
         if hasattr(self, '_cached_z_values') and self._cached_z_values is not None:
             # Check if the parameter index and values cache are still valid
             if (getattr(self, '_cached_z_param_idx', None) == self.plot_control.p3[0] and
                 getattr(self, '_cached_values_mask_id', None) == id(self.value_mask)):
-                logging.log(0, "Using cached z_values")
+                logging.debug("Using cached z_values")
                 return self._cached_z_values
 
         # Get the values and extract the z column
@@ -180,12 +178,63 @@ class NDXplorer(QtWidgets.QMainWindow):
         return z_values
 
     @property
+    def weight_enabled(self) -> bool:
+        """
+        Get the current weight enabled status.
+        
+        Returns:
+            bool: True if weighting is enabled, False otherwise
+        """
+        return self.current_weight_enabled
+        
+    @weight_enabled.setter
+    def weight_enabled(self, value: bool) -> None:
+        """
+        Set the weight enabled status.
+        
+        Args:
+            value: Boolean indicating whether weighting should be enabled
+        """
+        self.current_weight_enabled = bool(value)
+        # Update the UI to match
+        self.checkBoxWeight.setChecked(self.current_weight_enabled)
+        
+    @property
+    def weight_param(self) -> str:
+        """
+        Get the current weight parameter.
+        
+        Returns:
+            str: The name of the current weight parameter, or "None" if weighting is disabled
+        """
+        return self.current_weight_param
+        
+    @weight_param.setter
+    def weight_param(self, value: str) -> None:
+        """
+        Set the weight parameter.
+        
+        Args:
+            value: The name of the parameter to use for weighting
+        """
+        if not isinstance(value, str):
+            return
+            
+        self.current_weight_param = value
+        
+        # Update the UI to match if the parameter exists
+        if self.current_weight_param != "None":
+            index = self.comboBoxWeight.findText(self.current_weight_param)
+            if index >= 0:
+                self.comboBoxWeight.setCurrentIndex(index)
+    
+    @property
     def value_mask(self):
         selections = self.plot_control.get_selections()
         mask_inf = self._mask_inf
         mask_nan = self._mask_nan
         p13 = (self.plot_control.p1[0], self.plot_control.p2[0], self.plot_control.p3[0])
-        logging.log(0, f"Value mask parameters: p13={p13}, mask_inf={mask_inf}, mask_nan={mask_nan}, selections={len(selections)}")
+        logging.debug(f"Value mask parameters: p13={p13}, mask_inf={mask_inf}, mask_nan={mask_nan}, selections={len(selections)}")
 
         # Check if dynamic selection is enabled
         dynamic_selection = self._dynamic_selection and hasattr(self, 'selection_z')
@@ -207,11 +256,11 @@ class NDXplorer(QtWidgets.QMainWindow):
             and getattr(self, '_cached_values_selected_cluster', None) == selected_cluster
         )
         if cache_is_valid:
-            logging.log(0, "Using cached values")
+            logging.debug("Using cached values")
             return self._cached_values
 
         # Step 3: If cache is invalid or empty, compute fresh data
-        logging.log(0, "Cache invalid, computing fresh data")
+        logging.debug("Cache invalid, computing fresh data")
         mask = self.data_source.get_mask(
             selections=selections,
             idxs=[p13[0], p13[1], p13[2]],
@@ -241,7 +290,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             mask = mask & z_mask
 
             # Log the number of points in the selection
-            logging.log(0, f"Dynamic selection: {np.sum(z_mask)} points selected out of {len(d3)}")
+            logging.debug(f"Dynamic selection: {np.sum(z_mask)} points selected out of {len(d3)}")
 
         # If clustering is enabled and a specific cluster is selected, filter by cluster
         if use_clustering:
@@ -272,7 +321,7 @@ class NDXplorer(QtWidgets.QMainWindow):
                     points_in_cluster_after_masking = np.sum(~np.any(mask[:, cluster_mask], axis=0))
 
                     # Log the number of points in the selected cluster after masking
-                    logging.log(0, f"Cluster selection: {points_in_cluster_after_masking} points in cluster {selected_cluster} (out of {points_in_cluster} total in this cluster)")
+                    logging.debug(f"Cluster selection: {points_in_cluster_after_masking} points in cluster {selected_cluster} (out of {points_in_cluster} total in this cluster)")
                 else:
                     logging.warning("'Cluster Label' column not found in dataframe. Skipping cluster filtering.")
                     logging.warning("This can happen if clustering has not been performed yet.")
@@ -289,7 +338,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self._cached_values_z_range = getattr(self, '_last_z_range', None)
         self._cached_values_use_clustering = use_clustering
         self._cached_values_selected_cluster = selected_cluster
-        logging.log(0, "Values cached for future use")
+        logging.debug("Values cached for future use")
 
         return mask
 
@@ -300,14 +349,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         user-defined mask for Inf/NaN. The result is cached to avoid repeated
         computation when .values is accessed multiple times.
         """
-        logging.log(0, "Getting values with masking")
+        logging.debug("Getting values with masking")
 
         # Check if we have a cached result that's still valid
         if hasattr(self, '_cached_filtered_values') and self._cached_filtered_values is not None:
             # The value_mask property already checks if the mask is still valid
             # If it returns the cached mask, we can use our cached filtered values
             if getattr(self, '_cached_values_mask_id', None) == id(self.value_mask):
-                logging.log(0, "Using cached filtered values")
+                logging.debug("Using cached filtered values")
                 return self._cached_filtered_values
 
         mask = self.value_mask
@@ -315,11 +364,11 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         x = np.ma.array(all_values, mask=mask)
         oCol, oRow = x.shape
-        logging.log(0, f"Original data shape: {oCol}x{oRow}")
+        logging.debug(f"Original data shape: {oCol}x{oRow}")
         re = np.ma.compressed(x)
         nD = re.shape[0]
         re = re.reshape((oCol, int(nD / oCol)))
-        logging.log(0, f"Reshaped data shape: {re.shape}")
+        logging.debug(f"Reshaped data shape: {re.shape}")
 
         # Cache the result and the mask ID for future use
         self._cached_filtered_values = re
@@ -329,179 +378,179 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def ymax(self) -> float:
-        logging.log(0, "Getting ymax")
+        logging.debug("Getting ymax")
         result = max(self.y_values)
-        logging.log(0, f"ymax = {result}")
+        logging.debug(f"ymax = {result}")
         return result
 
     @property
     def zmin(self):
-        logging.log(0, "Getting zmin")
+        logging.debug("Getting zmin")
         v = self.z_values[self.z_values > -np.inf]
-        logging.log(0, f"Filtered out {len(self.z_values) - len(v)} infinite values")
+        logging.debug(f"Filtered out {len(self.z_values) - len(v)} infinite values")
         if self.plot_control.scale_z == "log":
             v_before = len(v)
             v = v[np.where(v > 0)[0]]
-            logging.log(0, f"Log scale: filtered out {v_before - len(v)} non-positive values")
+            logging.debug(f"Log scale: filtered out {v_before - len(v)} non-positive values")
         try:
             result = min(v)
-            logging.log(0, f"zmin = {result}")
+            logging.debug(f"zmin = {result}")
             return result
         except ValueError:
-            logging.log(0, "No valid values for zmin, returning 0")
+            logging.debug("No valid values for zmin, returning 0")
             return 0
 
     @property
     def zmax(self) -> float:
-        logging.log(0, "Getting zmax")
+        logging.debug("Getting zmax")
         result = max(self.z_values)
-        logging.log(0, f"zmax = {result}")
+        logging.debug(f"zmax = {result}")
         return result
 
     @property
     def working_path(self):
-        logging.log(0, "Getting working_path")
+        logging.debug("Getting working_path")
         path = self.lineEditWorkingPath.text()
-        logging.log(0, f"working_path = {path}")
+        logging.debug(f"working_path = {path}")
         return path
 
     @working_path.setter
     def working_path(self, v):
-        logging.log(0, f"Setting working_path to {v}")
+        logging.info(f"Setting working_path to {v}")
         if pathlib.Path(v).is_dir():
-            logging.log(0, f"Path {v} is a valid directory, updating working path")
+            logging.debug(f"Path {v} is a valid directory, updating working path")
             self.lineEditWorkingPath.setText(v)
         else:
-            logging.log(0, f"Path {v} is not a valid directory, working path not updated")
+            logging.warning(f"Path {v} is not a valid directory, working path not updated")
 
     @property
     def xmin(self) -> float:
-        logging.log(0, "Getting xmin")
+        logging.debug("Getting xmin")
         v = self.x_values[self.x_values > -np.inf]
-        logging.log(0, f"Filtered out {len(self.x_values) - len(v)} infinite values")
+        logging.debug(f"Filtered out {len(self.x_values) - len(v)} infinite values")
         if self.plot_control.scale_x == "log":
             v_before = len(v)
             v = v[np.where(v > 0)[0]]
-            logging.log(0, f"Log scale: filtered out {v_before - len(v)} non-positive values")
+            logging.debug(f"Log scale: filtered out {v_before - len(v)} non-positive values")
         try:
             result = min(v)
-            logging.log(0, f"xmin = {result}")
+            logging.debug(f"xmin = {result}")
             return result
         except ValueError:
-            logging.log(0, "No valid values for xmin, returning 0")
+            logging.debug("No valid values for xmin, returning 0")
             return 0
 
     @property
     def xmax(self) -> float:
-        logging.log(0, "Getting xmax")
+        logging.debug("Getting xmax")
         result = max(self.x_values)
-        logging.log(0, f"xmax = {result}")
+        logging.debug(f"xmax = {result}")
         return result
 
     @property
     def ymin(self) -> float:
-        logging.log(0, "Getting ymin")
+        logging.debug("Getting ymin")
         v = self.y_values[self.y_values > -np.inf]
-        logging.log(0, f"Filtered out {len(self.y_values) - len(v)} infinite values")
+        logging.debug(f"Filtered out {len(self.y_values) - len(v)} infinite values")
         if self.plot_control.scale_y == "log":
             v_before = len(v)
             v = v[np.where(v > 0)[0]]
-            logging.log(0, f"Log scale: filtered out {v_before - len(v)} non-positive values")
+            logging.debug(f"Log scale: filtered out {v_before - len(v)} non-positive values")
         try:
             result = min(v)
-            logging.log(0, f"ymin = {result}")
+            logging.debug(f"ymin = {result}")
             return result
         except ValueError:
-            logging.log(0, "No valid values for ymin, returning 0")
+            logging.debug("No valid values for ymin, returning 0")
             return 0
 
     @property
     def vmin(self):
-        logging.log(0, "Getting vmin")
+        logging.debug("Getting vmin")
         result = self.doubleSpinBox_vmin.value()
-        logging.log(0, f"vmin = {result}")
+        logging.debug(f"vmin = {result}")
         return result
 
     @vmin.setter
     def vmin(self, v):
-        logging.log(0, f"Setting vmin to {v}")
+        logging.debug(f"Setting vmin to {v}")
         return self.doubleSpinBox_vmin.setValue(v)
 
     @property
     def vmax(self):
-        logging.log(0, "Getting vmax")
+        logging.debug("Getting vmax")
         result = self.doubleSpinBox_vmax.value()
-        logging.log(0, f"vmax = {result}")
+        logging.debug(f"vmax = {result}")
         return result
 
     @vmax.setter
     def vmax(self, v):
-        logging.log(0, f"Setting vmax to {v}")
+        logging.debug(f"Setting vmax to {v}")
         return self.doubleSpinBox_vmax.setValue(v)
 
     @property
     def current_cmap(self) -> str:
-        logging.log(0, "Getting current_cmap")
+        logging.debug("Getting current_cmap")
         result = self.comboBoxCmap.currentText()
-        logging.log(0, f"current_cmap = {result}")
+        logging.debug(f"current_cmap = {result}")
         return result
 
     def update_cmap(self, cmap_name = None):
         """
         Update the colormap of the imshow plot based on the selected cmap.
         """
-        logging.log(0, f"Updating colormap with cmap_name={cmap_name}")
+        logging.debug(f"Updating colormap with cmap_name={cmap_name}")
         if cmap_name is None:
             cmap_name = self.current_cmap
-            logging.log(0, f"Using current colormap: {cmap_name}")
+            logging.debug(f"Using current colormap: {cmap_name}")
 
         # Apply the colormap to the image
         self.cax.set_color_map(cmap_name)
         self.g_2dplot.replot()  # Redraw the plot
-        logging.log(0, f"Colormap updated to {cmap_name}")
+        logging.debug(f"Colormap updated to {cmap_name}")
 
     def populate_colormap_combobox(self):
         """Populate the QComboBox with guiqwt colormap names."""
-        logging.log(0, "Populating colormap combobox")
+        logging.debug("Populating colormap combobox")
         colormap_names = sorted(get_colormap_list())  # Get all guiqwt colormap names
-        logging.log(0, f"Found {len(colormap_names)} colormaps")
+        logging.debug(f"Found {len(colormap_names)} colormaps")
         self.comboBoxCmap.addItems(colormap_names)  # Add them to the QComboBox
 
         # Set default selection
         if self.current_cmap in colormap_names:
             default_index = colormap_names.index(self.current_cmap)
             self.comboBoxCmap.setCurrentIndex(default_index)
-            logging.log(0, f"Set default colormap to {self.current_cmap} at index {default_index}")
+            logging.info( f"Set default colormap to {self.current_cmap} at index {default_index}")
         else:
-            logging.log(0, f"Default colormap {self.current_cmap} not found in available colormaps")
+            logging.info( f"Default colormap {self.current_cmap} not found in available colormaps")
 
     def on_vmin_vmax_changed(self):
-        logging.log(0, "vmin/vmax values changed")
+        logging.info( "vmin/vmax values changed")
         # Get current values from the spin boxes using the properties
         current_vmin = self.vmin  # this should read from doubleSpinBox_vmin.value()
         current_vmax = self.vmax  # similarly for doubleSpinBox_vmax.value()
-        logging.log(0, f"Setting colormap limits to vmin={current_vmin}, vmax={current_vmax}")
+        logging.info( f"Setting colormap limits to vmin={current_vmin}, vmax={current_vmax}")
 
         # Update the colormap limits for the 2D histogram image
         self.cax.set_lut_range([current_vmin, current_vmax])
         self.g_2dplot.replot()  # Redraw the plot to reflect the change
-        logging.log(0, "Colormap limits updated")
+        logging.info( "Colormap limits updated")
 
     def set_default_colormap(self, default_cmap):
         """Set the default colormap in the QComboBox."""
-        logging.log(0, f"Setting default colormap to {default_cmap}")
+        logging.info( f"Setting default colormap to {default_cmap}")
         index = self.comboBoxCmap.findText(default_cmap)  # Find the index of the colormap
         if index != -1:  # Ensure it exists in the list
-            logging.log(0, f"Found colormap {default_cmap} at index {index}")
+            logging.info( f"Found colormap {default_cmap} at index {index}")
             self.comboBoxCmap.setCurrentIndex(index)  # Set the QComboBox to the colormap
 
             # Apply the colormap to the image
             self.cax.set_color_map(default_cmap)
             self.g_2dplot.replot()
 
-            logging.log(0, f"Default colormap set to {default_cmap}")
+            logging.info( f"Default colormap set to {default_cmap}")
         else:
-            logging.log(0, f"Colormap {default_cmap} not found in available colormaps")
+            logging.info( f"Colormap {default_cmap} not found in available colormaps")
 
     def __init__(
             self,
@@ -543,7 +592,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
 
         # Clustering settings
-        self._use_clustering = False  # type: bool, always enabled now
+        self._use_clustering = False
 
         # Common clustering variables
         self._cluster_labels = None  # type: Optional[np.ndarray]
@@ -559,6 +608,10 @@ class NDXplorer(QtWidgets.QMainWindow):
         self._cached_values_p13 = None
         self._cached_values_mask_inf = None
         self._cached_values_mask_nan = None
+        
+        # Initialize weight tracking attributes
+        self.current_weight_enabled = False
+        self.current_weight_param = "None"
 
         self.plot_control = SurfacePlotWidget(self)
         self.equation_editor = CodeEditor(parent=self)
@@ -613,7 +666,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             logging.warning(f"Theme file not found: {theme_file}")
 
         def save_cb():
-            logging.log(0, "Save CB")
+            logging.info( "Save CB")
             json_str = self.equation_editor.text()
             self.equations = yaml.load(json_str)
         self.equation_editor.save_callback = save_cb
@@ -938,7 +991,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.update_plots()
 
     def clear_plots(self):
-        logging.log(0, "clearing plots")
+        logging.info( "clearing plots")
         # 1. Clear the user data => empty => fallback to _default_data_source
         self._data_source.clear()
 
@@ -1058,13 +1111,104 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Copy the resulting CSV text to the clipboard
         clipboard = QtWidgets.QApplication.clipboard()
         clipboard.setText(csv_text)
-        logging.log(0, "1D histograms data copied to clipboard as CSV with side-by-side columns.")
+        logging.info( "1D histograms data copied to clipboard as CSV with side-by-side columns.")
 
+    def is_napari_available(self):
+        """
+        Check if napari is installed and available for use.
+        
+        This method uses lazy importing to avoid loading napari until it's needed.
+        It first checks if napari has already been imported, and if not, attempts
+        to import it. If the import fails, it logs a debug message and returns False.
+        
+        Returns:
+            bool: True if napari is available, False otherwise
+        """
+        global napari
+        if napari is None:
+            try:
+                import napari
+                logging.debug("Imported napari library")
+                return True
+            except ImportError:
+                napari = None
+                logging.debug("napari library not available")
+                return False
+        return True
+        
+    def send_to_napari(self):
+        """
+        Send the current 2D histogram image to napari as a new layer.
+        
+        This method transfers the current 2D histogram data to napari for
+        visualization. It performs the following steps:
+        1. Checks if napari is installed and available
+        2. Gets the current 2D histogram data
+        3. Creates a napari viewer or uses an existing one
+        4. Adds the histogram as a new image layer with appropriate labels
+        
+        If napari is not installed, it shows a warning message to the user.
+        If no 2D histogram data is available, it logs a warning and returns.
+        
+        The image is transposed to ensure correct orientation in napari.
+        """
+        # Check if napari is available
+        if not self.is_napari_available():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Napari Not Available",
+                "Napari is not installed. Please install it using pip or conda."
+            )
+            return
+            
+        # Get the 2D histogram data
+        if not hasattr(self, '_histogram') or '2d' not in self._histogram:
+            logging.warning("No 2D histogram data available to send to napari")
+            return
+            
+        # Get the 2D histogram data and transpose it for correct orientation in napari
+        hist_data = self._histogram['2d'][0].T
+        
+        # Get axis labels
+        x_label = self.plot_control.x_label if hasattr(self.plot_control, 'x_label') else "X"
+        y_label = self.plot_control.y_label if hasattr(self.plot_control, 'y_label') else "Y"
+        weight_label = self.plot_control.weight_parameter
+        
+        # Create a napari viewer if one doesn't exist
+        viewer = napari.current_viewer()
+        if viewer is None:
+            viewer = napari.Viewer()
+            
+        # Add the image as a new layer
+        viewer.add_image(
+            hist_data,
+            name=f"NDXplorer: {x_label} vs {y_label} {weight_label}",
+            colormap='viridis',
+            scale=[1, 1]
+        )
+        
+        logging.info(f"Sent 2D histogram to napari: {x_label} vs {y_label}")
+    
     def on_canvas_context_menu(self, pos):
+        """
+        Display a context menu when right-clicking on the 2D plot canvas.
+        
+        This method creates a context menu with options to:
+        - Copy the 2D histogram data as CSV
+        - Copy the 1D histograms data as CSV
+        - Send the current 2D histogram to Napari (if installed)
+        
+        Args:
+            pos: The position where the context menu should be displayed
+        """
         menu = QtWidgets.QMenu(self.g_2dplot.canvas())
         action_csv = menu.addAction("Copy 2D Histogram (CSV)")
         #action_json = menu.addAction("Copy 2D Histogram (JSON)")
         action_csv1d = menu.addAction("Copy 1D Histograms (CSV)")
+        
+        # Add napari option - allows sending the current 2D histogram to Napari
+        action_napari = menu.addAction("Send to Napari")
+        
         action = menu.exec_(self.g_2dplot.canvas().mapToGlobal(pos))
         if action == action_csv:
             self.copy_2d_hist_to_clipboard_csv()
@@ -1072,6 +1216,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         #    self.copy_2d_hist_to_clipboard_json()
         elif action == action_csv1d:
             self.copy_1d_hists_to_clipboard_csv()
+        elif action == action_napari:
+            self.send_to_napari()
 
     def onMaskChanged(self) -> None:
         """
@@ -1221,44 +1367,16 @@ class NDXplorer(QtWidgets.QMainWindow):
                             logging.error(f"Error reading photon_selection_parameters.json: {e}")
                 
                 # Check if we can import MicrotimeHistogram
-                try:
-                    from chisurf.plugins.microtime_histogram.wizard import MicrotimeHistogram
-                    
-                    # Get or create the MicrotimeHistogram instance
-                    histogram = MicrotimeHistogram.get_instance()
-                    histogram.show()
-                    histogram.raise_()  # Bring window to front
-                    
-                    # Load the BID folder in the existing instance
-                    histogram.load_bid_folder(folder, setup_name=setup_name)
-                    
-                    logging.info(f"Loaded BID folder in existing MicrotimeHistogram instance")
-                    
-                except ImportError:
-                    # Fall back to subprocess approach if import fails
-                    logging.warning("Could not import MicrotimeHistogram directly, falling back to subprocess")
-                    import subprocess
-                    import sys
-                    
-                    cmd = [
-                        sys.executable,
-                        "-m",
-                        "chisurf.plugins.microtime_histogram.__main__"
-                    ]
-                    
-                    # Add arguments
-                    cmd.extend(['--bid-folder', folder])
-                    if auto_transfer:
-                        cmd.append('--auto-transfer')
-                    
-                    # Run the command in a separate process
-                    logging.info(f"Launching microtime histogram plugin with command: {' '.join(cmd)}")
-                    # On Windows, use shell=True to help with command resolution
-                    if sys.platform == 'win32':
-                        subprocess.Popen(cmd, shell=True)
-                    else:
-                        subprocess.Popen(cmd)
+                from chisurf.plugins.microtime_histogram.wizard import MicrotimeHistogram
                 
+                # Get or create the MicrotimeHistogram instance
+                histogram = MicrotimeHistogram.get_instance()
+                histogram.show()
+                histogram.raise_()  # Bring window to front
+                
+                # Load the BID folder in the existing instance
+                histogram.load_bid_folder(folder, setup_name=setup_name)
+                                    
             except Exception as e:
                 logging.error(f"Failed to launch microtime histogram plugin: {str(e)}")
                 # Show error message to user
@@ -1338,7 +1456,7 @@ class NDXplorer(QtWidgets.QMainWindow):
                 indent=4
             )
         
-        logging.log(0, f"Parameters saved to {param_filename}")
+        logging.info( f"Parameters saved to {param_filename}")
     
     def onSaveAxisSettings(
             self,
@@ -1465,7 +1583,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         if file_type in ["cs_sampling", "er4"]:
             if not hasattr(file_handles, '__iter__'):
                 file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(self, 'ChiSurf sampling files', wp, 'Sampling files (*.*)')
-            logging.log(0, "Opening files: {}".format(file_handles))
+            logging.info("Opening files: {}".format(file_handles))
             data_reader = reader.read_csv_sampling
         elif file_type in ["burst_dir"]:
             file_handles = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open burst analysis folder', self.working_path)
@@ -1473,7 +1591,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         elif file_type in ["mfd_hdf5"]:
             if file_handles is None:
                 file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(self, 'MFD HDF5 files', wp, 'HDF5 files (*.h5);;ZIP files (*.zip);;All Files (*.*)')
-            logging.log(0, "Opening MFD HDF5/Zip files: {}".format(file_handles))
+            logging.info( "Opening MFD HDF5/Zip files: {}".format(file_handles))
             
             # Process each file based on its type
             if file_handles:
@@ -1508,30 +1626,31 @@ class NDXplorer(QtWidgets.QMainWindow):
                     # Replace the existing data source with the new one
                     self._data_source = combined_data_source
                     self.update()
-                
-                # Return early since we've handled everything
-                return
-            
+
             # If we get here, file_handles was empty, so use read_mfd_hdf5 as a fallback
             data_reader = reader.read_mfd_hdf5
         else: #if file_type in [None, "csv"]:
             if file_handles is None:
                 file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(self, 'Comma separated value files', self.working_path, 'Text files (*.*)')
             data_reader = reader.read_csv
-        if file_handles:
-            logging.log(0, "Opening CSV files: {}".format(file_handles))
 
-            # If append is True and we already have data, merge the new data with the existing data
-            if append and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
-                new_data_source = data_reader(file_handles)
-                merge_success = self._data_source.merge(new_data_source, mode=merge_mode)
-                # Only update if merge was successful
-                if merge_success:
+            if file_handles:
+                logging.info( "Opening CSV files: {}".format(file_handles))
+
+                # If append is True and we already have data, merge the new data with the existing data
+                if append and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
+                    new_data_source = data_reader(file_handles)
+                    merge_success = self._data_source.merge(new_data_source, mode=merge_mode)
+                    # Only update if merge was successful
+                    if merge_success:
+                        self.update()
+                else:
+                    # Replace the existing data source with the new one
+                    self._data_source = data_reader(file_handles)
                     self.update()
-            else:
-                # Replace the existing data source with the new one
-                self._data_source = data_reader(file_handles)
-                self.update()
+
+        # Check if loaded file is an image file and set appropriate axes
+        self.check_and_set_image_axes()
 
     def show_merge_dialog(self, title):
         """
@@ -1665,6 +1784,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             equations=self.equations
         )
         self.lineEditCountTotal.setText(str(self.data_source.size))
+
         self.plot_control.update()  # plot_control.update() - also updates plots
 
     def update_parameter_names(self):
@@ -1801,7 +1921,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
                 # All parameters match, no need to recompute
                 recompute_needed = False
-                logging.log(0, "Using cached histograms")
+                logging.info( "Using cached histograms")
 
         if not recompute_needed and '_histogram' in self.__dict__ and self._histogram:
             # Update GUI with cached data
@@ -1870,7 +1990,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             if weights is not None and use_weights:
                 # Get the selected weight parameter and z parameter
                 weight_param = self.comboBoxWeight.currentText()
-                z_param = self.plot_control.p3[1]
+                z_param = self.plot_control.z_label
 
                 # Only use weights if they're different parameters
                 if weight_param != z_param:
@@ -1929,7 +2049,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Use Qt's clipboard to store the data
         clipboard = QtWidgets.QApplication.clipboard()
         clipboard.setText(text_data)
-        logging.log(0, "2D histogram data copied to clipboard.")
+        logging.info( "2D histogram data copied to clipboard.")
 
     def copy_2d_hist_to_clipboard_csv(self):
         try:
@@ -1963,7 +2083,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Copy the nicely formatted CSV text to the clipboard
         clipboard = QtWidgets.QApplication.clipboard()
         clipboard.setText(csv_text)
-        logging.log(0, "2D histogram data copied to clipboard as CSV (formatted with tabs).")
+        logging.info( "2D histogram data copied to clipboard as CSV (formatted with tabs).")
 
     def update_plots(self, skip_clustering=False):
         """
@@ -2043,7 +2163,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             if hdbscan is None:
                 try:
                     import hdbscan
-                    logging.info("Imported hdbscan library")
+                    logging.debug("Imported hdbscan library")
                 except ImportError:
                     hdbscan = None
 
@@ -2345,11 +2465,11 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         Apply clustering with current parameters and update plots.
         """
-        logging.log(0, "Applying clustering with current parameters")
+        logging.info("Applying clustering with current parameters")
 
         # Set the _use_clustering flag to True
         self._use_clustering = True
-        logging.log(0, "Set _use_clustering flag to True")
+        logging.debug("Set _use_clustering flag to True")
 
         # Get parameters from the clustering dialog
         cluster_method = self.clustering_dialog._cluster_method
@@ -2361,7 +2481,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             if hdbscan is None:
                 try:
                     import hdbscan
-                    logging.info("Imported hdbscan library")
+                    logging.debug("Imported hdbscan library")
                 except ImportError:
                     hdbscan = None
 
@@ -2379,7 +2499,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             if KMeans is None:
                 try:
                     from sklearn.cluster import KMeans
-                    logging.info("Imported KMeans library")
+                    logging.debug("Imported KMeans library")
                 except ImportError:
                     KMeans = None
 
@@ -2396,7 +2516,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Check if any columns are selected for clustering
         if not cluster_columns:
             # No columns selected, use default (x, y, z) values
-            logging.info("No columns selected for clustering. Using x, y, z values.")
+            logging.debug("No columns selected for clustering. Using x, y, z values.")
 
         # Prepare parameters based on the selected method
         params = {}
@@ -2447,21 +2567,21 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         Cancel the current clustering operation.
         """
-        logging.log(0, "Cancelling clustering operation")
+        logging.info("Cancelling clustering operation")
 
         if hasattr(self, 'clustering_worker') and self.clustering_worker is not None and self.clustering_worker.isRunning():
             # Request the worker to stop
             self.clustering_worker.stop()
-            logging.log(0, "Requested clustering worker to stop")
+            logging.debug("Requested clustering worker to stop")
 
             # Update dialog UI if it exists
             if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
                 self.clustering_dialog.pushButtonCancelClustering.setText("Cancelling...")
                 self.clustering_dialog.pushButtonCancelClustering.setEnabled(False)
-                logging.log(0, "Updated clustering dialog UI for cancellation")
+                logging.debug("Updated clustering dialog UI for cancellation")
 
             # The worker will emit clustering_done with None values when it's done
-            logging.log(0, "Waiting for worker to complete cancellation")
+            logging.debug("Waiting for worker to complete cancellation")
 
     def on_clustering_progress(self, progress):
         """
@@ -2470,12 +2590,12 @@ class NDXplorer(QtWidgets.QMainWindow):
         Args:
             progress: Integer value between 0 and 100 representing the progress percentage
         """
-        logging.log(0, f"Clustering progress: {progress}%")
+        logging.debug(f"Clustering progress: {progress}%")
 
         # Update progress in dialog if it exists
         if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
             self.clustering_dialog.update_progress(progress)
-            logging.log(0, f"Updated clustering dialog progress bar to {progress}%")
+            logging.debug(f"Updated clustering dialog progress bar to {progress}%")
 
     def on_clustering_error(self, error_message):
         """
@@ -2484,7 +2604,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Args:
             error_message: String containing the error message
         """
-        logging.log(0, f"Clustering error: {error_message}")
+        logging.warning(f"Clustering error: {error_message}")
 
         # Clear any partial clustering results
         self._cluster_labels = None
@@ -2492,7 +2612,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Set the _use_clustering flag to False
         self._use_clustering = False
-        logging.log(0, "Set _use_clustering flag to False due to error")
+        logging.debug("Set _use_clustering flag to False due to error")
 
         # Update dialog if it exists
         if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
@@ -2512,7 +2632,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Args:
             result: Tuple containing cluster labels and probabilities
         """
-        logging.log(0, "Clustering completed")
+        logging.info("Clustering completed")
 
         # Update the cluster labels and probabilities
         self._cluster_labels, self._cluster_probabilities = result
@@ -2520,7 +2640,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Initialize the cluster data shape if it doesn't exist
         if not hasattr(self, '_cluster_data_shape'):
             self._cluster_data_shape = len(self._cluster_labels) if self._cluster_labels is not None else 0
-            logging.log(0, f"Initialized cluster data shape: {self._cluster_data_shape}")
+            logging.debug(f"Initialized cluster data shape: {self._cluster_data_shape}")
 
         # If result is None, it means clustering was cancelled or failed
         if result[0] is None:
@@ -2528,7 +2648,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
             # Set the _use_clustering flag to False
             self._use_clustering = False
-            logging.log(0, "Set _use_clustering flag to False due to cancellation or failure")
+            logging.debug("Set _use_clustering flag to False due to cancellation or failure")
 
             # Update dialog if it exists
             if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
@@ -2544,7 +2664,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             n_clusters = len([c for c in unique_clusters if c >= 0])
             # Set the maximum value of spinBoxCluster to (n_clusters - 1)
             self.plot_control.spinBoxCluster.setMaximum(n_clusters - 1)
-            logging.log(0, f"Adjusted spinBoxCluster range to (-1, {n_clusters - 1})")
+            logging.debug(f"Adjusted spinBoxCluster range to (-1, {n_clusters - 1})")
 
         # Update dialog if it exists
         if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
@@ -2626,7 +2746,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
             # Store the data shape used for clustering
             self._cluster_data_shape = self._clustering_manager._cluster_data_shape
-            logging.log(0, f"Stored cluster data shape: {self._cluster_data_shape}")
+            logging.info( f"Stored cluster data shape: {self._cluster_data_shape}")
 
         return result
 
@@ -2690,7 +2810,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # If the range has changed, update the histograms
         if self._last_z_range != current_range:
-            logging.log(0, f"Z selection range changed from {self._last_z_range} to {current_range}")
+            logging.info( f"Z selection range changed from {self._last_z_range} to {current_range}")
             self._last_z_range = current_range
             # Update histograms and plots
             self.update_histograms()
@@ -2755,8 +2875,8 @@ class NDXplorer(QtWidgets.QMainWindow):
                     if index >= 0:
                         self.comboBoxWeight.setCurrentIndex(index)
                 # Otherwise, default to z-axis parameter for backward compatibility
-                elif self.plot_control.p3[1] in param_names:
-                    index = self.comboBoxWeight.findText(self.plot_control.p3[1])
+                elif self.plot_control.z_label in param_names:
+                    index = self.comboBoxWeight.findText(self.plot_control.z_label)
                     if index >= 0:
                         self.comboBoxWeight.setCurrentIndex(index)
 
@@ -2808,11 +2928,17 @@ class NDXplorer(QtWidgets.QMainWindow):
     def update_2d_plot(self):
         try:
             new_data, x_edges, y_edges = self._histogram["2d"]
-        except ValueError:
+        except (ValueError, KeyError):
             return None
+            
+        # Check if the data is empty or has zero size
+        if new_data is None or new_data.size == 0 or np.all(np.isnan(new_data)):
+            # Set a small valid array instead of empty data
+            new_data = np.zeros((1, 1))
+            logging.info( "Empty or invalid 2D histogram data detected, using placeholder")
 
         log_counts = self.checkBoxLogCounts.isChecked()
-        if log_counts:
+        if log_counts and new_data.size > 1:  # Only apply log transform if we have real data
             # Handle zeros and negative values before taking log10
             # Add a small positive value to avoid log(0) which would give -inf
             # This ensures we can see more details in the 2D histogram
@@ -2821,9 +2947,14 @@ class NDXplorer(QtWidgets.QMainWindow):
             new_data = np.log10(new_data)
             new_data = np.nan_to_num(new_data)
 
-        # Update the data of the displayed image
-        # Rotate the data to match the original orientation
-        self.cax.set_data(np.flip(np.rot90(new_data, k=3), axis=1))
+        try:
+            # Update the data of the displayed image
+            # Rotate the data to match the original orientation
+            self.cax.set_data(np.flip(np.rot90(new_data, k=3), axis=1))
+        except ValueError as e:
+            logging.warning(f"Error setting 2D plot data: {str(e)}")
+            # If setting data fails, try with a simple valid array
+            self.cax.set_data(np.zeros((1, 1)))
 
         # Set the intensity range using the vmin and vmax properties from the UI
         self.cax.set_lut_range([self.vmin, self.vmax])
@@ -2891,14 +3022,22 @@ class NDXplorer(QtWidgets.QMainWindow):
         Automatically adjust vmin and vmax for the 2D histogram based on the data.
         This function calculates appropriate min and max values for better visualization.
         """
-        logging.log(0, "Auto contrast triggered")
+        logging.debug("Auto contrast triggered")
         try:
             # Get the 2D histogram data
+            if "2d" not in self._histogram:
+                logging.debug("No 2D histogram data available")
+                return
+                
             H, _, _ = self._histogram["2d"]
 
-            # Skip if histogram is empty or contains only zeros
-            if H.size == 0 or np.all(H == 0):
-                logging.log(0, "Histogram is empty or contains only zeros")
+            # Skip if histogram is empty, contains only zeros, or is all NaN
+            if H is None or H.size == 0 or np.all(H == 0) or np.all(np.isnan(H)):
+                logging.debug("Histogram is empty, contains only zeros, or all NaN values")
+                # Set default contrast values
+                self.vmin = 0
+                self.vmax = 1
+                self.on_vmin_vmax_changed()
                 return
 
             # Apply log transform if log counts is checked
@@ -2923,7 +3062,7 @@ class NDXplorer(QtWidgets.QMainWindow):
                     vmin = 0.9 * vmin if vmin != 0 else 0
                     vmax = 1.1 * vmax if vmax != 0 else 1
 
-                logging.log(0, f"Setting auto contrast: vmin={vmin}, vmax={vmax}")
+                logging.debug(f"Setting auto contrast: vmin={vmin}, vmax={vmax}")
 
                 # Update the UI controls
                 self.vmin = vmin
@@ -2932,26 +3071,119 @@ class NDXplorer(QtWidgets.QMainWindow):
                 # Update the plot
                 self.on_vmin_vmax_changed()
             else:
-                logging.log(0, "No non-zero values in histogram")
-        except (ValueError, KeyError) as e:
-            logging.log(0, f"Error in auto contrast: {str(e)}")
+                logging.debug("No non-zero values in histogram")
+                # Set default contrast values
+                self.vmin = 0
+                self.vmax = 1
+                self.on_vmin_vmax_changed()
+        except (ValueError, KeyError, TypeError, IndexError) as e:
+            logging.warning(f"Error in auto contrast: {str(e)}")
+            # Set default contrast values on error
+            self.vmin = 0
+            self.vmax = 1
+            self.on_vmin_vmax_changed()
 
     def update_curve_overlays(self):
         """Update the curve overlays on the 2D histogram."""
         try:
             # Get the 2D histogram data and edges
             histogram_data = self._histogram["2d"]
-        except (ValueError, KeyError):
+            
+            # Check if histogram data is valid
+            if histogram_data is None or len(histogram_data) < 3 or histogram_data[0].size == 0:
+                logging.debug("Empty histogram data, skipping curve overlay update")
+                return
+                
+            # Call the update_curve_overlays method in the CurveOverlayWidget class
+            self.curve_overlay_widget.update_curve_overlays(
+                overlay_plot=self.overlay_plot,
+                histogram_data=histogram_data,
+                plot_control=self.plot_control,
+                curve_evaluator=self.curve_evaluator,
+                value_to_bin_func=self.value_to_bin
+            )
+
+            # Update the curve_items reference to maintain backward compatibility
+            self.curve_items = self.curve_overlay_widget.curve_items
+            
+        except (ValueError, KeyError, IndexError, AttributeError) as e:
+            logging.warning(f"Error updating curve overlays: {str(e)}")
             return
+        
+    def check_and_set_image_axes(self):
+        """
+        Check if the loaded data contains image information (X pixel and Y pixel columns)
+        and set the appropriate axes and weighting.
+        """
+        logging.debug("Checking image axes")
+        if self._data_source is None or self._data_source.empty:
+            logging.debug("No data loaded, skipping image axes check")
+            return
+            
+        # Get parameter names from data source
+        param_names = self._data_source.parameter_names
+        logging.debug(f"Parameter names: {param_names}")
+        
+        # Check if both 'X pixel' and 'Y pixel' exist in the data (case-insensitive)
+        has_x_pixel = any('x pixel' in name.lower() for name in param_names)
+        has_y_pixel = any('y pixel' in name.lower() for name in param_names)
+        
+        if has_x_pixel and has_y_pixel:
+            logging.info("Image data detected (X pixel and Y pixel columns found)")
+            
+            # Find the actual parameter names with correct case
+            x_pixel_param = next((name for name in param_names if 'x pixel' in name.lower()), None)
+            x_success = self.plot_control.set_axis_by_name('x', x_pixel_param, block_signals=True)
+            if x_success:
+                logging.debug(f"Set X axis to {x_pixel_param}")
+            else:
+                logging.warning(f"Failed to set X axis to {x_pixel_param}")
 
-        # Call the update_curve_overlays method in the CurveOverlayWidget class
-        self.curve_overlay_widget.update_curve_overlays(
-            overlay_plot=self.overlay_plot,
-            histogram_data=histogram_data,
-            plot_control=self.plot_control,
-            curve_evaluator=self.curve_evaluator,
-            value_to_bin_func=self.value_to_bin
-        )
+            y_pixel_param = next((name for name in param_names if 'y pixel' in name.lower()), None)
+            y_success = self.plot_control.set_axis_by_name('y', y_pixel_param, block_signals=True)
+            if y_success:
+                logging.debug(f"Set Y axis to {y_pixel_param}")
+            else:
+                logging.warning(f"Failed to set Y axis to {y_pixel_param}")
+            
+            # Find and set weight parameter to "Number of Photons" (case-insensitive)
+            self.weight_enabled = True
+            photon_param = next((name for name in param_names if 'number of photons' in name.lower()), None)
+            logging.debug(f"Weight parameter: {photon_param}")
+            weight_success = self.plot_control.set_axis_by_name('weight', photon_param, match_contains=True, block_signals=True)
+            if weight_success:
+                logging.debug(f"Set weighting to {photon_param}")
+            else:
+                logging.debug("No matching weight parameter found, using default")
 
-        # Update the curve_items reference to maintain backward compatibility
-        self.curve_items = self.curve_overlay_widget.curve_items
+            # Get the number of pixels in X and Y dimensions
+            x_values = self._data_source.values[param_names.index(x_pixel_param), :]
+            y_values = self._data_source.values[param_names.index(y_pixel_param), :]
+            x_pixels = len(set(x_values))
+            y_pixels = len(set(y_values))
+            logging.debug(f"x_pixel_param: {x_pixel_param}, x_values: {x_values}")
+            logging.debug(f"y_pixel_param: {y_pixel_param}, y_values: {y_values}")
+            logging.debug(f"x_pixels: {x_pixels}, y_pixels: {y_pixels}")
+
+            x_pixels = int(np.max(x_values)) + 1  # +1 because pixels are 0-indexed
+            y_pixels = int(np.max(y_values)) + 1
+
+            logging.info(f"Image dimensions: {x_pixels}x{y_pixels} pixels")
+
+            # Set binning to match pixel count
+            self.plot_control.n_xhist_2d = x_pixels
+            self.plot_control.n_yhist_2d = y_pixels
+
+            # Set X range from 0 to max pixel
+            self.plot_control.xmin = 0
+            self.plot_control.xmax = x_pixels - 1
+
+            # Set Y range from 0 to max pixel
+            self.plot_control.ymin = 0
+            self.plot_control.ymax = y_pixels - 1
+
+            logging.debug(f"Set binning and ranges to match pixel dimensions")
+            
+            # Apply auto contrast as final action
+            logging.debug("Applying auto contrast to image")
+            self.on_auto_contrast()

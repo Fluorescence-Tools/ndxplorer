@@ -10,11 +10,7 @@ import yaml
 import pathlib
 from qtpy import QtCore, QtGui, QtWidgets
 
-try:
-    from chisurf import logging
-except ImportError:
-    import logging
-    logging.basicConfig()
+from .logging_config import logging
 
 from qwt.plot import QwtPlot
 
