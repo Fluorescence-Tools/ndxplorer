@@ -10,11 +10,7 @@ hdbscan = None
 KMeans = None
 umap = None
 
-try:
-    from chisurf import logging
-except:
-    import logging
-    logging.basicConfig()
+from .logging_config import logging
 
 try:
     from chisurf.gui import QtGui, QtCore, QtWidgets

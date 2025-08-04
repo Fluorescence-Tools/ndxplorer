@@ -8,12 +8,7 @@ from qtpy import QtGui, uic, QtCore, QtWidgets
 from pyqtgraph.widgets.SpinBox import SpinBox
 
 from . data_source import RectangularDataSelection
-
-try:
-    from chisurf import logging
-except:
-    import logging
-    logging.basicConfig()
+from .logging_config import logging
 
 
 class SurfacePlotWidget(QtWidgets.QWidget):
@@ -74,24 +69,273 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     @property
     def normed_hist_z(self):
         return bool(self.checkBoxNormZ.isChecked())
+        
+    @property
+    def weight_enabled(self):
+        """Returns whether weighting is enabled."""
+        return bool(self.checkBoxWeight.isChecked())
+        
+    @weight_enabled.setter
+    def weight_enabled(self, value, block_signals=False):
+        """
+        Set whether weighting is enabled.
+        
+        Args:
+            value: Boolean indicating whether weighting should be enabled
+            block_signals: If True, signals will be blocked during the change
+        """
+        # Handle the block_signals parameter
+        was_blocked = self.checkBoxWeight.signalsBlocked()
+        if block_signals and not was_blocked:
+            self.checkBoxWeight.blockSignals(True)
+            
+        try:
+            self.checkBoxWeight.setChecked(bool(value))
+        finally:
+            # Restore previous signal blocking state
+            if block_signals and not was_blocked:
+                self.checkBoxWeight.blockSignals(was_blocked)
+                
+    @property
+    def weight_parameter(self):
+        """Returns the currently selected weight parameter."""
+        return str(self.comboBoxWeight.currentText())
+        
+    @weight_parameter.setter
+    def weight_parameter(self, value, block_signals=False):
+        """
+        Set the weight parameter.
+        
+        Args:
+            value: Parameter name (str) to use for weighting or index (int)
+            block_signals: If True, signals will be blocked during the change
+        """
+        # Handle the block_signals parameter
+        was_blocked = self.comboBoxWeight.signalsBlocked()
+        if block_signals and not was_blocked:
+            self.comboBoxWeight.blockSignals(True)
+            
+        try:
+            if isinstance(value, str):
+                index = self.comboBoxWeight.findText(value)
+                if index >= 0:
+                    self.comboBoxWeight.setCurrentIndex(index)
+            elif isinstance(value, int) and value >= 0:
+                self.comboBoxWeight.setCurrentIndex(value)
+        finally:
+            # Restore previous signal blocking state
+            if block_signals and not was_blocked:
+                self.comboBoxWeight.blockSignals(was_blocked)
 
     @property
     def p1(self):
         idx = self.comboBoxSelX.currentIndex()
         name = self.comboBoxSelX.currentText()
         return idx, str(name)
+        
+    @p1.setter
+    def p1(self, value, block_signals=False):
+        """
+        Set the X axis parameter.
+        
+        Args:
+            value: Either an index (int) or parameter name (str) or tuple (idx, name)
+            block_signals: If True, signals will be blocked during the change
+        """
+        # Handle the block_signals parameter
+        was_blocked = self.comboBoxSelX.signalsBlocked()
+        if block_signals and not was_blocked:
+            self.comboBoxSelX.blockSignals(True)
+            
+        try:
+            if isinstance(value, tuple) and len(value) == 2:
+                # If a tuple (idx, name) is provided
+                idx, name = value
+                if isinstance(idx, int) and idx >= 0:
+                    self.comboBoxSelX.setCurrentIndex(idx)
+                elif isinstance(name, str):
+                    index = self.comboBoxSelX.findText(name)
+                    if index >= 0:
+                        self.comboBoxSelX.setCurrentIndex(index)
+            elif isinstance(value, int) and value >= 0:
+                # If just an index is provided
+                self.comboBoxSelX.setCurrentIndex(value)
+            elif isinstance(value, str):
+                # If just a name is provided
+                index = self.comboBoxSelX.findText(value)
+                if index >= 0:
+                    self.comboBoxSelX.setCurrentIndex(index)
+        finally:
+            # Restore previous signal blocking state
+            if block_signals and not was_blocked:
+                self.comboBoxSelX.blockSignals(was_blocked)
 
     @property
     def p2(self):
         idx = self.comboBoxSelY.currentIndex()
         name = self.comboBoxSelY.currentText()
         return idx, str(name)
+        
+    @p2.setter
+    def p2(self, value, block_signals=False):
+        """
+        Set the Y axis parameter.
+        
+        Args:
+            value: Either an index (int) or parameter name (str) or tuple (idx, name)
+            block_signals: If True, signals will be blocked during the change
+        """
+        # Handle the block_signals parameter
+        was_blocked = self.comboBoxSelY.signalsBlocked()
+        if block_signals and not was_blocked:
+            self.comboBoxSelY.blockSignals(True)
+            
+        try:
+            if isinstance(value, tuple) and len(value) == 2:
+                # If a tuple (idx, name) is provided
+                idx, name = value
+                if isinstance(idx, int) and idx >= 0:
+                    self.comboBoxSelY.setCurrentIndex(idx)
+                elif isinstance(name, str):
+                    index = self.comboBoxSelY.findText(name)
+                    if index >= 0:
+                        self.comboBoxSelY.setCurrentIndex(index)
+            elif isinstance(value, int) and value >= 0:
+                # If just an index is provided
+                self.comboBoxSelY.setCurrentIndex(value)
+            elif isinstance(value, str):
+                # If just a name is provided
+                index = self.comboBoxSelY.findText(value)
+                if index >= 0:
+                    self.comboBoxSelY.setCurrentIndex(index)
+        finally:
+            # Restore previous signal blocking state
+            if block_signals and not was_blocked:
+                self.comboBoxSelY.blockSignals(was_blocked)
 
     @property
     def p3(self):
         idx = self.comboBoxSelZ.currentIndex()
         name = self.comboBoxSelZ.currentText()
         return idx, str(name)
+        
+    @property
+    def x_label(self):
+        """
+        Get the X axis label.
+        
+        Returns:
+            str: The name of the parameter selected for the X axis
+        """
+        return str(self.comboBoxSelX.currentText())
+        
+    @property
+    def y_label(self):
+        """
+        Get the Y axis label.
+        
+        Returns:
+            str: The name of the parameter selected for the Y axis
+        """
+        return str(self.comboBoxSelY.currentText())
+        
+    @property
+    def z_label(self):
+        """
+        Get the Z axis label.
+        
+        Returns:
+            str: The name of the parameter selected for the Z axis
+        """
+        return str(self.comboBoxSelZ.currentText())
+        
+    @p3.setter
+    def p3(self, value, block_signals=False):
+        """
+        Set the Z axis parameter.
+        
+        Args:
+            value: Either an index (int) or parameter name (str) or tuple (idx, name)
+            block_signals: If True, signals will be blocked during the change
+        """
+        # Handle the block_signals parameter
+        was_blocked = self.comboBoxSelZ.signalsBlocked()
+        if block_signals and not was_blocked:
+            self.comboBoxSelZ.blockSignals(True)
+            
+        try:
+            if isinstance(value, tuple) and len(value) == 2:
+                # If a tuple (idx, name) is provided
+                idx, name = value
+                if isinstance(idx, int) and idx >= 0:
+                    self.comboBoxSelZ.setCurrentIndex(idx)
+                elif isinstance(name, str):
+                    index = self.comboBoxSelZ.findText(name)
+                    if index >= 0:
+                        self.comboBoxSelZ.setCurrentIndex(index)
+            elif isinstance(value, int) and value >= 0:
+                # If just an index is provided
+                self.comboBoxSelZ.setCurrentIndex(value)
+            elif isinstance(value, str):
+                # If just a name is provided
+                index = self.comboBoxSelZ.findText(value)
+                if index >= 0:
+                    self.comboBoxSelZ.setCurrentIndex(index)
+        finally:
+            # Restore previous signal blocking state
+            if block_signals and not was_blocked:
+                self.comboBoxSelZ.blockSignals(was_blocked)
+                
+    def set_axis_by_name(self, axis, name, match_contains=True, block_signals=False):
+        """
+        Set an axis by parameter name with optional substring matching.
+        
+        Args:
+            axis: String indicating which axis to set ('x', 'y', or 'z')
+            name: Parameter name to set
+            match_contains: If True, use Qt.MatchContains to find partial matches
+            block_signals: If True, signals will be blocked during the change
+            
+        Returns:
+            bool: True if the axis was successfully set, False otherwise
+        """
+
+        if not isinstance(name, str) or not name:
+            return False
+            
+        # Determine which combo box to use based on the axis
+        combo_box = None
+        if axis.lower() == 'x':
+            combo_box = self.comboBoxSelX
+        elif axis.lower() == 'y':
+            combo_box = self.comboBoxSelY
+        elif axis.lower() == 'z':
+            combo_box = self.comboBoxSelZ
+        elif axis.lower() == 'weight':
+            combo_box = self.comboBoxWeight
+        else:
+            return False
+            
+        # Find the index of the parameter name
+        match_flag = QtCore.Qt.MatchContains if match_contains else QtCore.Qt.MatchExactly
+        index = combo_box.findText(name, match_flag)
+        
+        if index < 0:
+            return False
+            
+        # Block signals if requested
+        was_blocked = combo_box.signalsBlocked()
+        if block_signals and not was_blocked:
+            combo_box.blockSignals(True)
+            
+        try:
+            # Set the combo box to the found index
+            combo_box.setCurrentIndex(index)
+            return True
+        finally:
+            # Restore previous signal blocking state
+            if block_signals and not was_blocked:
+                combo_box.blockSignals(was_blocked)
 
     @property
     def binsX(self):
