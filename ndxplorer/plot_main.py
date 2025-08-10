@@ -1277,6 +1277,9 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def onSelectWorkingPath(self):
         working_path = QtWidgets.QFileDialog.getExistingDirectory(None, 'Select current path', self.working_path)
+        # If user cancels the dialog, do not change the working path
+        if not working_path:
+            return
         self.lineEditWorkingPath.blockSignals(True)
         self.lineEditWorkingPath.setText(working_path)
         self.lineEditWorkingPath.blockSignals(False)
@@ -1579,77 +1582,125 @@ class NDXplorer(QtWidgets.QMainWindow):
             append: bool = False,
             merge_mode: str = 'columns'
     ):
+        logging.info("NDXplorer: Opening files..")
+        logging.debug(f"File handles: {file_handles}")
+        logging.debug(f"File type: {file_type}")
+        logging.debug(f"Append mode: {append}")
+        logging.debug(f"Merge mode: {merge_mode}")
         wp = str(self.working_path)
+
         if file_type in ["cs_sampling", "er4"]:
             if not hasattr(file_handles, '__iter__'):
-                file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(self, 'ChiSurf sampling files', wp, 'Sampling files (*.*)')
-            logging.info("Opening files: {}".format(file_handles))
+                file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(
+                    self, 'ChiSurf sampling files', wp, 'Sampling files (*.*)')
+            # Update working path based on selection
+            try:
+                if file_handles:
+                    first_path = str(file_handles[0])
+                    dir_path = str(Path(first_path).parent)
+                    self.working_path = dir_path
+            except Exception as e:
+                logging.debug(f"Could not update working path for cs_sampling: {e}")
+            logging.info(f"Opening files ({file_type}): {file_handles}")
             data_reader = reader.read_csv_sampling
+
         elif file_type in ["burst_dir"]:
-            file_handles = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open burst analysis folder', self.working_path)
+            file_handles = QtWidgets.QFileDialog.getExistingDirectory(
+                self, 'Open burst analysis folder', self.working_path)
+            # Update working path to selected directory
+            try:
+                if file_handles:
+                    self.working_path = str(file_handles)
+            except Exception as e:
+                logging.debug(f"Could not update working path for burst_dir: {e}")
             data_reader = reader.read_burst_analysis
+
         elif file_type in ["mfd_hdf5"]:
             if file_handles is None:
-                file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(self, 'MFD HDF5 files', wp, 'HDF5 files (*.h5);;ZIP files (*.zip);;All Files (*.*)')
-            logging.info( "Opening MFD HDF5/Zip files: {}".format(file_handles))
-            
-            # Process each file based on its type
-            if file_handles:
-                # Initialize data sources
-                combined_data_source = None
-                
-                for file_path in file_handles:
-                    # Determine if this is a zip file or an HDF5 file
-                    is_zip = str(file_path).lower().endswith('.zip')
-                    
-                    # Choose the appropriate reader function
-                    if is_zip:
-                        # For zip files, use read_burst_analysis
-                        temp_data_source = reader.read_burst_analysis(file_path)
-                    else:
-                        # For HDF5 files, use read_mfd_hdf5
-                        temp_data_source = reader.read_mfd_hdf5([file_path])
-                    
-                    # Merge with combined data source if we have one
-                    if combined_data_source is None:
-                        combined_data_source = temp_data_source
-                    else:
-                        combined_data_source.merge(temp_data_source, mode=merge_mode)
-                
-                # If append is True and we already have data, merge with existing data
-                if append and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
-                    merge_success = self._data_source.merge(combined_data_source, mode=merge_mode)
-                    # Only update if merge was successful
-                    if merge_success:
-                        self.update()
-                else:
-                    # Replace the existing data source with the new one
-                    self._data_source = combined_data_source
-                    self.update()
+                file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(
+                    self, 'MFD HDF5 files', wp,
+                    'HDF5 files (*.h5 *.hdf5);;ZIP files (*.zip);;All Files (*.*)')
+            # Update working path based on selection
+            try:
+                if file_handles:
+                    first_path = str(file_handles[0])
+                    dir_path = str(Path(first_path).parent)
+                    self.working_path = dir_path
+            except Exception as e:
+                logging.debug(f"Could not update working path for mfd_hdf5: {e}")
+            logging.info(f"Opening MFD HDF5/Zip files: {file_handles}")
 
-            # If we get here, file_handles was empty, so use read_mfd_hdf5 as a fallback
-            data_reader = reader.read_mfd_hdf5
-        else: #if file_type in [None, "csv"]:
+            if not file_handles:
+                return  # user cancelled
+
+            # Build a combined DataSource; for ZIPs, decide HDF5 vs burst by contents
+            combined_data_source = None
+            for file_path in file_handles:
+                p = str(file_path)
+                is_zip = p.lower().endswith('.zip')
+
+                if is_zip:
+                    # Inspect once
+                    try:
+                        import zipfile as _zip
+                        with _zip.ZipFile(p, 'r') as zf:
+                            names = zf.namelist()
+                        has_h5 = any(n.lower().endswith(('.h5', '.hdf5')) for n in names)
+                        logging.debug(f"ZIP '{p}' contains HDF5: {has_h5}")
+                    except Exception as e:
+                        logging.debug(f"Could not inspect zip '{p}': {e}")
+                        has_h5 = False
+
+                    temp_ds = reader.read_mfd_hdf5([p]) if has_h5 else reader.read_burst_analysis(p)
+                else:
+                    temp_ds = reader.read_mfd_hdf5([p])
+
+                if combined_data_source is None:
+                    combined_data_source = temp_ds
+                else:
+                    combined_data_source.merge(temp_ds, mode=merge_mode)
+
+            # Append or replace
+            if append and hasattr(self,
+                                  '_data_source') and self._data_source is not None and not self._data_source.empty:
+                if self._data_source.merge(combined_data_source, mode=merge_mode):
+                    self.update()
+            else:
+                self._data_source = combined_data_source
+                self.update()
+
+            # Detect image axes if any, then EXIT so we don't hit the generic loader
+            self.check_and_set_image_axes()
+            logging.debug("Handled mfd_hdf5; returning before generic loader.")
+            return
+
+        else:
             if file_handles is None:
-                file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(self, 'Comma separated value files', self.working_path, 'Text files (*.*)')
+                file_handles, _ = QtWidgets.QFileDialog.getOpenFileNames(
+                    self, 'Comma separated value files', self.working_path, 'Text files (*.*)')
+            # Update working path based on selection
+            try:
+                if file_handles:
+                    first_path = str(file_handles[0])
+                    dir_path = str(Path(first_path).parent)
+                    self.working_path = dir_path
+            except Exception as e:
+                logging.debug(f"Could not update working path for csv: {e}")
             data_reader = reader.read_csv
 
-            if file_handles:
-                logging.info( "Opening CSV files: {}".format(file_handles))
+        # Generic loader path (CSV / cs_sampling / burst_dir)
+        if file_handles:
+            logging.info(f"Opening files ({file_type or 'csv'}): {file_handles}")
 
-                # If append is True and we already have data, merge the new data with the existing data
-                if append and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
-                    new_data_source = data_reader(file_handles)
-                    merge_success = self._data_source.merge(new_data_source, mode=merge_mode)
-                    # Only update if merge was successful
-                    if merge_success:
-                        self.update()
-                else:
-                    # Replace the existing data source with the new one
-                    self._data_source = data_reader(file_handles)
+            if append and hasattr(self,
+                                  '_data_source') and self._data_source is not None and not self._data_source.empty:
+                new_data_source = data_reader(file_handles)
+                if self._data_source.merge(new_data_source, mode=merge_mode):
                     self.update()
+            else:
+                self._data_source = data_reader(file_handles)
+                self.update()
 
-        # Check if loaded file is an image file and set appropriate axes
         self.check_and_set_image_axes()
 
     def show_merge_dialog(self, title):

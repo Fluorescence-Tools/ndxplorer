@@ -6,7 +6,10 @@ import zipfile
 import io
 import shutil
 
-import json
+try:
+    from chisurf import logging
+except ImportError:
+    import logging
 import pandas as pd
 from pandas.errors import EmptyDataError
 
@@ -30,6 +33,20 @@ For zipped CSV files, pandas is used to read the data directly from the zip arch
 For zipped MFD folders, the zip is extracted to a temporary directory before processing.
 For zipped HDF5 files, the file is extracted to a temporary location before reading.
 """
+
+
+# reader.py (top-level helpers)
+def _zip_contains_any(zip_path: str, exts: tuple) -> bool:
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            names = [n.lower() for n in zf.namelist()]
+        return any(n.endswith(ext) for ext in exts for n in names)
+    except Exception as e:
+        try:
+            logging.debug(f"Zip inspect failed for '{zip_path}': {e}")
+        except Exception:
+            pass
+        return False
 
 
 class ProgressWindow(QDialog):
@@ -186,10 +203,10 @@ def read_burst_analysis(
             if len(potential_dirs) == 1:
                 mfd_dir = potential_dirs[0]
             else:
-                # Try to find a directory with bi4_bur or bur subdirectories
+                # Try to find a directory with bi4_bur, bur, or hdf5 subdirectories
                 mfd_dir = None
                 for d in potential_dirs:
-                    if (d / "bi4_bur").exists() or (d / "bur").exists():
+                    if (d / "bi4_bur").exists() or (d / "bur").exists() or (d / "hdf5").exists():
                         mfd_dir = d
                         break
                 
@@ -222,7 +239,17 @@ def _process_burst_analysis_dir(
 ) -> DataSource:
     """
     Process a burst analysis directory (helper function for read_burst_analysis).
+    Prefer HDF5 if an 'hdf5' subfolder with .h5/.hdf5 exists; otherwise, read BUR files.
     """
+    # Prefer HDF5 if available
+    hdf5_dir = base_path / "hdf5"
+    if hdf5_dir.is_dir():
+        hdf5_files = sorted([p for p in hdf5_dir.iterdir() if p.suffix.lower() in (".h5", ".hdf5")])
+        if hdf5_files:
+            logging.info(f"NDXplorer: Found HDF5 folder, reading {hdf5_files[0]}")
+            # Use existing HDF5 reader path
+            return read_mfd_hdf5([str(hdf5_files[0])])
+
     # locate .bur files
     dir_main = base_path / "bi4_bur"
     dir_fallback = base_path / "bur"
@@ -394,97 +421,62 @@ def read_csv_sampling(filenames, sep='\t'):
 def read_mfd_hdf5(filenames):
     """
     Read MFD HDF5 files, including zipped HDF5 files.
-
-    Args:
-        filenames: List of HDF5 file paths or zipped HDF5 files
-
-    Returns:
-        DataSource object with the data
+    If a .zip has no .h5/.hdf5 inside, fall back to read_burst_analysis.
     """
     from PyQt5.QtWidgets import QMessageBox
 
     if not filenames:
         return DataSource()
 
-    # Process the first file to get the base DataFrame
-    first_file = filenames[0]
+    first_file = str(filenames[0])
+
+    # If the first input is a .zip WITHOUT any HDF5 inside, treat it as a burst ZIP.
+    if first_file.lower().endswith('.zip') and not _zip_contains_any(first_file, ('.h5', '.hdf5')):
+        logging.info(f"No HDF5 in zip; treating as burst analysis: {first_file}")
+        return read_burst_analysis(first_file)
+
+    # Normal HDF5 flow
     base_df = read_hdf5_file(first_file)
     row_count = len(base_df)
 
-    # If there's only one file, process it as before
     if len(filenames) == 1:
-        dfn = base_df.select_dtypes(['number'])
         ds = DataSource()
-        ds.data = dfn
+        ds.data = base_df.select_dtypes(['number'])
         return ds
 
-    # For multiple files, combine horizontally (by columns)
     combined_df = base_df
-
     for filename in filenames[1:]:
         df = read_hdf5_file(filename)
-
-        # Check if row count matches
         if len(df) != row_count:
             QMessageBox.warning(
-                None, 
+                None,
                 "Row Count Mismatch",
                 f"File {filename} has {len(df)} rows, but expected {row_count} rows. File will not be opened."
             )
             continue
-
-        # Combine DataFrames horizontally, keeping only non-duplicate columns from the new DataFrame
-        # First, identify duplicate columns
-        duplicate_cols = set(combined_df.columns).intersection(set(df.columns))
-
-        # Remove duplicate columns from the new DataFrame
-        df_unique = df.drop(columns=duplicate_cols)
-
-        # Combine with the existing DataFrame
-        combined_df = pd.concat([combined_df, df_unique], axis=1)
-
-    # Select only numeric columns
-    dfn = combined_df.select_dtypes(['number'])
+        duplicate = set(combined_df.columns).intersection(df.columns)
+        combined_df = pd.concat([combined_df, df.drop(columns=duplicate)], axis=1)
 
     ds = DataSource()
-    ds.data = dfn
+    ds.data = combined_df.select_dtypes(['number'])
     return ds
 
 
 def read_hdf5_file(filename):
-    """
-    Read an HDF5 file, handling both regular and zipped HDF5 files.
-    
-    Args:
-        filename: Path to the HDF5 file or zipped HDF5 file
-        
-    Returns:
-        pandas DataFrame containing the HDF5 data
-    """
     file_path = pathlib.Path(filename)
-    
-    # Check if the file is a zip file
+
     if file_path.suffix.lower() == '.zip':
         with zipfile.ZipFile(file_path, 'r') as zip_file:
-            # Get a list of HDF5 files in the zip
             hdf5_files = [f for f in zip_file.namelist() if f.lower().endswith(('.h5', '.hdf5'))]
-            
             if not hdf5_files:
-                raise ValueError(f"No HDF5 files found in the zip archive: {filename}")
-            
-            # Use the first HDF5 file in the archive
+                raise FileNotFoundError(f"No HDF5 files found in the zip archive: {filename}")
             hdf5_filename = hdf5_files[0]
-            
-            # Extract the HDF5 file to a temporary location
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = pathlib.Path(temp_dir)
                 zip_file.extract(hdf5_filename, temp_path)
-                
-                # Read the extracted HDF5 file
                 extracted_file = temp_path / hdf5_filename
                 return pd.read_hdf(extracted_file, key='results')
     else:
-        # Regular HDF5 file
         return pd.read_hdf(filename, key='results')
 
 
