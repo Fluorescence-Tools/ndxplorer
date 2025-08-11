@@ -24,8 +24,10 @@
     'S prompt red (kHz)'
 - Fr(PIE): >-
     'Sr(PIE)' - 'Br' - 'alpha' * 'Sg(PIE)'
-- Fy(PIE): >-
+- Sy(PIE): >-
     'S delayed yellow (kHz)'
+- Fy(PIE): >-
+    'Sy(PIE)' - 'By'
 - Fg/Fr(PIE): >-
     'Fg(PIE)' / 'Fr(PIE)'
 - Sg/Sr(PIE): >-
