@@ -178,5 +178,19 @@
         "n_bins_2d": 31,
         "scale": "log",
         "min": 0.1
+    },
+    "Sg(PIE)": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
+    },
+    "Sr(PIE)": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
     }
 }
