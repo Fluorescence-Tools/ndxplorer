@@ -624,6 +624,12 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.verticalLayout_15.addWidget(self.equation_editor)
         self.verticalLayout_10.addWidget(self.curve_overlay_widget)
 
+        # Enable drag & drop on working path line edit
+        try:
+            self._install_working_path_drop()
+        except Exception as e:
+            logging.debug(f"Failed to enable working path drop: {e}")
+
         # Create scientific notation spin boxes for vmin and vmax
         self.doubleSpinBox_vmin = ScientificSpinBox(self, format_str="%.2e")
         self.doubleSpinBox_vmax = ScientificSpinBox(self, format_str="%.2e")
@@ -825,6 +831,18 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Configure the plot
         self.g_2dplot.set_axis_font("left", QFont("Courier"))
         self.g_2dplot.set_axis_font("bottom", QFont("Courier"))
+
+        # Initialize default font settings and apply
+        self.font_settings = {
+            "tick_size_pt": 8,
+            "title_size_pt": 10,
+            "title_weight": 700,
+            "color": "#000000"
+        }
+        try:
+            self.apply_fonts()
+        except Exception:
+            pass
 
         # Enable axes that we want to link with marginal plots
         self.g_2dplot.enableAxis(QwtPlot.xBottom, False)
@@ -1284,6 +1302,88 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.lineEditWorkingPath.setText(working_path)
         self.lineEditWorkingPath.blockSignals(False)
 
+    def _install_working_path_drop(self):
+        """
+        Enable dropping of folders and files on the working path line edit.
+        - If a folder is dropped: open as burst analysis folder and set working path.
+        - If an HDF5 (.h5/.hdf5) file is dropped: open via onOpenMfdHdf5.
+        - If a CSV (.csv) file is dropped: open via onOpenCsv.
+        """
+        le = self.lineEditWorkingPath
+        try:
+            le.setAcceptDrops(True)
+        except Exception:
+            pass
+
+        def dragEnterEvent(event):
+            try:
+                md = event.mimeData()
+                if md and md.hasUrls():
+                    urls = md.urls()
+                    if urls:
+                        # Check first URL for type acceptance
+                        p = Path(urls[0].toLocalFile())
+                        if p.exists() and (p.is_dir() or p.suffix.lower() in ('.h5', '.hdf5', '.csv')):
+                            event.acceptProposedAction()
+                            return
+                event.ignore()
+            except Exception as e:
+                logging.debug(f"dragEnterEvent error: {e}")
+                event.ignore()
+
+        def dropEvent(event):
+            try:
+                md = event.mimeData()
+                if not (md and md.hasUrls()):
+                    event.ignore()
+                    return
+                paths = [Path(u.toLocalFile()) for u in md.urls()]
+                # Prefer directories first
+                dirs = [p for p in paths if p.exists() and p.is_dir()]
+                if dirs:
+                    p = dirs[0]
+                    event.acceptProposedAction()
+                    try:
+                        self.lineEditWorkingPath.setText(str(p))
+                    except Exception:
+                        pass
+                    try:
+                        # Open dropped analysis folder
+                        self.open_files(file_type="burst_dir", file_handles=str(p), append=False)
+                    except Exception as e:
+                        logging.error(f"Failed to open burst analysis folder from drop: {e}")
+                    return
+
+                files = [p for p in paths if p.exists() and p.is_file()]
+                if files:
+                    csvs = [str(p) for p in files if p.suffix.lower() == '.csv']
+                    h5s = [str(p) for p in files if p.suffix.lower() in ('.h5', '.hdf5')]
+
+                    if csvs:
+                        event.acceptProposedAction()
+                        try:
+                            self.onOpenCsv(None, filenames=csvs, append=False, merge_mode='columns')
+                        except Exception as e:
+                            logging.error(f"Failed to open CSV from drop: {e}")
+                        return
+
+                    if h5s:
+                        event.acceptProposedAction()
+                        try:
+                            self.onOpenMfdHdf5(None, filenames=h5s, append=False, merge_mode='columns')
+                        except Exception as e:
+                            logging.error(f"Failed to open HDF5 from drop: {e}")
+                        return
+
+                event.ignore()
+            except Exception as e:
+                logging.debug(f"dropEvent error: {e}")
+                event.ignore()
+
+        # Monkey patch events onto the line edit (minimal invasive change)
+        le.dragEnterEvent = dragEnterEvent
+        le.dropEvent = dropEvent
+
     def onSaveBurstIDs(self, evt=None, folder=None):
         """
         Save burst IDs to a folder and show dialog for microtime histogram.
@@ -1538,6 +1638,13 @@ class NDXplorer(QtWidgets.QMainWindow):
                     "x_plot": {"top": True},
                     # Z-plot axis labels (bottom and left axes)
                     "z_plot": {"bottom": True, "left": True}
+                },
+                # Font settings (optional)
+                "fonts": {
+                    "tick_size_pt": 8,
+                    "title_size_pt": 10,
+                    "title_weight": 700,
+                    "color": "#000000"
                 }
             }
             
@@ -1554,6 +1661,17 @@ class NDXplorer(QtWidgets.QMainWindow):
                     logging.warning(f"Error loading axis label settings: {e}")
             else:
                 logging.warning(f"Axis label settings file not found: {fn_axis_labels}")
+
+            # Update font_settings from axis_label_settings.fonts
+            try:
+                fonts = self.axis_label_settings.get("fonts", {})
+                if not hasattr(self, 'font_settings'):
+                    self.font_settings = {}
+                self.font_settings.update(fonts)
+                # Apply fonts immediately
+                self.apply_fonts()
+            except Exception as e:
+                logging.debug(f"Could not apply font settings: {e}")
 
         # Load equations
         fn_equations = settings_dir / self.settings["equations"]
@@ -1605,8 +1723,9 @@ class NDXplorer(QtWidgets.QMainWindow):
             data_reader = reader.read_csv_sampling
 
         elif file_type in ["burst_dir"]:
-            file_handles = QtWidgets.QFileDialog.getExistingDirectory(
-                self, 'Open burst analysis folder', self.working_path)
+            if file_handles is None:
+                file_handles = QtWidgets.QFileDialog.getExistingDirectory(
+                    self, 'Open burst analysis folder', self.working_path)
             # Update working path to selected directory
             try:
                 if file_handles:
@@ -1838,6 +1957,47 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         self.plot_control.update()  # plot_control.update() - also updates plots
 
+    def apply_fonts(self):
+        """
+        Apply font settings (tick/title sizes) to all plots. Family is fixed.
+        """
+        try:
+            fs = getattr(self, 'font_settings', {})
+            tick_size = int(fs.get('tick_size_pt', 8))
+            qf_tick = QFont("Segoe UI", int(tick_size))
+        except Exception:
+            qf_tick = QFont("Segoe UI", 8)
+        # Apply to x,y,z,2d,overlay if present
+        plots = [self.g_xplot, self.g_yplot, self.g_2dplot]
+        try:
+            if hasattr(self, 'g_zplot') and self.g_zplot is not None:
+                plots.append(self.g_zplot)
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'overlay_plot') and self.overlay_plot is not None:
+                plots.append(self.overlay_plot)
+        except Exception:
+            pass
+        for gp in plots:
+            try:
+                gp.set_axis_font("bottom", qf_tick)
+            except Exception:
+                pass
+            try:
+                gp.set_axis_font("top", qf_tick)
+            except Exception:
+                pass
+            try:
+                gp.set_axis_font("left", qf_tick)
+            except Exception:
+                pass
+            try:
+                gp.set_axis_font("right", qf_tick)
+            except Exception:
+                pass
+        # Titles are handled in update_parameter_names via fmt()
+
     def update_parameter_names(self):
         """
         Update the axis titles with the current parameter names.
@@ -1845,10 +2005,33 @@ class NDXplorer(QtWidgets.QMainWindow):
         This method sets the axis titles for the plots based on the selected parameters.
         It also respects the axis label configuration settings, allowing labels to be
         enabled or disabled according to the user's preferences.
+        In addition, it formats axis titles to be bold and slightly larger for better readability.
         """
         # Get the current parameter names from the plot control
         p1, p1_name = self.plot_control.p1
         p2, p2_name = self.plot_control.p2
+        p3, p3_name = self.plot_control.p3
+
+        # Helper: format titles as bold and slightly larger using Qt rich text
+        def fmt(title: str) -> str:
+            if not title:
+                return ""
+            # Use configured title font size/weight/color if available
+            size_pt = None
+            weight = 700
+            color = None
+            try:
+                if hasattr(self, 'font_settings'):
+                    weight = int(self.font_settings.get('title_weight', 700))
+                    size_pt = float(self.font_settings.get('title_size_pt'))
+                    color = self.font_settings.get('color')
+            except Exception:
+                pass
+            color_css = f"; color:{color}" if color else ""
+            if size_pt is not None:
+                return f"<span style='font-weight:{weight}; font-size:{size_pt}pt{color_css}'>{title}</span>"
+            else:
+                return f"<span style='font-weight:{weight}; font-size:115%{color_css}'>{title}</span>"
         
         # Check if axis label settings are available
         # These settings are loaded from the axis_labels.yaml file
@@ -1862,36 +2045,66 @@ class NDXplorer(QtWidgets.QMainWindow):
             axis_labels = self.axis_label_settings.get('axis_labels', {})
             y_plot_settings = axis_labels.get('y_plot', {})
             x_plot_settings = axis_labels.get('x_plot', {})
+            z_plot_settings = axis_labels.get('z_plot', {})
             
             # Set y-plot top axis title if enabled
             # The label is shown if either:
             # 1. enable_all_labels is true and the individual setting is not explicitly false, or
             # 2. enable_all_labels is false but the individual setting is explicitly true
             if enable_all_labels or y_plot_settings.get('top', True):
-                self.g_yplot.set_axis_title("top", p2_name)
+                self.g_yplot.set_axis_title("top", fmt(p2_name))
             else:
                 # Set empty title to hide the label
                 self.g_yplot.set_axis_title("top", "")
             
             # Set y-plot right axis title if enabled
             if enable_all_labels or y_plot_settings.get('right', True):
-                self.g_yplot.set_axis_title("right", p2_name)
+                self.g_yplot.set_axis_title("right", fmt(p2_name))
             else:
                 # Set empty title to hide the label
                 self.g_yplot.set_axis_title("right", "")
             
             # Set x-plot top axis title if enabled
             if enable_all_labels or x_plot_settings.get('top', True):
-                self.g_xplot.set_axis_title("top", p1_name)
+                self.g_xplot.set_axis_title("top", fmt(p1_name))
             else:
                 # Set empty title to hide the label
                 self.g_xplot.set_axis_title("top", "")
+
+            # Set z-plot bottom axis title if enabled
+            if enable_all_labels or z_plot_settings.get('bottom', True):
+                try:
+                    self.g_zplot.set_axis_title("bottom", fmt(p3_name))
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.g_zplot.set_axis_title("bottom", "")
+                except Exception:
+                    pass
+
+            # Set z-plot left axis title if enabled
+            if enable_all_labels or z_plot_settings.get('left', True):
+                try:
+                    self.g_zplot.set_axis_title("left", fmt(p3_name))
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.g_zplot.set_axis_title("left", "")
+                except Exception:
+                    pass
         else:
             # No axis label settings available, use default behavior
             # All labels are shown by default
-            self.g_yplot.set_axis_title("top", p2_name)
-            self.g_yplot.set_axis_title("right", p2_name)
-            self.g_xplot.set_axis_title("top", p1_name)
+            self.g_yplot.set_axis_title("top", fmt(p2_name))
+            self.g_yplot.set_axis_title("right", fmt(p2_name))
+            self.g_xplot.set_axis_title("top", fmt(p1_name))
+            try:
+                self.g_zplot.set_axis_title("bottom", fmt(p3_name))
+                self.g_zplot.set_axis_title("left", fmt(p3_name))
+            except Exception:
+                pass
 
     def get_bins(self, arange, scale, n_1d, n_2d):
         xmin, xmax = arange

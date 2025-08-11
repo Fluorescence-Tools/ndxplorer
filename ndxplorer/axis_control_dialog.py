@@ -201,6 +201,44 @@ class AxisControlDialog(QtWidgets.QDialog):
         label_settings_group.setLayout(label_settings_layout)
         scroll_layout.addWidget(label_settings_group)
         
+        # Font Settings group
+        font_group = QtWidgets.QGroupBox("Font Settings")
+        font_layout = QtWidgets.QFormLayout()
+        # Tick size
+        self.font_tick_size = QtWidgets.QSpinBox()
+        self.font_tick_size.setRange(6, 48)
+        self.font_tick_size.setValue(8)
+        # Title size
+        self.font_title_size = QtWidgets.QSpinBox()
+        self.font_title_size.setRange(6, 64)
+        self.font_title_size.setValue(10)
+        # Title weight (bold)
+        self.font_title_bold = QtWidgets.QCheckBox("Bold titles")
+        self.font_title_bold.setChecked(True)
+        # Title color picker
+        self.font_title_color_btn = QtWidgets.QPushButton("Pick Title Color")
+        self._font_title_color = "#000000"
+        def _update_color_btn():
+            try:
+                self.font_title_color_btn.setStyleSheet(f"background-color: {self._font_title_color}; color: white")
+                self.font_title_color_btn.setText(self._font_title_color)
+            except Exception:
+                pass
+        def _pick_color():
+            col = QtWidgets.QColorDialog.getColor(QtGui.QColor(self._font_title_color), self, "Select Title Color")
+            if col.isValid():
+                self._font_title_color = col.name()
+                _update_color_btn()
+        self.font_title_color_btn.clicked.connect(_pick_color)
+        _update_color_btn()
+        # Layout rows
+        font_layout.addRow("Tick size (pt)", self.font_tick_size)
+        font_layout.addRow("Title size (pt)", self.font_title_size)
+        font_layout.addRow(self.font_title_bold)
+        font_layout.addRow("Title color", self.font_title_color_btn)
+        font_group.setLayout(font_layout)
+        scroll_layout.addWidget(font_group)
+        
         # Finish scroll area setup
         scroll_area.setWidget(scroll_content)
         layout.addWidget(scroll_area)
@@ -298,6 +336,26 @@ class AxisControlDialog(QtWidgets.QDialog):
             
             # Update enabled state of individual checkboxes based on global setting
             self.on_enable_all_labels_changed(enable_all_labels)
+
+            # Load font settings
+            try:
+                fonts = settings.get('fonts', {})
+                # Prefer parent's current font_settings if available
+                if hasattr(self.parent, 'font_settings') and self.parent.font_settings:
+                    fonts = {**fonts, **self.parent.font_settings}
+                self.font_tick_size.setValue(int(fonts.get('tick_size_pt', 8)))
+                self.font_title_size.setValue(int(fonts.get('title_size_pt', 10)))
+                title_weight = int(fonts.get('title_weight', 700))
+                self.font_title_bold.setChecked(title_weight >= 600)
+                self._font_title_color = str(fonts.get('color', '#000000'))
+                # update button preview
+                try:
+                    self.font_title_color_btn.setStyleSheet(f"background-color: {self._font_title_color}; color: white")
+                    self.font_title_color_btn.setText(self._font_title_color)
+                except Exception:
+                    pass
+            except Exception:
+                pass
         else:
             # No axis label settings available, use defaults
             self.enable_all_labels.setChecked(True)
@@ -309,6 +367,17 @@ class AxisControlDialog(QtWidgets.QDialog):
             
             # Update enabled state of individual checkboxes
             self.on_enable_all_labels_changed(True)
+            
+            # Default font controls
+            try:
+                self.font_tick_size.setValue(8)
+                self.font_title_size.setValue(10)
+                self.font_title_bold.setChecked(True)
+                self._font_title_color = '#000000'
+                self.font_title_color_btn.setStyleSheet("background-color: #000000; color: white")
+                self.font_title_color_btn.setText('#000000')
+            except Exception:
+                pass
     
     def on_z_plot_enable_changed(self, state):
         """
@@ -406,11 +475,30 @@ class AxisControlDialog(QtWidgets.QDialog):
                         "bottom": self.z_plot_label_bottom.isChecked(),
                         "left": self.z_plot_label_left.isChecked()
                     }
+                },
+                # Font settings
+                "fonts": {
+                    "tick_size_pt": int(self.font_tick_size.value()),
+                    "title_size_pt": int(self.font_title_size.value()),
+                    "title_weight": 700 if self.font_title_bold.isChecked() else 400,
+                    "color": str(self._font_title_color)
                 }
             }
             
             # Update parent's axis_label_settings
             self.parent.axis_label_settings.update(settings)
+            
+            # Update parent's font settings
+            try:
+                if hasattr(self.parent, 'font_settings'):
+                    self.parent.font_settings.update(settings.get('fonts', {}))
+                else:
+                    self.parent.font_settings = settings.get('fonts', {})
+                # Apply fonts immediately
+                if hasattr(self.parent, 'apply_fonts'):
+                    self.parent.apply_fonts()
+            except Exception:
+                pass
             
             # Apply the changes by calling update_parameter_names
             if hasattr(self.parent, 'update_parameter_names'):
@@ -459,6 +547,13 @@ class AxisControlDialog(QtWidgets.QDialog):
                     "bottom": self.z_plot_label_bottom.isChecked(),
                     "left": self.z_plot_label_left.isChecked()
                 }
+            },
+            # Font settings
+            "fonts": {
+                "tick_size_pt": int(self.font_tick_size.value()),
+                "title_size_pt": int(self.font_title_size.value()),
+                "title_weight": 700 if self.font_title_bold.isChecked() else 400,
+                "color": str(self._font_title_color)
             }
         }
         
@@ -480,8 +575,8 @@ class AxisControlDialog(QtWidgets.QDialog):
             # Save settings to file
             with open(str(fn_axis_labels), "w") as fp:
                 # Add a header comment
-                fp.write("# Configuration for axis labels in ndxplorer\n")
-                fp.write("# This file controls whether axis labels are displayed or hidden\n\n")
+                fp.write("# Configuration for axis labels and fonts in ndxplorer\n")
+                fp.write("# axis_labels: visibility of labels; fonts: family and sizes\n\n")
                 
                 # Dump the settings as YAML
                 yaml.dump(settings, fp, default_flow_style=False, sort_keys=False)
@@ -489,14 +584,55 @@ class AxisControlDialog(QtWidgets.QDialog):
             # Update parent's axis_label_settings if it exists
             if hasattr(self.parent, 'axis_label_settings'):
                 self.parent.axis_label_settings.update(settings)
-            
-            logging.log(0, "Axis label settings saved successfully")
+            # Update parent's font_settings too and apply immediately
+            try:
+                if hasattr(self.parent, 'font_settings'):
+                    self.parent.font_settings.update(settings.get('fonts', {}))
+                else:
+                    self.parent.font_settings = settings.get('fonts', {})
+                if hasattr(self.parent, 'apply_fonts'):
+                    self.parent.apply_fonts()
+            except Exception:
+                pass
+
+            # Apply the changes by calling update_parameter_names
+            try:
+                if hasattr(self.parent, 'update_parameter_names'):
+                    self.parent.update_parameter_names()
+            except Exception:
+                pass
+
+            # Replot all plots to update the display
+            try:
+                self.parent.g_xplot.replot()
+            except Exception:
+                pass
+            try:
+                self.parent.g_yplot.replot()
+            except Exception:
+                pass
+            try:
+                if hasattr(self.parent, 'g_zplot'):
+                    self.parent.g_zplot.replot()
+            except Exception:
+                pass
+            try:
+                self.parent.g_2dplot.replot()
+            except Exception:
+                pass
+            try:
+                if hasattr(self.parent, 'overlay_plot'):
+                    self.parent.overlay_plot.replot()
+            except Exception:
+                pass
+
+            logging.log(0, "Axis label and font settings saved and applied successfully")
             
             # Show a success message
             QtWidgets.QMessageBox.information(
                 self,
                 "Settings Saved",
-                f"Axis label settings saved successfully"
+                f"Axis label and font settings saved and applied successfully"
             )
             
         except Exception as e:
