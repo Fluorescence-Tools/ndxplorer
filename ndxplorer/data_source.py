@@ -6,6 +6,7 @@ import yaml
 import abc
 import numpy as np
 import pandas as pd
+import re
 
 from collections import OrderedDict
 
@@ -54,14 +55,69 @@ def compute_values(
     if equation_json_fn is not None:
         with open(equation_json_fn, "r") as fp:
             equations = yaml.loads(fp.read(), object_pairs_hook=OrderedDict)
+
+    # Helper: preprocess an equation string to allow direct quoted names
+    def _preprocess_equation(eq_str: str) -> str:
+        if not isinstance(eq_str, str) or not eq_str:
+            return eq_str
+
+        # Build case-insensitive lookup sets
+        cols_lower = {str(col).lower() for col in d.columns}
+        consts_lower = {str(name).lower() for name in c.keys()}
+
+        # Replace occurrences of 'name' or "name" that are NOT already inside d[...] or c[...]
+        out = []
+        i = 0
+        for m in re.finditer(r"(['\"])\s*(.*?)\s*\1", eq_str):
+            s, e = m.span()
+            name = m.group(2)
+            # Append text before the match
+            out.append(eq_str[i:s])
+
+            # Determine if this quoted token is already within d[...] or c[...]
+            j = s - 1
+            # Skip whitespace backwards
+            while j >= 0 and eq_str[j].isspace():
+                j -= 1
+            is_wrapped = False
+            if j >= 0 and eq_str[j] == '[':
+                # Skip whitespace before '[' to find the preceding char
+                k = j - 1
+                while k >= 0 and eq_str[k].isspace():
+                    k -= 1
+                if k >= 0 and eq_str[k] in ('d', 'c'):
+                    is_wrapped = True
+
+            if is_wrapped:
+                # Leave as-is
+                out.append(eq_str[s:e])
+            else:
+                # Decide whether it's a data column or a constant (prefer columns)
+                lname = str(name).lower()
+                if lname in cols_lower:
+                    out.append(f"d['{name}']")
+                elif lname in consts_lower:
+                    out.append(f"c['{name}']")
+                else:
+                    # Not known: leave literal as-is to avoid breaking strings intentionally used by user
+                    out.append(eq_str[s:e])
+
+            i = e
+        # Append the tail
+        out.append(eq_str[i:])
+        return ''.join(out)
+
     # Wrap the DataFrame with case-insensitive access
     d_case_insensitive = CaseInsensitiveDict(d)
+
     for eq in equations:
         for key in eq:
             try:
+                expr = eq[key]
+                expr = _preprocess_equation(expr)
                 # Use the original DataFrame for assignment but the wrapper for evaluation
-                d[key] = pd.eval(eq[key], local_dict={'d': d_case_insensitive, 'c': c}, engine=engine)
-            except:
+                d[key] = pd.eval(expr, local_dict={'d': d_case_insensitive, 'c': c}, engine=engine)
+            except Exception:
                 pass
                 # print("Could not compute: %s" % key, file=sys.stderr)
 
