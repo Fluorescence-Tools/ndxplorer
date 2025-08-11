@@ -13,21 +13,28 @@
         "scale": "log", 
         "min": 0.1
     }, 
-    "FRET efficiency (PIE)": {
+    "FRET efficiency(PIE)": {
         "n_bins_1d": 81.0,
         "max": 1.1,
         "n_bins_2d": 31,
         "scale": "lin",
         "min": -0.1
     },
-    "Proximity ratio (PIE)": {
+    "Proximity ratio(PIE)": {
         "n_bins_1d": 81.0,
         "max": 1.0,
         "n_bins_2d": 31,
         "scale": "lin",
         "min": 0.0
     },
-    "Sapp (PIE)": {
+    "Sapp(PIE,S)": {
+        "n_bins_1d": 81.0,
+        "max": 1.0,
+        "n_bins_2d": 31,
+        "scale": "lin",
+        "min": 0.0
+    },
+    "Sapp(PIE,F)": {
         "n_bins_1d": 81.0,
         "max": 1.0,
         "n_bins_2d": 31,
@@ -103,7 +110,7 @@
         "min": 0.0, 
         "n_bins_2d": 31
     }, 
-    "Tg-Tr (ms)": {
+    "Tg-Tr(ms)": {
         "n_bins_1d": 81.0,
         "max": 1.0, 
         "scale": "lin", 
@@ -140,6 +147,34 @@
     "Total count rate green + red": {
         "n_bins_1d": 81.0,
         "max": 1000.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
+    },
+    "Sr/Sg": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
+    },
+    "Sg/Sr(PIE)": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
+    },
+    "Sg": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
+    },
+    "Sr": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
         "n_bins_2d": 31,
         "scale": "log",
         "min": 0.1
