@@ -28,14 +28,12 @@ class CaseInsensitiveDict:
             # Look for columns that contain the key as a prefix (before any separator like '|')
             if isinstance(key, str):
                 for col in self.data.columns:
-                    # Check if column starts with the key (case insensitive)
-                    if col.lower().startswith(key.lower()):
-                        return self.data[col]
-                    
-                    # Check if column starts with the key followed by a separator like ' | '
-                    # This handles cases like 'S delayed yellow (kHz)' matching 'S delayed yellow (kHz) | 2048-4096'
+                    # First, check for equality of the left part (before any '|') to be precise
                     parts = col.lower().split('|')
                     if parts and parts[0].strip() == key.lower().strip():
+                        return self.data[col]
+                    # Then fallback to startswith matching (case insensitive)
+                    if col.lower().startswith(key.lower()):
                         return self.data[col]
             
             # If no match found, fall back to original key
@@ -56,13 +54,31 @@ def compute_values(
         with open(equation_json_fn, "r") as fp:
             equations = yaml.loads(fp.read(), object_pairs_hook=OrderedDict)
 
+    # Build a set of all equation-defined keys (case-insensitive) for generous matching
+    eq_keys_lower = set()
+    try:
+        for _eq in equations or []:
+            for _k in _eq.keys():
+                eq_keys_lower.add(str(_k).lower())
+    except Exception:
+        pass
+
     # Helper: preprocess an equation string to allow direct quoted names
     def _preprocess_equation(eq_str: str) -> str:
         if not isinstance(eq_str, str) or not eq_str:
             return eq_str
 
+        # Normalization helper: take the part before '|' and strip surrounding whitespace
+        def _normalize_name(s: str) -> str:
+            try:
+                left = str(s).split('|', 1)[0]
+                return left.strip()
+            except Exception:
+                return str(s).strip()
+
         # Build case-insensitive lookup sets
-        cols_lower = {str(col).lower() for col in d.columns}
+        cols_lower_exact = {str(col).lower() for col in d.columns}
+        cols_lower_normalized = {_normalize_name(col).lower() for col in d.columns}
         consts_lower = {str(name).lower() for name in c.keys()}
 
         # Replace occurrences of 'name' or "name" that are NOT already inside d[...] or c[...]
@@ -94,7 +110,12 @@ def compute_values(
             else:
                 # Decide whether it's a data column or a constant (prefer columns)
                 lname = str(name).lower()
-                if lname in cols_lower:
+                lname_norm = _normalize_name(name).lower()
+                if (lname in cols_lower_exact) or (lname_norm in cols_lower_normalized) or (lname in eq_keys_lower):
+                    # Wrap as data column. We keep the original 'name' as written in the equation;
+                    # CaseInsensitiveDict used during eval will resolve it to the real column
+                    # (including variants like "... | 0-2048"). If it's an equation-defined key,
+                    # the column will exist by the time it is used in subsequent equations.
                     out.append(f"d['{name}']")
                 elif lname in consts_lower:
                     out.append(f"c['{name}']")
