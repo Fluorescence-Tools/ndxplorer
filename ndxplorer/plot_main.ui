@@ -493,11 +493,6 @@
      <addaction name="actionBurst_IDs"/>
      <addaction name="actionHistograms"/>
     </widget>
-    <widget class="QMenu" name="menuType_Here">
-     <property name="title">
-      <string>Type Here</string>
-     </property>
-    </widget>
     <addaction name="menuOpen_Monte_Carlo"/>
     <addaction name="separator"/>
     <addaction name="menuSave"/>
@@ -505,7 +500,6 @@
     <addaction name="actionPrint_window"/>
     <addaction name="separator"/>
     <addaction name="actionExit"/>
-    <addaction name="menuType_Here"/>
    </widget>
    <widget class="QMenu" name="menuSettings">
     <property name="title">
