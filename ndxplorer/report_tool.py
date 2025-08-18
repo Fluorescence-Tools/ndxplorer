@@ -50,20 +50,22 @@ def _default_config() -> Dict:
         "plots": [
             {
                 "type": "2d",
-                "title": "2D Histogram",
-                "x": "Proximity ratio",
-                "y": "Tau (green)",
-                "xmin": 0.0, "xmax": 1.0,
-                "ymin": 0.0, "ymax": 5.0,
-                "bins2d_x": 64, "bins2d_y": 64
+                "title": "2D Histogram (basic)",
+                "template": "2d_basic"
+                # x and y can be specified by the user in YAML; template defines only style
+            },
+            {
+                "type": "2d",
+                "title": "2D Histogram with Marginals",
+                "template": "2d_marginals"
+                # x and y can be specified by the user in YAML; template defines only style
             },
             {
                 "type": "1d",
-                "title": "1D X Histogram",
+                "title": "1D Histogram",
                 "axis": "x",  # x or y
-                "x": "Proximity ratio",
-                "xmin": 0.0, "xmax": 1.0,
-                "bins1d": 100
+                "template": "1d_basic"
+                # x or y selection is outside of the template
             }
         ]
     }
@@ -75,7 +77,7 @@ class FolderDropList(QtWidgets.QListWidget):
         self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.setAcceptDrops(True)
         self.setDragDropMode(QtWidgets.QAbstractItemView.DropOnly)
-        self.setAlternatingRowColors(True)
+        self.setAlternatingRowColors(False)
 
     def dragEnterEvent(self, event):
         md = event.mimeData()
@@ -244,6 +246,17 @@ class ReportWizard(QtWidgets.QDialog):
             self.editor.setPlainText(yaml.safe_dump(self._config, sort_keys=False))
         except Exception:
             self.editor.setPlainText("# report.yaml could not be loaded; edit and save here\n" + yaml.safe_dump(_default_config(), sort_keys=False))
+
+        # Ensure default settings (including templates) are available and load templates
+        try:
+            ensure_default_settings()
+        except Exception:
+            pass
+        self._templates: Dict[str, Dict] = {}
+        try:
+            self._templates = self._load_templates()
+        except Exception:
+            self._templates = {}
 
         # Prepare holder for axis settings (loaded on demand)
         self._axis_settings: Optional[Dict] = None
@@ -855,6 +868,35 @@ class ReportWizard(QtWidgets.QDialog):
                 continue
         return discovered
 
+    def _load_templates(self) -> Dict[str, Dict]:
+        """Load plot templates from settings/templates directory.
+        Returns a mapping: template_name -> template_dict
+        """
+        templates: Dict[str, Dict] = {}
+        try:
+            base = get_settings_path() / 'templates'
+        except Exception:
+            base = Path(__file__).parent / 'settings' / 'templates'
+        if base.exists() and base.is_dir():
+            for f in base.iterdir():
+                if not f.is_file():
+                    continue
+                name = f.stem.lower()
+                try:
+                    if f.suffix.lower() in ('.yaml', '.yml'):
+                        with open(f, 'r', encoding='utf-8') as fh:
+                            data = yaml.safe_load(fh)
+                    elif f.suffix.lower() == '.json':
+                        with open(f, 'r', encoding='utf-8') as fh:
+                            data = json.load(fh)
+                    else:
+                        continue
+                    if isinstance(data, dict) and data.get('renderer'):
+                        templates[name] = data
+                except Exception:
+                    continue
+        return templates
+
     # Generation
     def _on_generate(self):
         # Read config from YAML editor
@@ -1066,13 +1108,39 @@ class ReportWizard(QtWidgets.QDialog):
                 # Image via matplotlib
                 img_path = report_dir / f"{idx_plot:02d}_{safe_title}_2d_x-{x_tok}_y-{y_tok}.png"
                 try:
-                    self._save_2d_png(
-                        img_path,
-                        H, x_edges, y_edges,
-                        title=title,
-                        xlabel=x_label,
-                        ylabel=y_label
-                    )
+                    template_name = (p.get("template") or "2d_basic").lower()
+                    tpl = self._templates.get(template_name)
+                    renderer = None
+                    style = {}
+                    if isinstance(tpl, dict):
+                        renderer = tpl.get('renderer')
+                        style = tpl.get('style') or {}
+                    # Fallback to template_name when renderer missing
+                    renderer = (renderer or template_name or '2d_basic').lower()
+                    if renderer in ("2d_marginals", "hist2d_marginals", "2d_with_marginals"):
+                        self._save_2d_marginals_png(
+                            img_path,
+                            H, x_edges, y_edges,
+                            title=title,
+                            xlabel=x_label,
+                            ylabel=y_label,
+                            cmap_2d=style.get('cmap_2d', 'Greys'),
+                            color_x=style.get('color_x', 'dimgrey'),
+                            color_y=style.get('color_y', 'darkorange'),
+                            figsize=style.get('figsize'),
+                            dpi=style.get('dpi')
+                        )
+                    else:
+                        self._save_2d_png(
+                            img_path,
+                            H, x_edges, y_edges,
+                            title=title,
+                            xlabel=x_label,
+                            ylabel=y_label,
+                            cmap=style.get('cmap', 'viridis'),
+                            figsize=style.get('figsize'),
+                            dpi=style.get('dpi')
+                        )
                 except Exception as e:
                     QtWidgets.QMessageBox.warning(self, "Plot error", f"Failed to render 2D plot with matplotlib: {e}")
                 # Queue this plot for table assembly later
@@ -1119,12 +1187,22 @@ class ReportWizard(QtWidgets.QDialog):
                 self._save_1d_csv(csv_path, edges, counts)
                 img_path = report_dir / f"{idx_plot:02d}_{safe_title}_1d_{axis}-{a_tok}.png"
                 try:
+                    template_name = (p.get("template") or "1d_basic").lower()
+                    tpl = self._templates.get(template_name)
+                    style = {}
+                    if isinstance(tpl, dict):
+                        style = tpl.get('style') or {}
                     self._save_1d_png(
                         img_path,
                         edges, counts,
                         title=title,
                         xlabel=a_label,
-                        ylabel="Count"
+                        ylabel=style.get('ylabel', 'Count'),
+                        color=style.get('color'),
+                        edgecolor=style.get('edgecolor'),
+                        linewidth=style.get('linewidth'),
+                        figsize=style.get('figsize'),
+                        dpi=style.get('dpi')
                     )
                 except Exception as e:
                     QtWidgets.QMessageBox.warning(self, "Plot error", f"Failed to render 1D plot with matplotlib: {e}")
@@ -1243,7 +1321,9 @@ class ReportWizard(QtWidgets.QDialog):
 
     @staticmethod
     def _save_1d_png(img_path: Path, edges, counts, title: str, xlabel: str, ylabel: str = "Count",
-                      xmin: Optional[float] = None, xmax: Optional[float] = None) -> None:
+                     xmin: Optional[float] = None, xmax: Optional[float] = None,
+                     color: Optional[str] = None, edgecolor: Optional[str] = None, linewidth: Optional[float] = None,
+                     figsize: Optional[List[float]] = None, dpi: Optional[int] = None) -> None:
         """Render a 1D histogram figure using matplotlib and save as PNG."""
         if plt is None:
             raise RuntimeError("matplotlib is not available for plotting")
@@ -1252,8 +1332,13 @@ class ReportWizard(QtWidgets.QDialog):
         counts = np.asarray(counts, dtype=float)
         centers = (edges[:-1] + edges[1:]) / 2
         widths = np.diff(edges)
-        fig, ax = plt.subplots(figsize=(6, 4), dpi=150)
-        ax.bar(centers, counts, width=widths, align='center', edgecolor='black', linewidth=0.2, color='#4477aa')
+        fig_size = tuple(figsize) if isinstance(figsize, (list, tuple)) and len(figsize) == 2 else (6, 4)
+        fig_dpi = int(dpi) if dpi else 150
+        ec = edgecolor if edgecolor is not None else 'black'
+        lw = float(linewidth) if linewidth is not None else 0.2
+        col = color if color is not None else '#4477aa'
+        fig, ax = plt.subplots(figsize=fig_size, dpi=fig_dpi)
+        ax.bar(centers, counts, width=widths, align='center', edgecolor=ec, linewidth=lw, color=col)
         ax.set_title(title)
         ax.set_xlabel(xlabel or "")
         ax.set_ylabel(ylabel)
@@ -1267,9 +1352,9 @@ class ReportWizard(QtWidgets.QDialog):
 
     @staticmethod
     def _save_2d_png(img_path: Path, H, x_edges, y_edges, title: str, xlabel: str, ylabel: str,
-                      xmin: Optional[float] = None, xmax: Optional[float] = None,
-                      ymin: Optional[float] = None, ymax: Optional[float] = None,
-                      cmap: str = 'viridis') -> None:
+                     xmin: Optional[float] = None, xmax: Optional[float] = None,
+                     ymin: Optional[float] = None, ymax: Optional[float] = None,
+                     cmap: str = 'viridis', figsize: Optional[List[float]] = None, dpi: Optional[int] = None) -> None:
         """Render a 2D histogram density figure using matplotlib and save as PNG."""
         if plt is None:
             raise RuntimeError("matplotlib is not available for plotting")
@@ -1278,7 +1363,9 @@ class ReportWizard(QtWidgets.QDialog):
         x_edges = np.asarray(x_edges, dtype=float)
         y_edges = np.asarray(y_edges, dtype=float)
         extent = [x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]]
-        fig, ax = plt.subplots(figsize=(6, 5), dpi=150)
+        fig_size = tuple(figsize) if isinstance(figsize, (list, tuple)) and len(figsize) == 2 else (6, 5)
+        fig_dpi = int(dpi) if dpi else 150
+        fig, ax = plt.subplots(figsize=fig_size, dpi=fig_dpi)
         im = ax.imshow(H.T, origin='lower', aspect='auto', extent=extent, cmap=cmap)
         cbar = fig.colorbar(im, ax=ax)
         cbar.set_label('Density')
@@ -1293,6 +1380,60 @@ class ReportWizard(QtWidgets.QDialog):
                         top=ymax if ymax is not None else ax.get_ylim()[1])
         ax.grid(False)
         fig.tight_layout()
+        fig.savefig(str(img_path), bbox_inches='tight', facecolor='white')
+        plt.close(fig)
+
+    @staticmethod
+    def _save_2d_marginals_png(img_path: Path, H, x_edges, y_edges, title: str, xlabel: str, ylabel: str,
+                               cmap_2d: str = 'Greys', color_x: str = 'dimgrey', color_y: str = 'darkorange',
+                               figsize: Optional[List[float]] = None, dpi: Optional[int] = None) -> None:
+        """Render a 2D histogram with top/right marginal histograms and save as PNG.
+        This template is range-agnostic and data-agnostic; it uses provided H and edges only.
+        """
+        if plt is None:
+            raise RuntimeError("matplotlib is not available for plotting")
+        import numpy as np
+        H = np.asarray(H, dtype=float)
+        x_edges = np.asarray(x_edges, dtype=float)
+        y_edges = np.asarray(y_edges, dtype=float)
+        x_centers = (x_edges[:-1] + x_edges[1:]) / 2.0
+        y_centers = (y_edges[:-1] + y_edges[1:]) / 2.0
+        # Marginals: sum over the other axis
+        # H shape is (len(x_bins), len(y_bins)) based on CSV saver orientation
+        x_marg = H.sum(axis=1)
+        y_marg = H.sum(axis=0)
+        # Layout via GridSpec
+        from matplotlib.gridspec import GridSpec
+        fig_size = tuple(figsize) if isinstance(figsize, (list, tuple)) and len(figsize) == 2 else (8, 8)
+        fig_dpi = int(dpi) if dpi else 150
+        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
+        gs = GridSpec(2, 2, width_ratios=[4, 1.2], height_ratios=[1.2, 4], hspace=0.05, wspace=0.05)
+        ax_scatter = fig.add_subplot(gs[1, 0])
+        ax_histx = fig.add_subplot(gs[0, 0], sharex=ax_scatter)
+        ax_histy = fig.add_subplot(gs[1, 1], sharey=ax_scatter)
+        # 2D image in the main axes
+        extent = [x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]]
+        im = ax_scatter.imshow(H.T, origin='lower', aspect='auto', extent=extent, cmap=cmap_2d)
+        # Marginals as bar plots
+        ax_histx.bar(x_centers, x_marg, width=np.diff(x_edges), color=color_x, edgecolor='black', linewidth=0.2)
+        ax_histy.barh(y_centers, y_marg, height=np.diff(y_edges), color=color_y, edgecolor='black', linewidth=0.2)
+        # Labels and ticks
+        ax_scatter.set_xlabel(xlabel or "")
+        ax_scatter.set_ylabel(ylabel or "")
+        ax_histx.tick_params(axis='x', labelbottom=False)
+        ax_histy.tick_params(axis='y', labelleft=False)
+        # Clean grids
+        ax_histx.grid(False)
+        ax_histy.grid(False)
+        ax_scatter.grid(False)
+        # Colorbar for 2D
+        cbar = fig.add_axes([0.92, 0.1, 0.02, 0.55])  # manual position to the right
+        cb = fig.colorbar(im, cax=cbar)
+        cb.set_label('Counts')
+        # Title at top
+        fig.suptitle(title, y=0.98)
+        # Tight layout without overlapping title
+        fig.tight_layout(rect=[0.0, 0.0, 0.9, 0.96])
         fig.savefig(str(img_path), bbox_inches='tight', facecolor='white')
         plt.close(fig)
 

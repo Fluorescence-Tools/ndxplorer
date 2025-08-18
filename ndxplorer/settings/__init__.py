@@ -48,7 +48,7 @@ def ensure_default_settings():
     Ensure that default settings files exist in the user's settings folder.
     
     If the settings folder doesn't exist or is empty, copy the default settings
-    from the ndxplorer module directory.
+    from the ndxplorer module directory, including the 'templates' subfolder.
     """
     settings_path = get_settings_path()
     default_settings_path = pathlib.Path(__file__).parent
@@ -60,8 +60,15 @@ def ensure_default_settings():
     # Check if settings files exist in the user's settings folder
     settings_files = list(settings_path.glob('*.json')) + list(settings_path.glob('*.yaml'))
     
-    # If no settings files exist, copy the default settings
+    # If no settings files exist, copy the default settings files in root
     if not settings_files:
         for file in default_settings_path.iterdir():
             if file.is_file() and (file.suffix == '.json' or file.suffix == '.yaml'):
                 shutil.copy2(file, settings_path / file.name)
+    
+    # Ensure templates directory exists and copy defaults if missing
+    src_templates = default_settings_path / 'templates'
+    dst_templates = settings_path / 'templates'
+    if src_templates.exists() and src_templates.is_dir():
+        if not dst_templates.exists():
+            shutil.copytree(src_templates, dst_templates)

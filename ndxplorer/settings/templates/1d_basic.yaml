@@ -1,0 +1,10 @@
+# ndxplorer plot template: 1d_basic
+# Layout/style only. No data columns or ranges here.
+renderer: 1d_basic
+style:
+  color: "#4477aa"
+  edgecolor: black
+  linewidth: 0.2
+  figsize: [6, 4]
+  dpi: 150
+  ylabel: Count

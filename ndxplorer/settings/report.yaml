@@ -1,0 +1,10 @@
+plots:
+- type: 2d
+  title: 2D Histogram
+  x: Proximity ratio
+  y: Tg-Tr(ms)
+  template: 2d_marginals
+- type: 1d
+  title: 1D X Histogram
+  x: Proximity ratio
+  template: 1d_basic
