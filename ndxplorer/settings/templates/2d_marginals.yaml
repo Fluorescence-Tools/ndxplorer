@@ -1,0 +1,9 @@
+# ndxplorer plot template: 2d_marginals
+# Layout/style only. No data columns or ranges here.
+renderer: 2d_marginals
+style:
+  cmap_2d: Greys
+  color_x: dimgrey
+  color_y: darkorange
+  figsize: [8, 8]
+  dpi: 150

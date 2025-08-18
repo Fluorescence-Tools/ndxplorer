@@ -497,6 +497,7 @@
     <addaction name="separator"/>
     <addaction name="menuSave"/>
     <addaction name="separator"/>
+    <addaction name="actionMake_Report"/>
     <addaction name="actionPrint_window"/>
     <addaction name="separator"/>
     <addaction name="actionExit"/>
@@ -885,6 +886,11 @@
    </property>
    <property name="toolTip">
     <string>Control the visibility of axes in plots</string>
+   </property>
+  </action>
+  <action name="actionMake_Report">
+   <property name="text">
+    <string>Make Report</string>
    </property>
   </action>
  </widget>
