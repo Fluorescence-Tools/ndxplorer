@@ -624,6 +624,9 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.verticalLayout_15.addWidget(self.equation_editor)
         self.verticalLayout_10.addWidget(self.curve_overlay_widget)
 
+        # Report tool
+        self.actionMake_Report.triggered.connect(self.onShowReportWizard)
+
         # Enable drag & drop on working path line edit
         try:
             self._install_working_path_drop()
@@ -1292,6 +1295,15 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.clustering_dialog._cluster_columns,
             params
         )
+
+    def onShowReportWizard(self):
+        """Open the Report Tool dialog."""
+        try:
+            from .report_tool import ReportWizard
+            dlg = ReportWizard(parent=self)
+            dlg.exec_()
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Report Tool Error", str(e))
 
     def onSelectWorkingPath(self):
         working_path = QtWidgets.QFileDialog.getExistingDirectory(None, 'Select current path', self.working_path)
