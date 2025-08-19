@@ -1,10 +1,15 @@
 plots:
 - type: 2d
-  title: 2D Histogram
+  title: Proximity ratio vs. Tg-Tr(ms)
   x: Proximity ratio
   y: Tg-Tr(ms)
   template: 2d_marginals
 - type: 1d
-  title: 1D X Histogram
+  title: Proximity ratio / FRET ratio
   x: Proximity ratio
   template: 1d_basic
+- type: 2d
+  title: Count rates
+  x: Green Count Rate (KHz)
+  y: Red Count Rate (KHz)
+  template: 2d_basic

@@ -8,7 +8,7 @@ import re
 import shutil
 
 from PyQt5 import QtWidgets, QtCore
-from PyQt5.QtGui import QIcon, QPixmap
+from PyQt5.QtGui import QIcon, QPixmap, QColor, QBrush
 
 from . import reader
 from .plot_main import NDXplorer
@@ -78,6 +78,40 @@ class FolderDropList(QtWidgets.QListWidget):
         self.setAcceptDrops(True)
         self.setDragDropMode(QtWidgets.QAbstractItemView.DropOnly)
         self.setAlternatingRowColors(False)
+        # Enable standard custom context menu handling
+        try:
+            self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            self.customContextMenuRequested.connect(self._on_context_menu)
+        except Exception:
+            pass
+
+    def _copy_selected_paths(self) -> None:
+        try:
+            items = self.selectedItems()
+            if not items and self.count() > 0:
+                # If nothing selected, copy the item under the cursor (fallback)
+                idx = self.currentRow()
+                if idx >= 0:
+                    items = [self.item(idx)]
+            paths = [it.text() for it in items] if items else []
+            if not paths:
+                return
+            txt = "\n".join(paths)
+            cb = QtWidgets.QApplication.clipboard()
+            cb.setText(txt)
+        except Exception:
+            pass
+
+    def _on_context_menu(self, pos):
+        try:
+            menu = QtWidgets.QMenu(self)
+            act_copy = menu.addAction("Copy Path(s)")
+            global_pos = self.mapToGlobal(pos)
+            action = menu.exec_(global_pos)
+            if action == act_copy:
+                self._copy_selected_paths()
+        except Exception:
+            pass
 
     def dragEnterEvent(self, event):
         md = event.mimeData()
@@ -124,6 +158,12 @@ class FolderDropList(QtWidgets.QListWidget):
                 QtWidgets.QMessageBox.information(self, "No analysis folders found", "No analysis folders were found in the dropped directory/directories.")
             except Exception:
                 pass
+        # Refresh highlight colors after adding
+        try:
+            if hasattr(wizard, '_refresh_folder_highlights'):
+                wizard._refresh_folder_highlights()
+        except Exception:
+            pass
         event.acceptProposedAction()
 
     def filenames(self) -> List[str]:
@@ -220,19 +260,35 @@ class ReportWizard(QtWidgets.QDialog):
         self.btn_generate.clicked.connect(self._on_generate)
         self.btn_clear_reports.clicked.connect(self._on_clear_reports)
 
-        # Initialize default report config in ndxplorer/settings folder (within the module)
-        module_settings_path = Path(__file__).parent / 'settings'
-        self._default_cfg_path = module_settings_path / 'report.yaml'
+        # Initialize default report config in USER settings folder
+        user_settings_path = get_settings_path()
+        self._default_cfg_path = user_settings_path / 'report.yaml'
         try:
-            module_settings_path.mkdir(parents=True, exist_ok=True)
-            # If no default report exists in module settings, create it from built-in defaults
+            user_settings_path.mkdir(parents=True, exist_ok=True)
+            # If no user report.yaml exists, try to seed it from the bundled module default
             if not self._default_cfg_path.exists():
-                with open(self._default_cfg_path, 'w', encoding='utf-8') as f:
-                    yaml.safe_dump(self._config, f, sort_keys=False)
+                bundled = Path(__file__).parent / 'settings' / 'report.yaml'
+                try:
+                    if bundled.exists():
+                        with open(bundled, 'r', encoding='utf-8') as f_in:
+                            bundled_cfg = yaml.safe_load(f_in)
+                        if isinstance(bundled_cfg, dict) and 'plots' in bundled_cfg:
+                            with open(self._default_cfg_path, 'w', encoding='utf-8') as f_out:
+                                yaml.safe_dump(bundled_cfg, f_out, sort_keys=False)
+                        else:
+                            raise ValueError('Bundled report.yaml invalid')
+                    else:
+                        # Fallback to the built-in default config
+                        with open(self._default_cfg_path, 'w', encoding='utf-8') as f_out:
+                            yaml.safe_dump(self._config, f_out, sort_keys=False)
+                except Exception:
+                    # On any error, write the in-memory default
+                    with open(self._default_cfg_path, 'w', encoding='utf-8') as f_out:
+                        yaml.safe_dump(self._config, f_out, sort_keys=False)
         except Exception:
             # If creating file fails, continue with in-memory defaults
             pass
-        # Load module settings default if present and show in editor
+        # Load user settings default if present and show in editor
         try:
             if self._default_cfg_path.exists():
                 with open(self._default_cfg_path, 'r', encoding='utf-8') as f:
@@ -258,6 +314,12 @@ class ReportWizard(QtWidgets.QDialog):
         except Exception:
             self._templates = {}
 
+        # Highlight folders initially (safe even if list is empty)
+        try:
+            self._refresh_folder_highlights()
+        except Exception:
+            pass
+
         # Prepare holder for axis settings (loaded on demand)
         self._axis_settings: Optional[Dict] = None
 
@@ -268,6 +330,9 @@ class ReportWizard(QtWidgets.QDialog):
         # Wire image browsing signals
         try:
             self.image_combo.currentIndexChanged.connect(self._on_image_combo_changed)
+            # Context menu to copy current image path
+            self.image_combo.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            self.image_combo.customContextMenuRequested.connect(self._on_image_combo_context_menu)
         except Exception:
             pass
 
@@ -377,10 +442,18 @@ class ReportWizard(QtWidgets.QDialog):
         if d:
             if not any(self.folder_list.item(i).text() == d for i in range(self.folder_list.count())):
                 self.folder_list.addItem(d)
+                try:
+                    self._refresh_folder_highlights()
+                except Exception:
+                    pass
 
     def _on_remove_folder(self):
         for it in self.folder_list.selectedItems():
             self.folder_list.takeItem(self.folder_list.row(it))
+        try:
+            self._refresh_folder_highlights()
+        except Exception:
+            pass
 
     def _on_clear_folders(self):
         """Clear all folders from the list (with confirmation)."""
@@ -400,6 +473,10 @@ class ReportWizard(QtWidgets.QDialog):
             # If message box fails for any reason, proceed to clear
             pass
         self.folder_list.clear()
+        try:
+            self._refresh_folder_highlights()
+        except Exception:
+            pass
 
     def _on_clear_reports(self):
         """Delete the generated 'report' folders for the selected (or all) analysis folders."""
@@ -468,6 +545,11 @@ class ReportWizard(QtWidgets.QDialog):
                 QtWidgets.QMessageBox.information(self, "Reports cleared", f"Cleared reports for {cleared} folder(s).")
             else:
                 QtWidgets.QMessageBox.information(self, "Nothing to clear", "No report folders were found to delete.")
+        except Exception:
+            pass
+        # Refresh folder highlights to reflect cleared reports
+        try:
+            self._refresh_folder_highlights()
         except Exception:
             pass
 
@@ -711,6 +793,24 @@ class ReportWizard(QtWidgets.QDialog):
         except Exception:
             pass
 
+    def _on_image_combo_context_menu(self, pos):
+        try:
+            if self.image_combo.count() <= 0:
+                return
+            idx = self.image_combo.currentIndex()
+            if idx < 0:
+                return
+            # Retrieve stored path from item data; fallback to displayed text
+            path_str = self.image_combo.itemData(idx) or self.image_combo.itemText(idx)
+            menu = QtWidgets.QMenu(self.image_combo)
+            act_copy = menu.addAction("Copy Image Path")
+            global_pos = self.image_combo.mapToGlobal(pos)
+            action = menu.exec_(global_pos)
+            if action == act_copy and path_str:
+                QtWidgets.QApplication.clipboard().setText(str(path_str))
+        except Exception:
+            pass
+
     def _display_image_at_index(self, index: int, sync_combo: bool = False):
         if index < 0 or index >= len(self._image_paths):
             return
@@ -799,6 +899,71 @@ class ReportWizard(QtWidgets.QDialog):
             self.image_combo.clear()
             self.image_preview.setText('No images found')
             self.image_preview.setPixmap(QPixmap())
+
+    # ---- Processed-folder highlighting helpers ----
+    def _is_folder_processed(self, folder: Path) -> bool:
+        """Return True if the analysis folder appears to have reports generated.
+        Criteria: presence of a report directory containing PNGs or axes_info.yaml,
+        or a DOCX report inside the report directory.
+        """
+        try:
+            folder = Path(folder)
+            if not folder.exists() or not folder.is_dir():
+                return False
+            # Look for common report directory names
+            report_dir = None
+            for name in ("report", "Report", "REPORT"):
+                p = folder / name
+                if p.exists() and p.is_dir():
+                    report_dir = p
+                    break
+            if report_dir is None:
+                return False
+            # Check for typical outputs
+            try:
+                for name in os.listdir(str(report_dir)):
+                    low = name.lower()
+                    if low.endswith('.png'):
+                        return True
+                    if low == 'axes_info.yaml':
+                        return True
+                    if low.endswith('.docx'):
+                        return True
+            except Exception:
+                pass
+            return False
+        except Exception:
+            return False
+
+    def _set_item_processed_style(self, item: QtWidgets.QListWidgetItem, processed: bool) -> None:
+        try:
+            if processed:
+                # light green background, dark text
+                bg = QBrush(QColor(212, 237, 218))  # #d4edda
+                fg = QBrush(QColor(33, 37, 41))     # #212529
+                item.setBackground(bg)
+                item.setForeground(fg)
+            else:
+                # Reset to default
+                item.setBackground(QBrush())
+                item.setForeground(QBrush())
+        except Exception:
+            pass
+
+    def _refresh_folder_highlights(self) -> None:
+        try:
+            for i in range(self.folder_list.count()):
+                it = self.folder_list.item(i)
+                p = Path(it.text())
+                processed = self._is_folder_processed(p)
+                self._set_item_processed_style(it, processed)
+                try:
+                    tip = f"Processed: {'Yes' if processed else 'No'}\n{str(p)}"
+                    it.setToolTip(tip)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     # Analysis folder discovery helpers
     def _is_analysis_folder(self, p: Path) -> bool:
@@ -915,83 +1080,225 @@ class ReportWizard(QtWidgets.QDialog):
             return
         # Expand by discovering analysis folders recursively
         targets = self._discover_analysis_folders(roots)
+        # Case 1: none discovered at all
         if not targets:
             QtWidgets.QMessageBox.warning(self, "No analysis folders found", "No valid analysis subfolders were found. Please check your selection.")
             return
-        # Create one hidden NDXplorer instance for reuse
-        ndx = NDXplorer(parent=None)
-        ndx.hide()
+        # Skip folders that already have a report
+        try:
+            targets = [t for t in targets if not self._is_folder_processed(t)]
+        except Exception:
+            # If any error occurs during check, proceed without filtering
+            targets = targets
+        # Case 2: all discovered folders already processed
+        if not targets:
+            QtWidgets.QMessageBox.information(self, "Nothing to do", "All selected analysis folders already have a report. Nothing to generate.")
+            return
+        # Start cooperative generation to keep UI responsive
+        self._start_generation(cfg, targets)
 
-        results = []
-        for folder in targets:
+    def _start_generation(self, cfg: Dict, targets: List[Path]) -> None:
+        # Guard against re-entry
+        if getattr(self, '_gen_running', False):
+            return
+        self._gen_running = True
+        # Create one hidden NDXplorer instance for reuse (must live on GUI thread)
+        self._gen_ndx = NDXplorer(parent=None)
+        try:
+            self._gen_ndx.hide()
+        except Exception:
+            pass
+        # Initialize state
+        self._gen_cfg = cfg
+        self._gen_targets = list(targets)
+        self._gen_total = len(self._gen_targets)
+        self._gen_index = 0
+        self._gen_results = []
+        self._gen_canceled = False
+        # Setup progress dialog
+        self._gen_progress = None
+        try:
+            self._gen_progress = QtWidgets.QProgressDialog("Generating reports...", "Cancel", 0, self._gen_total, self)
+            self._gen_progress.setWindowTitle("Generating")
+            self._gen_progress.setWindowModality(QtCore.Qt.WindowModal)
+            self._gen_progress.setAutoClose(False)
+            self._gen_progress.setAutoReset(False)
+            self._gen_progress.show()
+        except Exception:
+            self._gen_progress = None
+        # Disable buttons during generation
+        try:
+            self.btn_generate.setEnabled(False)
+            self.btn_clear_reports.setEnabled(False)
+            self.btn_add_folder.setEnabled(False)
+            self.btn_remove_folder.setEnabled(False)
+            self.btn_clear_folders.setEnabled(False)
+        except Exception:
+            pass
+        # Kick off first slice on the event loop
+        QtCore.QTimer.singleShot(0, self._process_next_target)
+
+    def _process_next_target(self) -> None:
+        # If canceled by user
+        try:
+            if self._gen_progress and self._gen_progress.wasCanceled():
+                self._gen_canceled = True
+        except Exception:
+            pass
+        # If finished or canceled
+        if self._gen_canceled or self._gen_index >= self._gen_total:
+            # Close progress
             try:
-                res = self._generate_for_folder(ndx, folder, cfg)
-                if res:
-                    results.append(res)
-            except Exception as e:
-                QtWidgets.QMessageBox.critical(self, "Error", f"Error for {folder}: {e}")
-
-        # If multiple folders, offer to create a combined final report
-        if len(results) > 1:
-            if Document is None:
-                QtWidgets.QMessageBox.warning(self, "python-docx missing",
-                                              "python-docx is not installed. Skipping combined final report.")
-            else:
-                suggested = str(Path(results[0]['folder']).parent / "NDXplorer_Final_Report.docx")
-                fn, _ = QtWidgets.QFileDialog.getSaveFileName(
-                    self,
-                    "Save Final Combined Report",
-                    suggested,
-                    "DOCX (*.docx)"
-                )
-                if fn:
+                if self._gen_progress:
+                    self._gen_progress.close()
+            except Exception:
+                pass
+            # Re-enable buttons
+            try:
+                self.btn_generate.setEnabled(True)
+                self.btn_clear_reports.setEnabled(True)
+                self.btn_add_folder.setEnabled(True)
+                self.btn_remove_folder.setEnabled(True)
+                self.btn_clear_folders.setEnabled(True)
+            except Exception:
+                pass
+            # If multiple folders, offer to create a combined final report
+            results = getattr(self, '_gen_results', []) or []
+            if len(results) > 1:
+                if Document is None:
                     try:
-                        final_doc = Document()
-                        final_doc.add_heading("NDXplorer Final Report", level=1)
-                        for res in results:
-                            # Section heading per folder
-                            final_doc.add_heading(f"Folder: {Path(res['folder']).name}", level=2)
-                            final_doc.add_paragraph(str(Path(res['folder']).resolve()))
-                            entries = res.get('entries', [])
-                            # Make 2-column tables of plots (title, image, filepaths)
-                            for i in range(0, len(entries), 2):
-                                table = final_doc.add_table(rows=3, cols=2)
-                                for col in range(2):
-                                    idx = i + col
-                                    top_cell = table.cell(0, col)
-                                    mid_cell = table.cell(1, col)
-                                    bot_cell = table.cell(2, col)
-                                    if idx < len(entries):
-                                        entry = entries[idx]
-                                        top_cell.text = entry.get("title", "")
-                                        p = mid_cell.paragraphs[0]
-                                        r = p.add_run()
-                                        img_path = entry.get("img", "")
-                                        try:
-                                            r.add_picture(img_path, width=Inches(3.0))
-                                        except Exception:
-                                            p.add_run(img_path)
-                                        # Back-references: image and CSV filepaths
-                                        csv_path = entry.get("csv", "")
-                                        bot_lines = []
-                                        if csv_path:
-                                            bot_lines.append(f"CSV:   {csv_path}")
-                                        bot_cell.text = "\n".join(bot_lines) if bot_lines else ""
-                                    else:
-                                        top_cell.text = ""
-                                        try:
-                                            mid_cell.text = ""
-                                        except Exception:
-                                            pass
-                                        bot_cell.text = ""
-                                final_doc.add_paragraph("")
-                        # Ensure .docx extension
-                        out_fn = fn if fn.lower().endswith('.docx') else fn + '.docx'
-                        final_doc.save(out_fn)
+                        QtWidgets.QMessageBox.warning(self, "python-docx missing",
+                                                      "python-docx is not installed. Skipping combined final report.")
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        suggested = str(Path(results[0]['folder']).parent / "NDXplorer_Batch_Report.docx")
+                        fn, _ = QtWidgets.QFileDialog.getSaveFileName(
+                            self,
+                            "Save Final Combined Report",
+                            suggested,
+                            "DOCX (*.docx)"
+                        )
+                        if fn:
+                            final_doc = Document()
+                            final_doc.add_heading("NDXplorer Batch Report", level=1)
+                            for res in results:
+                                # Section heading per folder (use parent folder name)
+                                folder_path = Path(res['folder'])
+                                sample_name = folder_path.parent.name if folder_path.parent else folder_path.name
+                                final_doc.add_heading(f"Sample: {sample_name}", level=2)
+                                # Place the full analysis folder path below the title
+                                final_doc.add_paragraph(str(folder_path.resolve()))
+                                entries = res.get('entries', [])
+                                # Make 2-column tables of plots (title, image, filepaths)
+                                for i in range(0, len(entries), 2):
+                                    table = final_doc.add_table(rows=3, cols=2)
+                                    for col in range(2):
+                                        idx = i + col
+                                        top_cell = table.cell(0, col)
+                                        mid_cell = table.cell(1, col)
+                                        bot_cell = table.cell(2, col)
+                                        if idx < len(entries):
+                                            entry = entries[idx]
+                                            top_cell.text = entry.get("title", "")
+                                            p = mid_cell.paragraphs[0]
+                                            r = p.add_run()
+                                            img_path = entry.get("img", "")
+                                            try:
+                                                r.add_picture(img_path, width=Inches(3.0))
+                                            except Exception:
+                                                p.add_run(img_path)
+                                            # Back-references: image and CSV filepaths
+                                            csv_path = entry.get("csv", "")
+                                            bot_lines = []
+                                            if csv_path:
+                                                bot_lines.append(f"CSV:   {csv_path}")
+                                            bot_cell.text = "\n".join(bot_lines) if bot_lines else ""
+                                        else:
+                                            top_cell.text = ""
+                                            try:
+                                                mid_cell.text = ""
+                                            except Exception:
+                                                pass
+                                            bot_cell.text = ""
+                                    final_doc.add_paragraph("")
+                            # Ensure .docx extension
+                            out_fn = fn if fn.lower().endswith('.docx') else fn + '.docx'
+                            final_doc.save(out_fn)
                     except Exception as e:
-                        QtWidgets.QMessageBox.critical(self, "Final Report Error", str(e))
-
-        QtWidgets.QMessageBox.information(self, "Done", "Reports generated.")
+                        try:
+                            QtWidgets.QMessageBox.critical(self, "Final Report Error", str(e))
+                        except Exception:
+                            pass
+            # Refresh highlights
+            try:
+                self._refresh_folder_highlights()
+            except Exception:
+                pass
+            # Inform user
+            try:
+                if self._gen_canceled:
+                    QtWidgets.QMessageBox.information(self, "Canceled", "Generation canceled.")
+                else:
+                    QtWidgets.QMessageBox.information(self, "Done", "Reports generated.")
+            except Exception:
+                pass
+            # Cleanup state
+            self._gen_running = False
+            self._gen_targets = []
+            self._gen_index = 0
+            self._gen_total = 0
+            self._gen_cfg = {}
+            self._gen_progress = None
+            try:
+                self._gen_ndx = None
+            except Exception:
+                pass
+            return
+        # Process one folder slice
+        folder = self._gen_targets[self._gen_index]
+        # Update progress pre-label and bar
+        try:
+            if self._gen_progress:
+                self._gen_progress.setLabelText(f"Processing: {folder}")
+                self._gen_progress.setValue(self._gen_index)
+                QtWidgets.QApplication.processEvents()
+        except Exception:
+            pass
+        # Do the work for this folder
+        try:
+            res = self._generate_for_folder(self._gen_ndx, folder, self._gen_cfg)
+            if res:
+                self._gen_results.append(res)
+            # Update highlight immediately for this item
+            try:
+                for idx in range(self.folder_list.count()):
+                    it = self.folder_list.item(idx)
+                    if it and it.text() == str(folder):
+                        self._set_item_processed_style(it, True)
+                        try:
+                            it.setToolTip(f"Processed: Yes\n{it.text()}")
+                        except Exception:
+                            pass
+                        break
+            except Exception:
+                pass
+        except Exception as e:
+            try:
+                QtWidgets.QMessageBox.critical(self, "Error", f"Error for {folder}: {e}")
+            except Exception:
+                pass
+        # Advance index and update progress bar to reflect completion of this item
+        self._gen_index += 1
+        try:
+            if self._gen_progress:
+                self._gen_progress.setValue(self._gen_index)
+                QtWidgets.QApplication.processEvents()
+        except Exception:
+            pass
+        # Schedule the next folder to keep UI responsive
+        QtCore.QTimer.singleShot(0, self._process_next_target)
 
     def _generate_for_folder(self, ndx: NDXplorer, folder: Path, cfg: Dict):
         if not folder.exists():
@@ -1035,8 +1342,11 @@ class ReportWizard(QtWidgets.QDialog):
         axes_meta: List[Dict[str, object]] = []
         if Document is not None:
             doc = Document()
-            doc.add_heading(f"NDXplorer Report: {folder.name}", level=1)
+            # Use parent folder name as the sample title, as requested
+            sample_name = folder.parent.name if folder.parent else folder.name
+            doc.add_heading(f"NDXplorer Report: {sample_name}", level=1)
             try:
+                # Place the full path below the title as normal text
                 doc.add_paragraph(str(folder.resolve()))
             except Exception:
                 doc.add_paragraph(str(folder))
@@ -1097,7 +1407,7 @@ class ReportWizard(QtWidgets.QDialog):
                 x_label, y_label = 'X', 'Y'
 
             # Save CSVs and screenshots
-            safe_title = "_".join(title.split())
+            safe_title = _safe_token(title)
             if p_type == "2d":
                 # CSV
                 H, x_edges, y_edges = ndx._histogram["2d"]
