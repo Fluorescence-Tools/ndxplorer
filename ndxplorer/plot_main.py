@@ -386,19 +386,20 @@ class NDXplorer(QtWidgets.QMainWindow):
     @property
     def zmin(self):
         logging.debug("Getting zmin")
-        v = self.z_values[self.z_values > -np.inf]
-        logging.debug(f"Filtered out {len(self.z_values) - len(v)} infinite values")
-        if self.plot_control.scale_z == "log":
+        arr = np.asarray(self.z_values)
+        finite_mask = np.isfinite(arr)
+        v = arr[finite_mask]
+        logging.debug(f"Filtered out {len(arr) - len(v)} non-finite values")
+        if getattr(self.plot_control, 'scale_z', 'lin') == "log":
             v_before = len(v)
-            v = v[np.where(v > 0)[0]]
+            v = v[v > 0]
             logging.debug(f"Log scale: filtered out {v_before - len(v)} non-positive values")
-        try:
-            result = min(v)
-            logging.debug(f"zmin = {result}")
-            return result
-        except ValueError:
+        if v.size == 0:
             logging.debug("No valid values for zmin, returning 0")
             return 0
+        result = float(np.min(v))
+        logging.debug(f"zmin = {result}")
+        return result
 
     @property
     def zmax(self) -> float:
@@ -426,19 +427,23 @@ class NDXplorer(QtWidgets.QMainWindow):
     @property
     def xmin(self) -> float:
         logging.debug("Getting xmin")
-        v = self.x_values[self.x_values > -np.inf]
-        logging.debug(f"Filtered out {len(self.x_values) - len(v)} infinite values")
-        if self.plot_control.scale_x == "log":
+        # Cache x_values once to avoid race between repeated property accesses
+        arr = np.asarray(self.x_values)
+        # Keep only finite values
+        finite_mask = np.isfinite(arr)
+        v = arr[finite_mask]
+        logging.debug(f"Filtered out {len(arr) - len(v)} non-finite values")
+        # For log scale, remove non-positive values
+        if getattr(self.plot_control, 'scale_x', 'lin') == "log":
             v_before = len(v)
-            v = v[np.where(v > 0)[0]]
+            v = v[v > 0]
             logging.debug(f"Log scale: filtered out {v_before - len(v)} non-positive values")
-        try:
-            result = min(v)
-            logging.debug(f"xmin = {result}")
-            return result
-        except ValueError:
+        if v.size == 0:
             logging.debug("No valid values for xmin, returning 0")
             return 0
+        result = float(np.min(v))
+        logging.debug(f"xmin = {result}")
+        return result
 
     @property
     def xmax(self) -> float:
@@ -450,19 +455,20 @@ class NDXplorer(QtWidgets.QMainWindow):
     @property
     def ymin(self) -> float:
         logging.debug("Getting ymin")
-        v = self.y_values[self.y_values > -np.inf]
-        logging.debug(f"Filtered out {len(self.y_values) - len(v)} infinite values")
-        if self.plot_control.scale_y == "log":
+        arr = np.asarray(self.y_values)
+        finite_mask = np.isfinite(arr)
+        v = arr[finite_mask]
+        logging.debug(f"Filtered out {len(arr) - len(v)} non-finite values")
+        if getattr(self.plot_control, 'scale_y', 'lin') == "log":
             v_before = len(v)
-            v = v[np.where(v > 0)[0]]
+            v = v[v > 0]
             logging.debug(f"Log scale: filtered out {v_before - len(v)} non-positive values")
-        try:
-            result = min(v)
-            logging.debug(f"ymin = {result}")
-            return result
-        except ValueError:
+        if v.size == 0:
             logging.debug("No valid values for ymin, returning 0")
             return 0
+        result = float(np.min(v))
+        logging.debug(f"ymin = {result}")
+        return result
 
     @property
     def vmin(self):
@@ -1575,40 +1581,109 @@ class NDXplorer(QtWidgets.QMainWindow):
     
     def onSaveAxisSettings(
             self,
+            event,
             settings_json_fn=None  # type: str
     ):
-        if settings_json_fn is None:
-            # Get the default settings path
+        # Qt signals like triggered(bool) may pass a boolean; treat it as no filename provided
+        if isinstance(settings_json_fn, bool):
+            settings_json_fn = None
+        
+        # Choose target file (default to user's settings mfd.axis.json)
+        if not settings_json_fn:
             settings_path = get_settings_path()
             default_filename = str(settings_path / "mfd.axis.json")
-            
-            # Allow user to choose a different location if desired
-            settings_json_fn = QtWidgets.QFileDialog.getSaveFileName(
+            filename, _ = QtWidgets.QFileDialog.getSaveFileName(
                 self,
                 'Axis settings file',
                 default_filename,
                 'Axis file (*.axis.json)'
-            )[0]  # getSaveFileName returns a tuple (filename, filter)
-            
-            # If user cancelled, return
-            if not settings_json_fn:
-                return
-        with open(settings_json_fn, "w") as fp:
-            json.dump(
-                self.plot_control.axis_settings,
-                fp,
-                indent=4
             )
+            if not filename:
+                return
+            settings_json_fn = filename
+        
+        # Ensure we have the most recent UI values stored for the current axes
+        try:
+            if hasattr(self, 'plot_control') and self.plot_control is not None:
+                self.plot_control.update_x_axis_settings()
+                self.plot_control.update_y_axis_settings()
+                self.plot_control.update_z_axis_settings()
+        except Exception as e:
+            logging.debug(f"Could not refresh axis settings from UI before saving: {e}")
+        
+        # Load baseline axis settings from target file if exists; otherwise from packaged defaults
+        baseline = {}
+        target_path = Path(settings_json_fn)
+        try:
+            if target_path.exists():
+                with open(target_path, 'r', encoding='utf-8') as fp:
+                    baseline = json.load(fp) or {}
+            else:
+                # fall back to default packaged settings
+                packaged = Path(__file__).parent / 'settings' / 'mfd.axis.json'
+                if packaged.exists():
+                    with open(packaged, 'r', encoding='utf-8') as fp:
+                        baseline = json.load(fp) or {}
+        except Exception as e:
+            logging.warning(f"Failed to load baseline axis settings, starting from empty. Reason: {e}")
+            baseline = {}
+        
+        # Collect current axis names in use (x, y, z)
+        in_use_names = []
+        try:
+            in_use_names = [
+                getattr(self.plot_control, 'x_label', '') or '',
+                getattr(self.plot_control, 'y_label', '') or '',
+                getattr(self.plot_control, 'z_label', '') or ''
+            ]
+        except Exception as e:
+            logging.debug(f"Could not determine in-use axis names: {e}")
+        
+        # Merge: for each in-use axis name, overwrite baseline entry if current differs or not present
+        current = getattr(self.plot_control, 'axis_settings', {}) or {}
+        changed = {}
+        for name in in_use_names:
+            if not name:
+                continue
+            cur = current.get(name)
+            if not isinstance(cur, dict):
+                continue
+            base_val = baseline.get(name)
+            if base_val != cur:
+                baseline[name] = cur
+                changed[name] = {'from': base_val, 'to': cur}
+        
+        # Save merged baseline back to the chosen file
+        print(f"Saving axis settings to {settings_json_fn}")
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(target_path, "w", encoding="utf-8") as fp:
+                json.dump(baseline, fp, indent=4)
+            if changed:
+                logging.info(f"Updated axis settings for: {', '.join(changed.keys())}")
+            else:
+                logging.info("No changes detected for current axes; saved existing settings file unchanged")
+        except Exception as e:
+            logging.error(f"Failed to save axis settings to {settings_json_fn}: {e}")
 
     def onLoad_settings(
             self,
             settings_json_fn=None  # type: str
     ):
+        # Handle Qt signals possibly passing a boolean
+        if isinstance(settings_json_fn, bool):
+            settings_json_fn = None
         if settings_json_fn is None:
-            settings_json_fn = QtWidgets.QFileDialog.getOpenFileName(
+            file_sel = QtWidgets.QFileDialog.getOpenFileName(
                 None, 'ndXplorer settings file', self.working_path, 'ndXplorer settings (*.settings.json)'
             )
-        with open(settings_json_fn, "r") as fp:
+            if isinstance(file_sel, (tuple, list)):
+                settings_json_fn = file_sel[0]
+            else:
+                settings_json_fn = file_sel
+        if not settings_json_fn:
+            return
+        with open(settings_json_fn, "r", encoding="utf-8") as fp:
             d = json.load(fp)
             self.settings.update(d)
 

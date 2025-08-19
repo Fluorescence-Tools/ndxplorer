@@ -50,10 +50,10 @@
     },
     "Red Count Rate (KHz)": {
         "n_bins_1d": 81.0, 
-        "max": 100.0, 
+        "max": 200.0,
         "scale": "log", 
-        "min": 0.1, 
-        "n_bins_2d": 31
+        "min": 1,
+        "n_bins_2d": 41
     }, 
     "FRET efficiency": {
         "n_bins_1d": 81.0, 
@@ -118,10 +118,10 @@
     }, 
     "Green Count Rate (KHz)": {
         "n_bins_1d": 81.0, 
-        "max": 1000.0, 
+        "max": 200.0,
         "scale": "log", 
-        "min": 0.1, 
-        "n_bins_2d": 31
+        "min": 1,
+        "n_bins_2d": 41
     }, 
     "Proximity ratio": {
         "n_bins_1d": 81.0, 
