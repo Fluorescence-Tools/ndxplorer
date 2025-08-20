@@ -2321,18 +2321,22 @@ class NDXplorer(QtWidgets.QMainWindow):
         ###################
         # Use the filtered data for all histograms
         try:
-            self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, weights=weights, density=self.plot_control.normed_hist_x)[::-1]
+            with np.errstate(divide='ignore', invalid='ignore'):
+                self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, weights=weights, density=self.plot_control.normed_hist_x)[::-1]
         except ValueError as e:
             logging.warning(f"Could not compute X histogram with weights: {str(e)}")
             # Fallback to histogram without weights
-            self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, density=self.plot_control.normed_hist_x)[::-1]
+            with np.errstate(divide='ignore', invalid='ignore'):
+                self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, density=self.plot_control.normed_hist_x)[::-1]
 
         try:
-            self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, weights=weights, density=self.plot_control.normed_hist_y)[::-1]
+            with np.errstate(divide='ignore', invalid='ignore'):
+                self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, weights=weights, density=self.plot_control.normed_hist_y)[::-1]
         except ValueError as e:
             logging.warning(f"Could not compute Y histogram with weights: {str(e)}")
             # Fallback to histogram without weights
-            self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, density=self.plot_control.normed_hist_y)[::-1]
+            with np.errstate(divide='ignore', invalid='ignore'):
+                self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, density=self.plot_control.normed_hist_y)[::-1]
 
         # Only compute z histogram if z-axis is enabled
         if z_enabled:
@@ -2348,18 +2352,23 @@ class NDXplorer(QtWidgets.QMainWindow):
                     z_weights = weights
 
             try:
-                self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, weights=z_weights, density=self.plot_control.normed_hist_z)[::-1]
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, weights=z_weights, density=self.plot_control.normed_hist_z)[::-1]
             except ValueError as e:
                 logging.warning(f"Could not compute Z histogram: {str(e)}")
                 # Create a simple histogram without weights as fallback
-                self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, density=self.plot_control.normed_hist_z)[::-1]
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, density=self.plot_control.normed_hist_z)[::-1]
 
         # 2D Histogram
         ####################
         try:
             # Use the filtered data for the 2D histogram
             # weights should already be checked for shape compatibility above
-            H, x_edges, y_edges = np.histogram2d(x=d1, y=d2, bins=[x_bins_2d, y_bins_2d], weights=weights, density=True)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                H, x_edges, y_edges = np.histogram2d(x=d1, y=d2, bins=[x_bins_2d, y_bins_2d], weights=weights, density=True)
+            # Sanitize H to remove NaNs/Infs resulting from empty bins or zero area
+            H = np.nan_to_num(H, nan=0.0, posinf=0.0, neginf=0.0)
             self._histogram["2d"] = H, x_edges, y_edges
         except ValueError as e:
             logging.warning(f"Could not compute 2D histogram: {str(e)}")

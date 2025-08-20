@@ -6,6 +6,8 @@ import yaml
 from pathlib import Path
 import re
 import shutil
+import stat
+import time
 
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtGui import QIcon, QPixmap, QColor, QBrush
@@ -225,6 +227,15 @@ class ReportWizard(QtWidgets.QDialog):
         # --- Images browser section ---
         images_box = QtWidgets.QGroupBox("Browse generated images")
         images_layout = QtWidgets.QVBoxLayout(images_box)
+        # Selected dataset path display (read-only) shown below the group label
+        self.selected_path_edit = QtWidgets.QLineEdit()
+        try:
+            self.selected_path_edit.setReadOnly(True)
+            self.selected_path_edit.setPlaceholderText("No folder selected")
+            self.selected_path_edit.setToolTip("Shows the full path of the currently selected dataset")
+        except Exception:
+            pass
+        images_layout.addWidget(self.selected_path_edit)
         # Row: plot combobox (to pick among images)
         combo_row = QtWidgets.QHBoxLayout()
         combo_row.addWidget(QtWidgets.QLabel("Plot:"))
@@ -443,6 +454,14 @@ class ReportWizard(QtWidgets.QDialog):
             if not any(self.folder_list.item(i).text() == d for i in range(self.folder_list.count())):
                 self.folder_list.addItem(d)
                 try:
+                    # Select the newly added item
+                    self.folder_list.setCurrentRow(self.folder_list.count() - 1)
+                    # Update selected path display
+                    if hasattr(self, 'selected_path_edit') and self.selected_path_edit is not None:
+                        self.selected_path_edit.setText(str(Path(d).resolve()))
+                except Exception:
+                    pass
+                try:
                     self._refresh_folder_highlights()
                 except Exception:
                     pass
@@ -450,6 +469,19 @@ class ReportWizard(QtWidgets.QDialog):
     def _on_remove_folder(self):
         for it in self.folder_list.selectedItems():
             self.folder_list.takeItem(self.folder_list.row(it))
+        try:
+            # Update selected path display based on new current selection
+            if hasattr(self, 'selected_path_edit') and self.selected_path_edit is not None:
+                item = self.folder_list.currentItem()
+                if item is None:
+                    self.selected_path_edit.clear()
+                else:
+                    try:
+                        self.selected_path_edit.setText(str(Path(item.text()).resolve()))
+                    except Exception:
+                        self.selected_path_edit.setText(item.text())
+        except Exception:
+            pass
         try:
             self._refresh_folder_highlights()
         except Exception:
@@ -473,6 +505,12 @@ class ReportWizard(QtWidgets.QDialog):
             # If message box fails for any reason, proceed to clear
             pass
         self.folder_list.clear()
+        try:
+            # Clear selected path display
+            if hasattr(self, 'selected_path_edit') and self.selected_path_edit is not None:
+                self.selected_path_edit.clear()
+        except Exception:
+            pass
         try:
             self._refresh_folder_highlights()
         except Exception:
@@ -523,12 +561,9 @@ class ReportWizard(QtWidgets.QDialog):
                 for name in ("report", "Report", "REPORT"):
                     rd = folder / name
                     if rd.exists() and rd.is_dir():
-                        try:
-                            shutil.rmtree(str(rd), ignore_errors=True)
+                        success = self._robust_rmtree(rd)
+                        if success:
                             removed_any = True
-                        except Exception:
-                            # ignore and continue
-                            pass
                 if removed_any:
                     cleared += 1
             except Exception:
@@ -552,6 +587,57 @@ class ReportWizard(QtWidgets.QDialog):
             self._refresh_folder_highlights()
         except Exception:
             pass
+
+    def _robust_rmtree(self, path: Path, max_retries: int = 3) -> bool:
+        """Attempt to remove a directory tree robustly on Windows.
+        Returns True if the directory is gone, False otherwise.
+        """
+        def _onerror(func, p, exc_info):
+            # Try to make the path writable and retry
+            try:
+                os.chmod(p, stat.S_IWRITE)
+            except Exception:
+                pass
+            try:
+                func(p)
+            except Exception:
+                pass
+        # Try rmtree with retries
+        for _ in range(max_retries):
+            try:
+                shutil.rmtree(str(path), onerror=_onerror)
+            except Exception:
+                pass
+            if not path.exists():
+                return True
+            try:
+                QtWidgets.QApplication.processEvents()
+            except Exception:
+                pass
+            time.sleep(0.05)
+        # Fallback: manual walk
+        try:
+            for root, dirs, files in os.walk(str(path), topdown=False):
+                for name in files:
+                    fp = Path(root) / name
+                    try:
+                        os.chmod(str(fp), stat.S_IWRITE)
+                    except Exception:
+                        pass
+                    try:
+                        os.remove(str(fp))
+                    except Exception:
+                        pass
+                for name in dirs:
+                    dp = Path(root) / name
+                    try:
+                        os.rmdir(str(dp))
+                    except Exception:
+                        pass
+            os.rmdir(str(path))
+        except Exception:
+            pass
+        return not path.exists()
 
     def _on_add_1d(self):
         row = self.table.rowCount()
@@ -863,6 +949,12 @@ class ReportWizard(QtWidgets.QDialog):
     def _on_folder_item_clicked(self, item: QtWidgets.QListWidgetItem):
         try:
             p = Path(item.text())
+            # Update selected path display
+            try:
+                if hasattr(self, 'selected_path_edit') and self.selected_path_edit is not None:
+                    self.selected_path_edit.setText(str(p.resolve()))
+            except Exception:
+                pass
             self._open_report_images_for_folder(p)
         except Exception:
             pass
@@ -870,6 +962,16 @@ class ReportWizard(QtWidgets.QDialog):
     def _on_folder_selection_changed(self):
         try:
             item = self.folder_list.currentItem()
+            # Update selected path display
+            try:
+                if hasattr(self, 'selected_path_edit') and self.selected_path_edit is not None:
+                    if item is None:
+                        self.selected_path_edit.clear()
+                    else:
+                        p_disp = Path(item.text())
+                        self.selected_path_edit.setText(str(p_disp.resolve()))
+            except Exception:
+                pass
             if not item:
                 return
             p = Path(item.text())
@@ -1413,10 +1515,10 @@ class ReportWizard(QtWidgets.QDialog):
                 H, x_edges, y_edges = ndx._histogram["2d"]
                 x_tok = _safe_token(x_label)
                 y_tok = _safe_token(y_label)
-                csv_path = report_dir / f"{idx_plot:02d}_{safe_title}_2d_x-{x_tok}_y-{y_tok}.csv"
-                self._save_2d_csv(csv_path, H, x_edges, y_edges)
+                csv_path = report_dir / f"{idx_plot:02d}_2d_{x_tok}_{y_tok}.csv"
+                self._save_2d_csv(csv_path, H, x_edges, y_edges, xlabel=x_label, ylabel=y_label)
                 # Image via matplotlib
-                img_path = report_dir / f"{idx_plot:02d}_{safe_title}_2d_x-{x_tok}_y-{y_tok}.png"
+                img_path = report_dir / f"{idx_plot:02d}_2d_{x_tok}_{y_tok}.png"
                 try:
                     template_name = (p.get("template") or "2d_basic").lower()
                     tpl = self._templates.get(template_name)
@@ -1493,9 +1595,9 @@ class ReportWizard(QtWidgets.QDialog):
                     edges, counts = ndx._histogram["x"]
                     a_label = x_label
                 a_tok = _safe_token(a_label)
-                csv_path = report_dir / f"{idx_plot:02d}_{safe_title}_1d_{axis}-{a_tok}.csv"
-                self._save_1d_csv(csv_path, edges, counts)
-                img_path = report_dir / f"{idx_plot:02d}_{safe_title}_1d_{axis}-{a_tok}.png"
+                csv_path = report_dir / f"{idx_plot:02d}_{axis}-{a_tok}.csv"
+                self._save_1d_csv(csv_path, edges, counts, xlabel=a_label)
+                img_path = report_dir / f"{idx_plot:02d}_1d_{axis}-{a_tok}.png"
                 try:
                     template_name = (p.get("template") or "1d_basic").lower()
                     tpl = self._templates.get(template_name)
@@ -1605,26 +1707,37 @@ class ReportWizard(QtWidgets.QDialog):
         return {"folder": folder_path_str, "entries": entries}
 
     @staticmethod
-    def _save_1d_csv(csv_path: Path, edges, counts):
+    def _save_1d_csv(csv_path: Path, edges, counts, xlabel: str = "X"):
         import numpy as np
         edges = edges.astype(float)
         counts = counts.astype(float)
+        # Sanitize
+        edges = np.nan_to_num(edges, nan=0.0, posinf=0.0, neginf=0.0)
+        counts = np.nan_to_num(counts, nan=0.0, posinf=0.0, neginf=0.0)
         with open(csv_path, 'w', encoding='utf-8') as f:
-            f.write("BinStart,BinEnd,Count\n")
+            # Use axis label in the header; do not include any plot title
+            safe_label = str(xlabel) if isinstance(xlabel, str) else "X"
+            f.write(f"{safe_label}Start,{safe_label}End,Count\n")
             for i in range(len(counts)):
                 f.write(f"{edges[i]},{edges[i+1]},{counts[i]}\n")
 
     @staticmethod
-    def _save_2d_csv(csv_path: Path, H, x_edges, y_edges):
+    def _save_2d_csv(csv_path: Path, H, x_edges, y_edges, xlabel: str = "X", ylabel: str = "Y"):
         import numpy as np
         H = np.array(H)
         x_edges = np.array(x_edges)
         y_edges = np.array(y_edges)
         x_centers = (x_edges[:-1] + x_edges[1:]) / 2
         y_centers = (y_edges[:-1] + y_edges[1:]) / 2
+        # Sanitize
+        H = np.nan_to_num(H, nan=0.0, posinf=0.0, neginf=0.0)
+        x_centers = np.nan_to_num(x_centers, nan=0.0, posinf=0.0, neginf=0.0)
+        y_centers = np.nan_to_num(y_centers, nan=0.0, posinf=0.0, neginf=0.0)
         with open(csv_path, 'w', encoding='utf-8') as f:
-            # header
-            f.write('y/x,' + ','.join([str(v) for v in x_centers]) + '\n')
+            # header uses axis labels only; do not include any plot title
+            safe_x = str(xlabel) if isinstance(xlabel, str) else "X"
+            safe_y = str(ylabel) if isinstance(ylabel, str) else "Y"
+            f.write(f"{safe_y}/{safe_x}," + ','.join([str(v) for v in x_centers]) + '\n')
             for j, y in enumerate(y_centers):
                 row = [str(y)] + [str(H[i, j]) for i in range(len(x_centers))]
                 f.write(','.join(row) + '\n')
@@ -1648,6 +1761,13 @@ class ReportWizard(QtWidgets.QDialog):
         lw = float(linewidth) if linewidth is not None else 0.2
         col = color if color is not None else '#4477aa'
         fig, ax = plt.subplots(figsize=fig_size, dpi=fig_dpi)
+        # Sanitize data to avoid warnings
+        counts = np.nan_to_num(counts, nan=0.0, posinf=0.0, neginf=0.0)
+        widths = np.nan_to_num(widths, nan=0.0, posinf=0.0, neginf=0.0)
+        # Replace non-positive widths with a small epsilon to avoid invalid bar widths
+        if widths.size:
+            min_pos = widths[widths > 0].min() if np.any(widths > 0) else 1e-9
+            widths = np.where(widths > 0, widths, min_pos)
         ax.bar(centers, counts, width=widths, align='center', edgecolor=ec, linewidth=lw, color=col)
         ax.set_title(title)
         ax.set_xlabel(xlabel or "")
@@ -1672,7 +1792,9 @@ class ReportWizard(QtWidgets.QDialog):
         H = np.asarray(H, dtype=float)
         x_edges = np.asarray(x_edges, dtype=float)
         y_edges = np.asarray(y_edges, dtype=float)
-        extent = [x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]]
+        # Sanitize to avoid NaNs/Infs in image and extent
+        H = np.nan_to_num(H, nan=0.0, posinf=0.0, neginf=0.0)
+        extent = [x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]] if (x_edges.size and y_edges.size) else [0, 1, 0, 1]
         fig_size = tuple(figsize) if isinstance(figsize, (list, tuple)) and len(figsize) == 2 else (6, 5)
         fig_dpi = int(dpi) if dpi else 150
         fig, ax = plt.subplots(figsize=fig_size, dpi=fig_dpi)
@@ -1706,12 +1828,14 @@ class ReportWizard(QtWidgets.QDialog):
         H = np.asarray(H, dtype=float)
         x_edges = np.asarray(x_edges, dtype=float)
         y_edges = np.asarray(y_edges, dtype=float)
-        x_centers = (x_edges[:-1] + x_edges[1:]) / 2.0
-        y_centers = (y_edges[:-1] + y_edges[1:]) / 2.0
+        # Sanitize H to avoid NaNs/Infs
+        H = np.nan_to_num(H, nan=0.0, posinf=0.0, neginf=0.0)
+        x_centers = (x_edges[:-1] + x_edges[1:]) / 2.0 if x_edges.size > 1 else np.array([0.5])
+        y_centers = (y_edges[:-1] + y_edges[1:]) / 2.0 if y_edges.size > 1 else np.array([0.5])
         # Marginals: sum over the other axis
         # H shape is (len(x_bins), len(y_bins)) based on CSV saver orientation
-        x_marg = H.sum(axis=1)
-        y_marg = H.sum(axis=0)
+        x_marg = H.sum(axis=1) if H.size else np.array([0.0])
+        y_marg = H.sum(axis=0) if H.size else np.array([0.0])
         # Layout via GridSpec
         from matplotlib.gridspec import GridSpec
         fig_size = tuple(figsize) if isinstance(figsize, (list, tuple)) and len(figsize) == 2 else (8, 8)
@@ -1722,11 +1846,19 @@ class ReportWizard(QtWidgets.QDialog):
         ax_histx = fig.add_subplot(gs[0, 0], sharex=ax_scatter)
         ax_histy = fig.add_subplot(gs[1, 1], sharey=ax_scatter)
         # 2D image in the main axes
-        extent = [x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]]
+        extent = [x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]] if (x_edges.size and y_edges.size) else [0, 1, 0, 1]
         im = ax_scatter.imshow(H.T, origin='lower', aspect='auto', extent=extent, cmap=cmap_2d)
-        # Marginals as bar plots
-        ax_histx.bar(x_centers, x_marg, width=np.diff(x_edges), color=color_x, edgecolor='black', linewidth=0.2)
-        ax_histy.barh(y_centers, y_marg, height=np.diff(y_edges), color=color_y, edgecolor='black', linewidth=0.2)
+        # Marginals as bar plots with sanitized widths/heights
+        x_widths = np.nan_to_num(np.diff(x_edges), nan=0.0, posinf=0.0, neginf=0.0)
+        if x_widths.size:
+            x_min_pos = x_widths[x_widths > 0].min() if np.any(x_widths > 0) else 1e-9
+            x_widths = np.where(x_widths > 0, x_widths, x_min_pos)
+        y_heights = np.nan_to_num(np.diff(y_edges), nan=0.0, posinf=0.0, neginf=0.0)
+        if y_heights.size:
+            y_min_pos = y_heights[y_heights > 0].min() if np.any(y_heights > 0) else 1e-9
+            y_heights = np.where(y_heights > 0, y_heights, y_min_pos)
+        ax_histx.bar(x_centers, x_marg, width=x_widths, color=color_x, edgecolor='black', linewidth=0.2)
+        ax_histy.barh(y_centers, y_marg, height=y_heights, color=color_y, edgecolor='black', linewidth=0.2)
         # Labels and ticks
         ax_scatter.set_xlabel(xlabel or "")
         ax_scatter.set_ylabel(ylabel or "")
@@ -1742,8 +1874,8 @@ class ReportWizard(QtWidgets.QDialog):
         cb.set_label('Counts')
         # Title at top
         fig.suptitle(title, y=0.98)
-        # Tight layout without overlapping title
-        fig.tight_layout(rect=[0.0, 0.0, 0.9, 0.96])
+        # Adjust layout manually to avoid tight_layout warnings with additional axes (colorbar)
+        fig.subplots_adjust(left=0.10, bottom=0.08, right=0.88, top=0.94, wspace=0.05, hspace=0.05)
         fig.savefig(str(img_path), bbox_inches='tight', facecolor='white')
         plt.close(fig)
 
