@@ -45,6 +45,19 @@ class GaussianFit(QtCore.QObject):
         # Place the button row directly into the target layout
         m.verticalLayout_18.addLayout(btn_row)
 
+        # Local window controls for click-based covariance estimation
+        m.lblLocalWindow = QtWidgets.QLabel("Local window (bins):", m)
+        m.spinLocalWindow = QtWidgets.QSpinBox(m)
+        m.spinLocalWindow.setRange(1, 200)
+        m.spinLocalWindow.setSingleStep(1)
+        m.spinLocalWindow.setValue(10)
+        m.spinLocalWindow.setToolTip("Size of half-window in bins for local covariance estimation around the clicked point.\nEffective window size is (2*value+1) in each dimension.")
+        window_row = QtWidgets.QHBoxLayout()
+        window_row.addWidget(m.lblLocalWindow)
+        window_row.addWidget(m.spinLocalWindow)
+        window_row.addStretch(1)
+        m.verticalLayout_18.addLayout(window_row)
+
         # Table of gaussians (x, y, cov, weight)
         m.tableGaussians = QtWidgets.QTableWidget(m)
         m.tableGaussians.setColumnCount(6)
@@ -225,7 +238,13 @@ class GaussianFit(QtCore.QObject):
         # Therefore, fix the mean to the clicked bin center and estimate covariance locally.
         x_c = m.bin_to_x_value(ix, x_edges)
         y_c = m.bin_to_y_value(iy, y_edges)
-        mu_local, cov = self._compute_local_moments(H, x_edges, y_edges, ix, iy, window=10)
+        # Read local window half-size from UI control if available
+        try:
+            window_size = int(m.spinLocalWindow.value())
+        except Exception:
+            window_size = 10
+        window_size = max(1, min(window_size, 200))
+        mu_local, cov = self._compute_local_moments(H, x_edges, y_edges, ix, iy, window=window_size)
         if cov is None:
             # fallback: use a modest default width if local covariance cannot be estimated
             cov = np.diag([((x_edges[-1]-x_edges[0])/20.0)**2, ((y_edges[-1]-y_edges[0])/20.0)**2])

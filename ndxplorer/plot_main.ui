@@ -204,7 +204,7 @@
                  </sizepolicy>
                 </property>
                 <property name="text">
-                 <string>Table</string>
+                 <string>Data table</string>
                 </property>
                </widget>
               </item>
