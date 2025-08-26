@@ -2074,7 +2074,6 @@ class NDXplorer(QtWidgets.QMainWindow):
             equations=self.equations
         )
         self.lineEditCountTotal.setText(str(self.data_source.size))
-
         self.plot_control.update()  # plot_control.update() - also updates plots
 
     def apply_fonts(self):
@@ -3728,16 +3727,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         # First perform the default resize handling
         super(NDXplorer, self).resizeEvent(event)
         # Then schedule an update of the 2D plot
-        try:
-            if hasattr(self, 'g_2dplot') and hasattr(self, 'cax') and self.cax is not None:
-                if not getattr(self, '_resize_update_pending', False):
-                    self._resize_update_pending = True
-                    def _do_update():
-                        try:
-                            self.update_2d_plot()
-                        finally:
-                            self._resize_update_pending = False
-                    QtCore.QTimer.singleShot(0, _do_update)
-        except Exception:
-            # Silently ignore any issues during early construction
-            pass
+        def _do_update():
+            self.update_plots()
+        QtCore.QTimer.singleShot(1, _do_update)
