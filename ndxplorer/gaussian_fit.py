@@ -108,34 +108,52 @@ class GaussianFit(QtCore.QObject):
     def on_fit_2d_gaussian(self):
         """
         Optimize the parameters (means, covariances, weights) of the Gaussians listed
-        in the table against the current 2D histogram using a Gaussian Mixture fit.
+        in the table directly against the currently selected raw data points
+        (not the histogram) using a Gaussian Mixture fit.
         """
         m = self.main
         rows = self._read_gaussian_table()
         if len(rows) == 0:
             QtWidgets.QMessageBox.warning(m, "No Gaussians", "Add one or more Gaussians (click on the histogram) before fitting.")
             return
-        # Access histogram
+
+        # Retrieve filtered X/Y data directly from the data source
         try:
-            H, x_edges, y_edges = m._histogram["2d"]
+            d1 = np.asarray(m.x_values, dtype=float)
+            d2 = np.asarray(m.y_values, dtype=float)
         except Exception:
-            QtWidgets.QMessageBox.warning(m, "No histogram", "No 2D histogram available to fit.")
+            QtWidgets.QMessageBox.warning(m, "No data", "Unable to retrieve selected data for fitting.")
             return
-        if H is None or H.size == 0 or not np.isfinite(np.sum(H)) or np.sum(H) <= 0:
-            QtWidgets.QMessageBox.warning(m, "Empty histogram", "2D histogram is empty.")
+        if d1.size == 0 or d2.size == 0 or len(d1) != len(d2):
+            QtWidgets.QMessageBox.warning(m, "No data", "No data available for fitting.")
             return
-        # Prepare samples and weights from histogram grid
-        x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
-        y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
-        X, Y = np.meshgrid(x_centers, y_centers, indexing='ij')
-        samples = np.column_stack([X.ravel(), Y.ravel()])
-        weights = H.astype(float).ravel()
-        mask = np.isfinite(weights) & (weights > 0)
-        if not np.any(mask):
-            QtWidgets.QMessageBox.warning(m, "No data", "Histogram contains no positive counts for fitting.")
+
+        X = np.column_stack([d1, d2])
+
+        # Keep only points within the currently visible histogram range
+        try:
+            _, x_edges, y_edges = m._histogram["2d"]
+            x_min_vis = float(x_edges[0]); x_max_vis = float(x_edges[-1])
+            y_min_vis = float(y_edges[0]); y_max_vis = float(y_edges[-1])
+        except Exception:
+            QtWidgets.QMessageBox.warning(m, "No histogram", "No 2D histogram available. Fit is restricted to visible data; please update histogram first.")
             return
-        samples = samples[mask]
-        weights = weights[mask]
+
+        vis_mask = (
+            (X[:, 0] >= x_min_vis) & (X[:, 0] <= x_max_vis) &
+            (X[:, 1] >= y_min_vis) & (X[:, 1] <= y_max_vis)
+        )
+        if not np.any(vis_mask):
+            QtWidgets.QMessageBox.warning(m, "No data", "No data within the visible histogram range to fit.")
+            return
+        X = X[vis_mask]
+
+        # Filter to finite rows
+        finite_mask = np.all(np.isfinite(X), axis=1)
+        if not np.any(finite_mask):
+            QtWidgets.QMessageBox.warning(m, "No data", "Selected data contains no finite values for fitting.")
+            return
+        X = X[finite_mask]
 
         # Lazy import of sklearn GaussianMixture via documented API
         try:
@@ -167,12 +185,9 @@ class GaussianFit(QtCore.QObject):
             weights_init=w_init
         )
 
-        # Fit using importance resampling (no sample_weight usage)
+        # Fit directly to visible raw data without weighting
         try:
-            probs = weights / np.sum(weights)
-            n_samp = min(6000, samples.shape[0])
-            idx = np.random.choice(samples.shape[0], size=n_samp, replace=True, p=probs)
-            gm.fit(samples[idx])
+            gm.fit(X)
         except Exception as e:
             QtWidgets.QMessageBox.warning(m, "Fit failed", f"GMM fit failed: {e}")
             return
