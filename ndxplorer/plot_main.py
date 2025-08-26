@@ -18,6 +18,7 @@ import numpy as np
 # Delay imports of heavy libraries
 hdbscan = None  # For clustering
 KMeans = None   # For clustering
+GaussianMixture = None  # For Gaussian Mixture Modeling
 umap = None     # For dimensionality reduction
 napari = None   # For image visualization in external viewer
 
@@ -630,6 +631,25 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.verticalLayout_15.addWidget(self.equation_editor)
         self.verticalLayout_10.addWidget(self.curve_overlay_widget)
 
+        # Make Fit action checkable and wire it to the Fit dock visibility
+        try:
+            if hasattr(self, 'actionFit_Gaussians') and hasattr(self, 'dockWidget_Fit'):
+                self.actionFit_Gaussians.setCheckable(True)
+                # Sync action -> dock
+                self.actionFit_Gaussians.toggled.connect(self.dockWidget_Fit.setVisible)
+                # Sync dock -> action
+                self.dockWidget_Fit.visibilityChanged.connect(self.actionFit_Gaussians.setChecked)
+                # Also ensure we exit select mode when the Fit dock is hidden
+                if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+                    self.dockWidget_Fit.visibilityChanged.connect(self.gaussian_fit.on_fit_dock_visibility_changed)
+                # Initialize action checked state to current dock visibility
+                try:
+                    self.actionFit_Gaussians.setChecked(self.dockWidget_Fit.isVisible())
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.debug(f"Failed to wire Fit action/dock: {e}")
+
         # Report tool
         self.actionMake_Report.triggered.connect(self.onShowReportWizard)
 
@@ -908,6 +928,16 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Add the container widget to your PyQt layout
         self.verticalLayout_11.addWidget(plot_container)
 
+        # -----------------------------------------------------------------
+        # Gaussian Fit controls: attach from a separate module for cleanliness
+        # -----------------------------------------------------------------
+        try:
+            from .gaussian_fit import GaussianFit
+            self.gaussian_fit = GaussianFit(self)
+        except Exception as _e:
+            # Fallback: ignore if fit UI cannot be created
+            pass
+
         self.g_xplot.setMaximumHeight(150)
         self.g_yplot.setMaximumWidth(150)
         self.g_zplot.setMaximumHeight(150)
@@ -1019,6 +1049,22 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def clear_plots(self):
         logging.info( "clearing plots")
+        # 0. Also clear the working path line edit (global clear should reset path)
+        try:
+            self.lineEditWorkingPath.blockSignals(True)
+            try:
+                self.lineEditWorkingPath.clear()
+            except Exception:
+                # Fallback in case clear() is not available
+                self.lineEditWorkingPath.setText("")
+        except Exception:
+            pass
+        finally:
+            try:
+                self.lineEditWorkingPath.blockSignals(False)
+            except Exception:
+                pass
+
         # 1. Clear the user data => empty => fallback to _default_data_source
         self._data_source.clear()
 
@@ -2520,6 +2566,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Skip clustering when loading data (skip_clustering=True)
         if self._use_clustering and self._cluster_labels is None and not skip_clustering:
             # Lazy import of hdbscan
+            global hdbscan
             if hdbscan is None:
                 try:
                     import hdbscan
@@ -2838,6 +2885,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Check if the required library is available
         if cluster_method == "hdbscan":
             # Lazy import of hdbscan
+            global hdbscan
             if hdbscan is None:
                 try:
                     import hdbscan
@@ -2856,6 +2904,7 @@ class NDXplorer(QtWidgets.QMainWindow):
                 return
         elif cluster_method == "kmeans":
             # Lazy import of KMeans
+            global KMeans
             if KMeans is None:
                 try:
                     from sklearn.cluster import KMeans
@@ -3469,7 +3518,86 @@ class NDXplorer(QtWidgets.QMainWindow):
         except (ValueError, KeyError, IndexError, AttributeError) as e:
             logging.warning(f"Error updating curve overlays: {str(e)}")
             return
-        
+
+    # ========================= GAUSSIAN FITTING ==============================
+    def on_fit_2d_gaussian(self):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit.on_fit_2d_gaussian()
+
+    def on_select_point_toggled(self, checked: bool):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit.on_select_point_toggled(checked)
+
+    def _on_point_selected(self, pos):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit.on_point_selected(pos)
+
+    def on_clear_gaussians(self):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit.on_clear_gaussians()
+
+    def _compute_moments(self, H: np.ndarray, x_edges: np.ndarray, y_edges: np.ndarray):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit._compute_moments(H, x_edges, y_edges)
+        return None, None
+
+    def _compute_local_moments(self, H: np.ndarray, x_edges: np.ndarray, y_edges: np.ndarray, ix: int, iy: int, window: int = 5):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit._compute_local_moments(H, x_edges, y_edges, ix, iy, window)
+        return None, None
+
+    def _add_gaussian_overlay(self, mu: Tuple[float, float], cov: np.ndarray, label: str = "", color: Optional[str] = None):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit._add_gaussian_overlay(mu, cov, label, color)
+        return None
+
+    def _append_gaussian_row(self, mu: Tuple[float, float], cov: np.ndarray, w: float = 1.0):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit._append_gaussian_row(mu, cov, w)
+        return -1
+
+    def _update_gaussian_row(self, row: int, mu: np.ndarray, cov: np.ndarray, w: float = None):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit._update_gaussian_row(row, mu, cov, w)
+        return None
+
+    def _read_gaussian_table(self) -> List[Tuple[np.ndarray, np.ndarray, float]]:
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit._read_gaussian_table()
+        return []
+
+    def _redraw_gaussian_overlays_from_table(self):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit._redraw_gaussian_overlays_from_table()
+
+    def _clear_gaussian_marginal_items(self):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit._clear_gaussian_marginal_items()
+
+    def _draw_gaussian_marginals_from_table(self, rows, colors=None):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit._draw_gaussian_marginals_from_table(rows, colors)
+
+    def on_toggle_gaussian_marginals(self, checked: bool):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit.on_toggle_gaussian_marginals(checked)
+
+    # ======================= END GAUSSIAN FITTING ===========================
+
     def check_and_set_image_axes(self):
         """
         Check if the loaded data contains image information (X pixel and Y pixel columns)
@@ -3547,3 +3675,25 @@ class NDXplorer(QtWidgets.QMainWindow):
             # Apply auto contrast as final action
             logging.debug("Applying auto contrast to image")
             self.on_auto_contrast()
+
+    def on_gaussian_table_item_changed(self, item: QtWidgets.QTableWidgetItem):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit.on_gaussian_table_item_changed(item)
+
+    def eventFilter(self, obj, event):
+        """Delegate to GaussianFit for handling table events; fallback to default."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit.eventFilter(obj, event)
+        return super(NDXplorer, self).eventFilter(obj, event)
+
+    def _delete_selected_gaussian_rows(self, rows: List[int]):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit._delete_selected_gaussian_rows(rows)
+
+
+    def _on_fit_dock_visibility_changed(self, visible: bool):
+        """Delegate to GaussianFit."""
+        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
+            return self.gaussian_fit.on_fit_dock_visibility_changed(visible)
