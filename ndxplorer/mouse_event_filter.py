@@ -12,24 +12,46 @@ class MouseEventFilter(QtCore.QObject):
         self.start_pos = None
         self.current_pos = None
         self.selection_rect = None
+        # Mode: 'rectangle' for region selection (default), 'point' for single-click selection
+        self.mode = 'rectangle'
+        # Optional callback for point selection mode
+        self.point_callback = None
+
+    def set_point_mode(self, enabled: bool, callback=None):
+        """
+        Enable/disable point selection mode. When enabled, a left click will invoke the
+        provided callback with the click position as argument and will not start a rubber band.
+        """
+        self.mode = 'point' if enabled else 'rectangle'
+        self.point_callback = callback if enabled else None
 
     def eventFilter(self, obj, event):
         # Allow right-click events for context menu
         if event.type() == QtCore.QEvent.MouseButtonPress and event.button() == QtCore.Qt.RightButton:
             return False  # Process right-click events normally
 
-        # Handle left-click events for region selection
+        # Handle left-click events
         if event.type() == QtCore.QEvent.MouseButtonPress and event.button() == QtCore.Qt.LeftButton:
-            self.start_selection(event.pos())
-            return True
+            if self.mode == 'point':
+                # Call the point selection callback if available
+                if callable(self.point_callback):
+                    try:
+                        self.point_callback(event.pos())
+                    except Exception:
+                        pass
+                return True  # Consume the event
+            else:
+                # Rectangle selection mode
+                self.start_selection(event.pos())
+                return True
 
         # Handle mouse move events for updating the selection rectangle
-        if event.type() == QtCore.QEvent.MouseMove and self.selecting:
+        if event.type() == QtCore.QEvent.MouseMove and self.selecting and self.mode == 'rectangle':
             self.update_selection(event.pos())
             return True
 
         # Handle left-button release events for finalizing the selection
-        if event.type() == QtCore.QEvent.MouseButtonRelease and event.button() == QtCore.Qt.LeftButton and self.selecting:
+        if event.type() == QtCore.QEvent.MouseButtonRelease and event.button() == QtCore.Qt.LeftButton and self.selecting and self.mode == 'rectangle':
             self.finish_selection(event.pos())
             return True
 
