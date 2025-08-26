@@ -632,23 +632,9 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.verticalLayout_10.addWidget(self.curve_overlay_widget)
 
         # Make Fit action checkable and wire it to the Fit dock visibility
-        try:
-            if hasattr(self, 'actionFit_Gaussians') and hasattr(self, 'dockWidget_Fit'):
-                self.actionFit_Gaussians.setCheckable(True)
-                # Sync action -> dock
-                self.actionFit_Gaussians.toggled.connect(self.dockWidget_Fit.setVisible)
-                # Sync dock -> action
-                self.dockWidget_Fit.visibilityChanged.connect(self.actionFit_Gaussians.setChecked)
-                # Also ensure we exit select mode when the Fit dock is hidden
-                if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
-                    self.dockWidget_Fit.visibilityChanged.connect(self.gaussian_fit.on_fit_dock_visibility_changed)
-                # Initialize action checked state to current dock visibility
-                try:
-                    self.actionFit_Gaussians.setChecked(self.dockWidget_Fit.isVisible())
-                except Exception:
-                    pass
-        except Exception as e:
-            logging.debug(f"Failed to wire Fit action/dock: {e}")
+        self.actionFit_Gaussians.toggled.connect(self.dockWidget_Fit.setVisible)
+        self.dockWidget_Fit.visibilityChanged.connect(self._on_fit_dock_visibility_changed)
+        self.dockWidget_Fit.setVisible(False)
 
         # Report tool
         self.actionMake_Report.triggered.connect(self.onShowReportWizard)
@@ -884,6 +870,11 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Enable mouse tracking for region selection
         self.g_2dplot.canvas().setMouseTracking(True)
+        # Listen to canvas resize events to keep orientation consistent on internal resizes
+        try:
+            self.g_2dplot.canvas().installEventFilter(self)
+        except Exception:
+            pass
 
         # Create a separate plot for curve overlays
         self.overlay_plot = guiqwt.curve.CurvePlot(parent=self)
@@ -931,12 +922,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         # -----------------------------------------------------------------
         # Gaussian Fit controls: attach from a separate module for cleanliness
         # -----------------------------------------------------------------
-        try:
-            from .gaussian_fit import GaussianFit
-            self.gaussian_fit = GaussianFit(self)
-        except Exception as _e:
-            # Fallback: ignore if fit UI cannot be created
-            pass
+        from .gaussian_fit import GaussianFit
+        self.gaussian_fit = GaussianFit(self)
 
         self.g_xplot.setMaximumHeight(150)
         self.g_yplot.setMaximumWidth(150)
@@ -3358,8 +3345,19 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         try:
             # Update the data of the displayed image
-            # Rotate the data to match the original orientation
-            self.cax.set_data(np.flip(np.rot90(new_data, k=3), axis=1))
+            # numpy.histogram2d outputs shape (x_bins, y_bins);
+            # ImageItem expects (rows=y, cols=x), so use transpose only.
+            self.cax.set_data(new_data.T)
+            # Also lock the plot's axis scales to the histogram bin edges to keep a stable mapping
+            try:
+                if x_edges is not None and y_edges is not None:
+                    # Ensure monotonicity in case edges are descending
+                    x1, x0 = float(x_edges[0]), float(x_edges[-1])
+                    y1, y0 = float(y_edges[0]), float(y_edges[-1])
+                    self.g_2dplot.setAxisScale(QwtPlot.xBottom, min(x0, x1), max(x0, x1))
+                    self.g_2dplot.setAxisScale(QwtPlot.yLeft, min(y0, y1), max(y0, y1))
+            except Exception:
+                pass
         except ValueError as e:
             logging.warning(f"Error setting 2D plot data: {str(e)}")
             # If setting data fails, try with a simple valid array
@@ -3682,9 +3680,33 @@ class NDXplorer(QtWidgets.QMainWindow):
             return self.gaussian_fit.on_gaussian_table_item_changed(item)
 
     def eventFilter(self, obj, event):
-        """Delegate to GaussianFit for handling table events; fallback to default."""
+        """
+        Handle canvas resize events to refresh the 2D plot orientation and
+        delegate to GaussianFit for other table-related events.
+        """
+        handled_by_gaussian = False
         if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
-            return self.gaussian_fit.eventFilter(obj, event)
+            try:
+                handled_by_gaussian = bool(self.gaussian_fit.eventFilter(obj, event))
+            except Exception:
+                handled_by_gaussian = False
+
+        # If the 2D canvas is resized, schedule an update of the 2D plot
+        try:
+            if event.type() == QtCore.QEvent.Resize and hasattr(self, 'g_2dplot') and obj is self.g_2dplot.canvas():
+                if not getattr(self, '_resize_update_pending', False):
+                    self._resize_update_pending = True
+                    def _do_update():
+                        try:
+                            self.update_2d_plot()
+                        finally:
+                            self._resize_update_pending = False
+                    QtCore.QTimer.singleShot(0, _do_update)
+        except Exception:
+            pass
+
+        if handled_by_gaussian:
+            return True
         return super(NDXplorer, self).eventFilter(obj, event)
 
     def _delete_selected_gaussian_rows(self, rows: List[int]):
@@ -3695,5 +3717,27 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def _on_fit_dock_visibility_changed(self, visible: bool):
         """Delegate to GaussianFit."""
-        if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
-            return self.gaussian_fit.on_fit_dock_visibility_changed(visible)
+        return self.gaussian_fit.on_fit_dock_visibility_changed(visible)
+
+    def resizeEvent(self, event):
+        """
+        Trigger a 2D plot update on window resize to prevent orientation issues.
+        Use a zero-timeout singleShot to run after layout has applied new sizes.
+        Debounce scheduling to avoid flooding during continuous resizing.
+        """
+        # First perform the default resize handling
+        super(NDXplorer, self).resizeEvent(event)
+        # Then schedule an update of the 2D plot
+        try:
+            if hasattr(self, 'g_2dplot') and hasattr(self, 'cax') and self.cax is not None:
+                if not getattr(self, '_resize_update_pending', False):
+                    self._resize_update_pending = True
+                    def _do_update():
+                        try:
+                            self.update_2d_plot()
+                        finally:
+                            self._resize_update_pending = False
+                    QtCore.QTimer.singleShot(0, _do_update)
+        except Exception:
+            # Silently ignore any issues during early construction
+            pass

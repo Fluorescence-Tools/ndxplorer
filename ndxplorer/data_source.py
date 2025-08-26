@@ -154,6 +154,70 @@ class DataSelection(object):
         pass
 
 
+class Gaussian2DSelection(DataSelection):
+    def __init__(self, parameter_idx1, parameter_idx2, mu, cov, sigma=1.0, invert=False, enabled=True, name=None, log_x=False, log_y=False):
+        self.parameter_idx1 = int(parameter_idx1)
+        self.parameter_idx2 = int(parameter_idx2)
+        # mu and cov are expected to be provided in the space where masking should be evaluated
+        # (value space for linear axes; log space for log axes)
+        self.mu = np.asarray(mu, dtype=float).reshape(2)
+        self.cov = np.asarray(cov, dtype=float).reshape(2, 2)
+        self.sigma = float(sigma)
+        self.invert = bool(invert)
+        self.enabled = bool(enabled)
+        self.name = name
+        # Per-axis log flags indicating whether to evaluate in log space for that axis
+        self.log_x = bool(log_x)
+        self.log_y = bool(log_y)
+
+    def get_mask(self, data):
+        n_parameter, n_data_points = data.shape
+        mask = np.zeros((n_parameter, n_data_points), dtype=bool)
+        if not self.enabled:
+            return mask
+        if self.parameter_idx1 >= n_parameter or self.parameter_idx2 >= n_parameter:
+            return mask
+        x = data[self.parameter_idx1, :]
+        y = data[self.parameter_idx2, :]
+        # Transform to evaluation space per axis (log if requested)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            if self.log_x:
+                # Mark non-positive as out-of-range later
+                zx = np.where(x > 0.0, np.log(x), np.nan)
+            else:
+                zx = x.astype(float)
+            if self.log_y:
+                zy = np.where(y > 0.0, np.log(y), np.nan)
+            else:
+                zy = y.astype(float)
+        # Build Mahalanobis distance in the chosen space
+        try:
+            inv_cov = np.linalg.inv(self.cov)
+        except Exception:
+            inv_cov = np.linalg.pinv(self.cov)
+        dx = zx - self.mu[0]
+        dy = zy - self.mu[1]
+        # Points with NaN in transformed coordinates should be considered out-of-bounds
+        invalid = ~np.isfinite(dx) | ~np.isfinite(dy)
+        dx = np.nan_to_num(dx, nan=np.inf)
+        dy = np.nan_to_num(dy, nan=np.inf)
+        # Quadratic form for each point
+        a = inv_cov[0, 0]
+        b = inv_cov[0, 1]
+        c = inv_cov[1, 1]
+        d2 = a * dx * dx + 2.0 * b * dx * dy + c * dy * dy
+        # Treat invalid transformed points as outside the ellipse by setting distance to +inf
+        d2[invalid] = np.inf
+        if self.invert:
+            # Inverted selection: mask points INSIDE the ellipse (<= sigma^2)
+            out_of_bounds = d2 <= (self.sigma * self.sigma)
+        else:
+            # Regular selection: mask points OUTSIDE the ellipse (> sigma^2)
+            out_of_bounds = d2 > (self.sigma * self.sigma)
+        mask[:, out_of_bounds] = True
+        return mask
+
+
 class RectangularDataSelection(DataSelection):
 
     def __init__(
@@ -285,26 +349,15 @@ class DataSource(object):
         # Pre-allocate a boolean mask, all set to False initially
         mask = np.zeros((n_parameter, n_data_points), dtype=bool)
 
-        # 1) Apply each DataSelection
+        # 1) Apply each DataSelection by delegating to its get_mask implementation
         for sel in selections:
-            if not sel.enabled:
-                continue
-            if sel.parameter_idx >= n_parameter:
-                # skip invalid indices
-                continue
-
-            param_data = d[sel.parameter_idx, :]  # shape: (n_data_points,)
-
-            if sel.invert:
-                # Mask where data is within (lower, upper)
-                out_of_bounds = (param_data > sel.lower) & (param_data < sel.upper)
-            else:
-                # Mask where data is outside [lower, upper]
-                out_of_bounds = (param_data < sel.lower) | (param_data > sel.upper)
-
-            # For all data points that are out_of_bounds, mask across *all parameters*
-            # (i.e., set True in the entire row for those columns).
-            mask[:, out_of_bounds] = True
+            try:
+                sel_mask = sel.get_mask(d)
+                if isinstance(sel_mask, np.ndarray) and sel_mask.shape == mask.shape:
+                    mask |= sel_mask
+            except Exception:
+                # Ignore faulty selections
+                pass
 
         # 2) Mask NaN/Inf in specified idxs
         for idx in idxs:

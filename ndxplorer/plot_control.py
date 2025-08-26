@@ -7,7 +7,7 @@ import pathlib
 from qtpy import QtGui, uic, QtCore, QtWidgets
 from pyqtgraph.widgets.SpinBox import SpinBox
 
-from . data_source import RectangularDataSelection
+from . data_source import RectangularDataSelection, Gaussian2DSelection
 from .logging_config import logging
 
 
@@ -882,24 +882,24 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         tmp.setText(str(xmin))
         tmp.setData(0, xmin)
         tmp.setFlags(QtCore.Qt.ItemIsEnabled)
-        tmp.setForeground(QtGui.QBrush(QtGui.QColor(0, 0, 0)))  # Set text color to black
-        tmp.setBackground(QtGui.QBrush(QtGui.QColor(255, 255, 255)))  # Set background color to white
+        tmp.setForeground(QtGui.QBrush(QtGui.QColor(0, 0, 0)))
+        tmp.setBackground(QtGui.QBrush(QtGui.QColor(255, 255, 255)))
         font = QtGui.QFont()
-        font.setPointSize(10)  # Set font size
+        font.setPointSize(10)
         tmp.setFont(font)
-        tmp.setTextAlignment(QtCore.Qt.AlignCenter)  # Center align the text
+        tmp.setTextAlignment(QtCore.Qt.AlignCenter)
         table.setItem(row, 1, tmp)
 
         tmp = QtWidgets.QTableWidgetItem()
         tmp.setText(str(xmax))
         tmp.setData(0, xmax)
         tmp.setFlags(QtCore.Qt.ItemIsEnabled)
-        tmp.setForeground(QtGui.QBrush(QtGui.QColor(0, 0, 0)))  # Set text color to black
-        tmp.setBackground(QtGui.QBrush(QtGui.QColor(255, 255, 255)))  # Set background color to white
+        tmp.setForeground(QtGui.QBrush(QtGui.QColor(0, 0, 0)))
+        tmp.setBackground(QtGui.QBrush(QtGui.QColor(255, 255, 255)))
         font = QtGui.QFont()
-        font.setPointSize(10)  # Set font size
+        font.setPointSize(10)
         tmp.setFont(font)
-        tmp.setTextAlignment(QtCore.Qt.AlignCenter)  # Center align the text
+        tmp.setTextAlignment(QtCore.Qt.AlignCenter)
         table.setItem(row, 2, tmp)
 
         cb_invert_x = QtWidgets.QCheckBox(table)
@@ -916,6 +916,64 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         cb_invert_x.stateChanged.connect(self.actionUpdatePlots.trigger)
         logging.log(0, f"Added selection for parameter index {idx} with range ({xmin}, {xmax}), invert={invert}, enabled={enabled}")
 
+    def addGaussianSelection(self, idx1, idx2, mu, cov, sigma=1.0, invert=False, enabled=True, name="", log_x=False, log_y=False):
+        table = self.tableWidget
+        row = table.rowCount()
+        table.setRowCount(row + 1)
+
+        # Column 0: name with metadata
+        meta = {
+            "type": "G2D",
+            "idx1": int(idx1),
+            "idx2": int(idx2),
+            "mu": [float(mu[0]), float(mu[1])],
+            "cov": [
+                [float(cov[0][0]), float(cov[0][1])],
+                [float(cov[1][0]), float(cov[1][1])]
+            ],
+            "sigma": float(sigma),
+            "log_x": bool(log_x),
+            "log_y": bool(log_y)
+        }
+        item0 = QtWidgets.QTableWidgetItem("%s" % name)
+        item0.setFlags(QtCore.Qt.ItemIsEnabled)
+        # Keep legacy index role for compatibility (store idx1)
+        item0.setData(1, int(idx1))
+        try:
+            item0.setData(32, json.dumps(meta))  # Qt.UserRole
+        except Exception:
+            item0.setData(1, int(idx1))
+        table.setItem(row, 0, item0)
+
+        # Columns 1 and 2: placeholders (not used by G2D), keep numeric values to avoid parsing errors
+        it1 = QtWidgets.QTableWidgetItem()
+        it1.setText(str(0.0))
+        it1.setData(0, float(0.0))
+        it1.setFlags(QtCore.Qt.ItemIsEnabled)
+        it1.setTextAlignment(QtCore.Qt.AlignCenter)
+        table.setItem(row, 1, it1)
+
+        it2 = QtWidgets.QTableWidgetItem()
+        it2.setText(str(0.0))
+        it2.setData(0, float(0.0))
+        it2.setFlags(QtCore.Qt.ItemIsEnabled)
+        it2.setTextAlignment(QtCore.Qt.AlignCenter)
+        table.setItem(row, 2, it2)
+
+        # Invert and Enabled checkboxes
+        cb_invert = QtWidgets.QCheckBox(table)
+        table.setCellWidget(row, 3, cb_invert)
+        cb_invert.setChecked(bool(invert))
+
+        cb_enable = QtWidgets.QCheckBox(table)
+        table.setCellWidget(row, 4, cb_enable)
+        cb_enable.setChecked(bool(enabled))
+
+        self.parent.update_plots()
+        cb_enable.stateChanged.connect(self.actionUpdatePlots.trigger)
+        cb_invert.stateChanged.connect(self.actionUpdatePlots.trigger)
+        logging.log(0, f"Added G2D selection for idxs ({idx1}, {idx2}) with sigma={sigma}, invert={invert}, enabled={enabled}, log_x={log_x}, log_y={log_y}")
+
     def onAddSelection(self):
         idx, name = self.p3
         xsel = self.parent.selection_z.get_range()
@@ -929,12 +987,58 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         table = self.tableWidget
         n_rows = int(table.rowCount())
         for r in range(n_rows):
-            idx = int(table.item(r, 0).data(1))
-            name = str(table.item(r, 0).data(0))
-            lower = float(table.item(r, 1).data(0))
-            upper = float(table.item(r, 2).data(0))
+            item0 = table.item(r, 0)
+            idx = int(item0.data(1)) if item0 is not None else 0
+            name = str(item0.data(0)) if item0 is not None else ""
+            lower_item = table.item(r, 1)
+            upper_item = table.item(r, 2)
+            lower = float(lower_item.data(0)) if lower_item is not None else 0.0
+            upper = float(upper_item.data(0)) if upper_item is not None else 0.0
             invert = bool(table.cellWidget(r, 3).checkState())
             enabled = bool(table.cellWidget(r, 4).checkState())
+
+            # Try to decode Gaussian2D metadata
+            meta_raw = None
+            try:
+                meta_raw = item0.data(32)
+            except Exception:
+                meta_raw = None
+            meta = None
+            if meta_raw:
+                try:
+                    meta = json.loads(meta_raw)
+                except Exception:
+                    meta = None
+
+            if isinstance(meta, dict) and meta.get("type") == "G2D":
+                try:
+                    idx1 = int(meta.get("idx1", idx))
+                    idx2 = int(meta.get("idx2", idx))
+                    mu = meta.get("mu", [0.0, 0.0])
+                    cov = meta.get("cov", [[1.0, 0.0], [0.0, 1.0]])
+                    sigma = float(meta.get("sigma", 1.0))
+                    log_x = bool(meta.get("log_x", False))
+                    log_y = bool(meta.get("log_y", False))
+                    selections.append(
+                        Gaussian2DSelection(
+                            parameter_idx1=idx1,
+                            parameter_idx2=idx2,
+                            mu=mu,
+                            cov=cov,
+                            sigma=sigma,
+                            invert=invert,
+                            enabled=enabled,
+                            name=name,
+                            log_x=log_x,
+                            log_y=log_y
+                        )
+                    )
+                    continue
+                except Exception:
+                    # Fallback to rectangular if decoding fails
+                    pass
+
+            # Default rectangular selection
             selections.append(
                 RectangularDataSelection(
                     parameter_idx=idx,

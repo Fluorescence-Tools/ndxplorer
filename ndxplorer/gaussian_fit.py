@@ -23,6 +23,40 @@ class GaussianFit(QtCore.QObject):
     initialized on `main` to minimize changes elsewhere.
     """
 
+    @property
+    def is_log_x(self) -> bool:
+        """True if current x-axis is in log scale.
+        Uses main.plot_control.scale_x if available; defaults to False on error."""
+        try:
+            m = self.main
+            return str(m.plot_control.scale_x).lower() == "log"
+        except Exception:
+            return False
+
+    @property
+    def is_log_y(self) -> bool:
+        """True if current y-axis is in log scale.
+        Uses main.plot_control.scale_y if available; defaults to False on error."""
+        try:
+            m = self.main
+            return str(m.plot_control.scale_y).lower() == "log"
+        except Exception:
+            return False
+
+    @property
+    def fit_in_log(self):
+        try:
+            m = self.main
+            fit_in_log = bool(m.checkBoxGaussFitLog.isChecked())
+        except Exception:
+            fit_in_log = False
+        return fit_in_log
+
+    @property
+    def log_axes(self) -> (bool, bool):
+        # Determine log fitting mode from the UI checkbox (overrides axis scales)
+        return np.array([self.is_log_x, self.is_log_y], dtype=bool)
+
     def __init__(self, main: QtWidgets.QMainWindow):
         super().__init__(main)
         self.main = main
@@ -36,13 +70,20 @@ class GaussianFit(QtCore.QObject):
         btn_row = QtWidgets.QHBoxLayout()
         m.btnFit2DGauss = QtWidgets.QPushButton("Fit", m)
         m.btnClearGaussians = QtWidgets.QPushButton("Clear", m)
+        m.btnSelectGaussian = QtWidgets.QPushButton("Select 1σ", m)
         m.btnSelectPoint = QtWidgets.QCheckBox("Select point", m)
         m.checkBoxShowMarginals = QtWidgets.QCheckBox("Show marginals", m)
         m.checkBoxShowMarginals.setChecked(True)
+        # New: toggle to choose fitting in log-space vs normal
+        m.checkBoxGaussFitLog = QtWidgets.QCheckBox("Log Gauss", m)
+        m.checkBoxGaussFitLog.setChecked(False)
+        m.checkBoxGaussFitLog.setToolTip("Log Gauss: when enabled, fit Gaussians in log scale (both X and Y; positive values only). When disabled, fit in linear scale.")
         btn_row.addWidget(m.btnFit2DGauss)
         btn_row.addWidget(m.btnClearGaussians)
+        btn_row.addWidget(m.btnSelectGaussian)
         btn_row.addWidget(m.btnSelectPoint)
         btn_row.addWidget(m.checkBoxShowMarginals)
+        btn_row.addWidget(m.checkBoxGaussFitLog)
         # Place the button row directly into the target layout
         m.verticalLayout_18.addLayout(btn_row)
 
@@ -98,14 +139,121 @@ class GaussianFit(QtCore.QObject):
         m.btnFit2DGauss.clicked.connect(self.on_fit_2d_gaussian)
         m.btnSelectPoint.toggled.connect(self.on_select_point_toggled)
         m.btnClearGaussians.clicked.connect(self.on_clear_gaussians)
+        m.btnSelectGaussian.clicked.connect(self.on_select_gaussian)
         # Table edits update overlays
         m.tableGaussians.itemChanged.connect(self.on_gaussian_table_item_changed)
+
+        # Highlight selected gaussians in overlay when selection changes
+        sel_model = m.tableGaussians.selectionModel()
+        if sel_model is not None:
+            sel_model.selectionChanged.connect(self.on_gaussian_table_selection_changed)
+        # Also connect the generic itemSelectionChanged signal to ensure updates
+        m.tableGaussians.itemSelectionChanged.connect(lambda: self.on_gaussian_table_selection_changed(None, None))
         # Marginals toggle
         m.checkBoxShowMarginals.toggled.connect(self.on_toggle_gaussian_marginals)
         # Install event filter on table to allow Delete key to remove rows
         m.tableGaussians.installEventFilter(self)
-
+        
     # ---------------------------- Handlers ------------------------------
+    def on_gaussian_table_selection_changed(self, selected, deselected):
+        """Highlight selected Gaussian overlays by increasing line width."""
+        m = self.main
+        items = getattr(m, 'gaussian_items', [])
+        table = getattr(m, 'tableGaussians', None)
+        if table is None or not items:
+            return
+        # Build set of selected row indices
+        sel = set()
+        sel_model = table.selectionModel()
+        if sel_model is not None:
+            sel = {ix.row() for ix in sel_model.selectedRows()}
+
+        # Update line widths
+        for i, it in enumerate(items):
+            pen = it.pen()
+            pen.setWidth(8 if i in sel else 2)
+            it.setPen(pen)
+        m.overlay_plot.replot()
+
+    def on_select_gaussian(self):
+        """Add a Gaussian 2D selection (1σ) for the selected Gaussian rows.
+        The selection is created for the currently selected X/Y parameters
+        and labeled as G2D(ParamX, ParamY).
+        """
+        m = self.main
+        table = getattr(m, 'tableGaussians', None)
+        if table is None:
+            return
+        # Determine current X/Y parameter indices and names
+        try:
+            idx1, name1 = m.plot_control.p1
+            idx2, name2 = m.plot_control.p2
+        except Exception:
+            QtWidgets.QMessageBox.warning(m, "No Parameters", "Could not determine current X/Y parameters.")
+            return
+        label = f"G2D({name1}, {name2})"
+        # Determine axis log state for selection parameters
+        is_log_x = self.is_log_x
+        is_log_y = self.is_log_y
+        # Collect selected rows; if none selected, use all rows if exactly one exists
+        selected = [ix.row() for ix in table.selectionModel().selectedRows()] if table.selectionModel() else []
+        if not selected:
+            if table.rowCount() == 1:
+                selected = [0]
+            else:
+                QtWidgets.QMessageBox.information(m, "Select Gaussian", "Please select one or more Gaussian rows in the table.")
+                return
+        # For each selected row, read mu and cov and add selection
+        for r in selected:
+            try:
+                def getf(c):
+                    it = table.item(r, c)
+                    return float(it.text()) if it is not None else None
+                x = getf(0); y = getf(1); cxx = getf(2); cxy = getf(3); cyy = getf(4)
+                if None in (x, y, cxx, cxy, cyy):
+                    continue
+                mu_v = np.array([x, y], dtype=float)
+                cov_v = np.array([[cxx, cxy], [cxy, cyy]], dtype=float)
+                # minimal regularization if needed
+                try:
+                    eig = np.linalg.eigvalsh(cov_v)
+                    if np.any(eig <= 0):
+                        cov_v = cov_v + 1e-9 * np.eye(2)
+                except Exception:
+                    cov_v = cov_v + 1e-9 * np.eye(2)
+                # Transform to log space for axes that are log so that selection matches displayed Gaussian
+                mu_s = mu_v.copy()
+                cov_s = cov_v.copy()
+                if self.is_log_x or self.is_log_y:
+                    eps = 1e-12
+                    J = np.eye(2, dtype=float)
+                    if is_log_x:
+                        mu_safe = mu_v[0] if mu_v[0] > eps else eps
+                        mu_s[0] = np.log(mu_safe)
+                        J[0, 0] = 1.0 / mu_safe
+                    if is_log_y:
+                        mu_safe = mu_v[1] if mu_v[1] > eps else eps
+                        mu_s[1] = np.log(mu_safe)
+                        J[1, 1] = 1.0 / mu_safe
+                    cov_s = J @ cov_v @ J.T
+                    # Regularize
+                    try:
+                        eig = np.linalg.eigvalsh(cov_s)
+                        if np.any(eig <= 0):
+                            cov_s = cov_s + 1e-9 * np.eye(2)
+                    except Exception:
+                        cov_s = cov_s + 1e-9 * np.eye(2)
+                # Add selection to the selection table with log flags
+                try:
+                    m.plot_control.addGaussianSelection(idx1, idx2, mu_s, cov_s, sigma=1.0, invert=False, enabled=True, name=label, log_x=is_log_x, log_y=is_log_y)
+                except Exception:
+                    # Fallback: show warning
+                    QtWidgets.QMessageBox.warning(m, "Selection Error", "Could not add Gaussian selection to the selection table.")
+                    return
+            except Exception:
+                continue
+        # Trigger update (addGaussianSelection already triggers update)
+
     def on_fit_2d_gaussian(self):
         """
         Optimize the parameters (means, covariances, weights) of the Gaussians listed
@@ -131,7 +279,7 @@ class GaussianFit(QtCore.QObject):
 
         X = np.column_stack([d1, d2])
 
-        # Keep only points within the currently visible histogram range
+        # Keep only points within the currently visible histogram range (value space)
         try:
             _, x_edges, y_edges = m._histogram["2d"]
             x_min_vis = float(x_edges[0]); x_max_vis = float(x_edges[-1])
@@ -149,12 +297,36 @@ class GaussianFit(QtCore.QObject):
             return
         X = X[vis_mask]
 
-        # Filter to finite rows
+        # Filter to finite rows in value space
         finite_mask = np.all(np.isfinite(X), axis=1)
         if not np.any(finite_mask):
             QtWidgets.QMessageBox.warning(m, "No data", "Selected data contains no finite values for fitting.")
             return
         X = X[finite_mask]
+
+        log_axes = self.log_axes
+        is_log_x, is_log_y = log_axes
+
+        # Prepare data in fitting space (Z-space): log-transform axes on log scale
+        X_fit = X
+        if np.any(log_axes):
+            # Remove non-positive values for log-transformed axes
+            pos_mask = np.ones(X.shape[0], dtype=bool)
+            if is_log_x:
+                pos_mask &= X[:, 0] > 0.0
+            if is_log_y:
+                pos_mask &= X[:, 1] > 0.0
+            if not np.any(pos_mask):
+                QtWidgets.QMessageBox.warning(m, "No data", "No positive data available on log-scaled axis for fitting.")
+                return
+            X_pos = X[pos_mask].copy()
+            # Apply log to required columns
+            if is_log_x:
+                X_pos[:, 0] = np.log(X_pos[:, 0])
+            if is_log_y:
+                X_pos[:, 1] = np.log(X_pos[:, 1])
+            # Replace with transformed subset
+            X_fit = X_pos
 
         # Lazy import of sklearn GaussianMixture via documented API
         try:
@@ -164,11 +336,63 @@ class GaussianFit(QtCore.QObject):
             return
 
         n_components = len(rows)
-        # Build initialization arrays according to sklearn GaussianMixture API
-        means_init = np.array([mu for (mu, cov, w) in rows], dtype=float)
-        covs = np.array([cov for (mu, cov, w) in rows], dtype=float)
-        precs = np.array([np.linalg.pinv(c) for c in covs])
-        w_init = np.array([max(0.0, float(w)) for (mu, cov, w) in rows], dtype=float)
+
+        # Helper to transform (mu, cov) between value space and fitting space
+        eps = 1e-12
+        def to_fit_space(mu_v: np.ndarray, cov_v: np.ndarray) -> (np.ndarray, np.ndarray):
+            mu_v = np.asarray(mu_v, dtype=float).reshape(2)
+            cov_v = np.asarray(cov_v, dtype=float).reshape(2, 2)
+            mu_z = mu_v.copy()
+            J = np.eye(2, dtype=float)
+            if is_log_x:
+                mu_safe = mu_v[0] if mu_v[0] > eps else eps
+                mu_z[0] = np.log(mu_safe)
+                J[0, 0] = 1.0 / mu_safe
+            if is_log_y:
+                mu_safe = mu_v[1] if mu_v[1] > eps else eps
+                mu_z[1] = np.log(mu_safe)
+                J[1, 1] = 1.0 / mu_safe
+            cov_z = J @ cov_v @ J.T
+            # Minimal regularization to ensure positive semidefinite
+            eig = np.linalg.eigvalsh(cov_z)
+            if np.any(eig <= 0):
+                cov_z = cov_z + 1e-9 * np.eye(2)
+            return mu_z, cov_z
+
+        def to_value_space(mu_z: np.ndarray, cov_z: np.ndarray) -> (np.ndarray, np.ndarray):
+            mu_z = np.asarray(mu_z, dtype=float).reshape(2)
+            cov_z = np.asarray(cov_z, dtype=float).reshape(2, 2)
+            mu_v = mu_z.copy()
+            G = np.eye(2, dtype=float)
+            if is_log_x:
+                mu_v[0] = np.exp(mu_z[0])
+                G[0, 0] = mu_v[0]
+            if is_log_y:
+                mu_v[1] = np.exp(mu_z[1])
+                G[1, 1] = mu_v[1]
+            cov_v = G @ cov_z @ G.T
+            # Minimal regularization
+            try:
+                eig = np.linalg.eigvalsh(cov_v)
+                if np.any(eig <= 0):
+                    cov_v = cov_v + 1e-9 * np.eye(2)
+            except Exception:
+                cov_v = cov_v + 1e-9 * np.eye(2)
+            return mu_v, cov_v
+
+        # Build initialization arrays in fitting space according to sklearn API
+        means_init_fit = []
+        covs_fit = []
+        w_init = []
+        for (mu_v, cov_v, w) in rows:
+            mu_z, cov_z = (mu_v, cov_v) if not np.any(log_axes) else to_fit_space(mu_v, cov_v)
+            means_init_fit.append(mu_z)
+            covs_fit.append(cov_z)
+            w_init.append(max(0.0, float(w)))
+        means_init_fit = np.array(means_init_fit, dtype=float)
+        covs_fit = np.array(covs_fit, dtype=float)
+        precs_fit = np.array([np.linalg.pinv(c) for c in covs_fit])
+        w_init = np.array(w_init, dtype=float)
         s = np.sum(w_init)
         if not np.isfinite(s) or s <= 0:
             w_init = np.ones(n_components, dtype=float) / n_components
@@ -181,26 +405,26 @@ class GaussianFit(QtCore.QObject):
             random_state=0,
             init_params='kmeans',
             max_iter=200,
-            means_init=means_init,
-            precisions_init=precs,
+            means_init=means_init_fit,
+            precisions_init=precs_fit,
             weights_init=w_init
         )
 
-        # Fit directly to visible raw data without weighting
+        # Fit to data in fitting space
         try:
-            gm.fit(X)
+            gm.fit(X_fit)
         except Exception as e:
             QtWidgets.QMessageBox.warning(m, "Fit failed", f"GMM fit failed: {e}")
             return
 
-        # Retrieve fitted parameters
-        means = np.array(gm.means_, dtype=float)
+        # Retrieve fitted parameters (in fitting space)
+        means_fit = np.array(gm.means_, dtype=float)
         try:
-            covariances = np.array(gm.covariances_, dtype=float)
+            covariances_fit = np.array(gm.covariances_, dtype=float)
         except Exception:
             try:
                 precisions = np.array(gm.precisions_, dtype=float)
-                covariances = np.array([np.linalg.pinv(P) for P in precisions])
+                covariances_fit = np.array([np.linalg.pinv(P) for P in precisions])
             except Exception:
                 QtWidgets.QMessageBox.warning(m, "Fit failed", "Could not retrieve covariances from the fitted model.")
                 return
@@ -209,14 +433,21 @@ class GaussianFit(QtCore.QObject):
         except Exception:
             weights_fitted = None
 
+        # Transform fitted parameters back to value space if needed and update table
         for i in range(n_components):
+            mu_i = means_fit[i]
+            cov_i = covariances_fit[i]
+            if np.any(log_axes):
+                mu_v_i, cov_v_i = to_value_space(mu_i, cov_i)
+            else:
+                mu_v_i, cov_v_i = mu_i, cov_i
             wi = None
             try:
                 if weights_fitted is not None and i < len(weights_fitted):
                     wi = float(weights_fitted[i])
             except Exception:
                 wi = None
-            self._update_gaussian_row(i, means[i], covariances[i], wi)
+            self._update_gaussian_row(i, mu_v_i, cov_v_i, wi)
         # Redraw overlays from the updated table
         self._redraw_gaussian_overlays_from_table()
 
@@ -346,6 +577,9 @@ class GaussianFit(QtCore.QObject):
 
     def _add_gaussian_overlay(self, mu: Tuple[float, float], cov: np.ndarray, label: str = "", color: Optional[str] = None):
         """Create and add a Gaussian ellipse overlay to overlay_plot.
+        If an axis is log-scaled, construct the ellipse in log space so it appears
+        as a true ellipse on the log-spaced histogram grid, then map back to value
+        space for bin-index conversion.
         If `color` is provided, use it; otherwise fall back to the legacy color cycle.
         """
         m = self.main
@@ -361,21 +595,47 @@ class GaussianFit(QtCore.QObject):
             m.overlay_plot.setAxisScale(QwtPlot.xBottom, 0, len(x_edges) - 1)
             m.overlay_plot.setAxisScale(QwtPlot.yLeft, 0, len(y_edges) - 1)
         except Exception:
-            pass
-        # Build ellipse points in value space for c=1 contour
-        mx, my = mu
-        vals, vecs = np.linalg.eigh(cov)
+            return
+        # Detect log axes
+        is_log_x = self.is_log_x
+        is_log_y = self.is_log_y
+        # Transform parameters to the construction space (log for log-axes)
+        mx, my = float(mu[0]), float(mu[1])
+        cov = np.asarray(cov, dtype=float).reshape(2, 2)
+        mu_s = np.array([mx, my], dtype=float)
+        cov_s = cov.copy()
+        if is_log_x or is_log_y:
+            eps = 1e-12
+            J = np.eye(2, dtype=float)
+            if is_log_x:
+                mu_safe = mx if mx > eps else eps
+                mu_s[0] = np.log(mu_safe)
+                J[0, 0] = 1.0 / mu_safe
+            if is_log_y:
+                mu_safe = my if my > eps else eps
+                mu_s[1] = np.log(mu_safe)
+                J[1, 1] = 1.0 / mu_safe
+            cov_s = J @ cov @ J.T
+        # Build ellipse points in construction space for c=1 contour
+        vals, vecs = np.linalg.eigh(cov_s)
         vals = np.maximum(vals, 1e-12)
         t = np.linspace(0, 2*np.pi, 200)
         circ = np.vstack([np.cos(t), np.sin(t)])  # 2 x N
         L = np.diag(np.sqrt(vals))
         pts = (vecs @ L @ circ)
-        xs = pts[0, :] + mx
-        ys = pts[1, :] + my
+        xs_s = pts[0, :] + mu_s[0]
+        ys_s = pts[1, :] + mu_s[1]
+        # Map construction-space points back to value space for bin conversion
+        xs_v = np.array(xs_s, dtype=float)
+        ys_v = np.array(ys_s, dtype=float)
+        if is_log_x:
+            xs_v = np.exp(xs_v)
+        if is_log_y:
+            ys_v = np.exp(ys_v)
         # Map to bin coordinates
         x_coords = []
         y_coords = []
-        for xv, yv in zip(xs, ys):
+        for xv, yv in zip(xs_v, ys_v):
             xb = m.value_to_bin(xv, x_edges)
             yb = m.value_to_bin(yv, y_edges)
             if xb is None or yb is None:
@@ -525,6 +785,11 @@ class GaussianFit(QtCore.QObject):
             self._add_gaussian_overlay((float(mu[0]), float(mu[1])), np.array(cov, dtype=float), color=color)
         m._collect_gaussian_colors = False
         m.overlay_plot.replot()
+        # Re-apply selection highlighting after redraw
+        try:
+            self.on_gaussian_table_selection_changed(None, None)
+        except Exception:
+            pass
         # Draw marginals if toggled on
         try:
             if hasattr(m, 'checkBoxShowMarginals') and m.checkBoxShowMarginals.isChecked():
@@ -591,7 +856,7 @@ class GaussianFit(QtCore.QObject):
             y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
         except Exception:
             return
-        # Determine scaling based on current counts
+        # Detect log axes to match 2D Gaussian handling
         x_max = float(np.nanmax(x_counts)) if len(x_counts) else 1.0
         y_max = float(np.nanmax(y_counts)) if len(y_counts) else 1.0
         x_scale = 0.9 * x_max if x_max > 0 else 1.0
@@ -639,10 +904,37 @@ class GaussianFit(QtCore.QObject):
                 color = None
             if color is None:
                 color = default_colors[idx % len(default_colors)]
-            # Compute normalized gaussian pdfs (area=1), then weight by wn
+            # Compute normalized marginal pdfs matching 2D handling:
+            # - linear axis: Normal in value space N(mu, var)
+            # - log axis: Log-normal in value space with log-parameters from linearization at mu
             try:
-                gx0 = np.exp(-0.5 * ((x_centers - mx) / sx) ** 2) / (sx * np.sqrt(2 * np.pi))
-                gy0 = np.exp(-0.5 * ((y_centers - my) / sy) ** 2) / (sy * np.sqrt(2 * np.pi))
+                eps = 1e-12
+                # X marginal
+                if self.is_log_x:
+                    mx_safe = mx if mx > eps else eps
+                    # linearized log-variance consistent with 2D overlay (J = 1/mu)
+                    var_logx = max(varx / (mx_safe * mx_safe), 1e-12)
+                    s_logx = np.sqrt(var_logx)
+                    # log-normal pdf over positive centers only
+                    xc = np.asarray(x_centers, dtype=float)
+                    gx0 = np.zeros_like(xc, dtype=float)
+                    pos = xc > 0.0
+                    z = (np.log(xc[pos]) - np.log(mx_safe)) / s_logx
+                    gx0[pos] = np.exp(-0.5 * z * z) / (xc[pos] * s_logx * np.sqrt(2 * np.pi))
+                else:
+                    gx0 = np.exp(-0.5 * ((x_centers - mx) / sx) ** 2) / (sx * np.sqrt(2 * np.pi))
+                # Y marginal
+                if self.is_log_y:
+                    my_safe = my if my > eps else eps
+                    var_logy = max(vary / (my_safe * my_safe), 1e-12)
+                    s_logy = np.sqrt(var_logy)
+                    yc = np.asarray(y_centers, dtype=float)
+                    gy0 = np.zeros_like(yc, dtype=float)
+                    posy = yc > 0.0
+                    z = (np.log(yc[posy]) - np.log(my_safe)) / s_logy
+                    gy0[posy] = np.exp(-0.5 * z * z) / (yc[posy] * s_logy * np.sqrt(2 * np.pi))
+                else:
+                    gy0 = np.exp(-0.5 * ((y_centers - my) / sy) ** 2) / (sy * np.sqrt(2 * np.pi))
                 gxw = gx0 * wn
                 gyw = gy0 * wn
                 mxx = float(np.nanmax(gxw)) if gxw.size else 0.0
@@ -758,21 +1050,15 @@ class GaussianFit(QtCore.QObject):
             pass
 
     # ----------------------- Optional visibility hook --------------------
-    def on_fit_dock_visibility_changed(self, visible: bool):
-        """Ensure select mode is disabled when the Fit dock is hidden."""
+    def on_fit_dock_visibility_changed(self, visible: bool = False):
+        """When the Fit dock visibility changes, keep UX consistent:
+        - If becoming visible, automatically enable 'Select point' for seamless interaction.
+        - If becoming hidden, disable select mode and clear point mode in the mouse filter.
+        """
+        print("on_fit_dock_visibility_changed", visible)
         m = self.main
-        try:
-            if not visible:
-                if hasattr(m, 'btnSelectPoint') and m.btnSelectPoint is not None:
-                    try:
-                        if m.btnSelectPoint.isChecked():
-                            m.btnSelectPoint.setChecked(False)
-                    except Exception:
-                        pass
-                if hasattr(m, 'mouse_event_filter') and m.mouse_event_filter is not None:
-                    try:
-                        m.mouse_event_filter.set_point_mode(False, callback=None)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        m.btnSelectPoint.setChecked(visible)
+        if visible:
+            m.mouse_event_filter.set_point_mode(visible, callback=self.on_point_selected)
+        else:
+            m.mouse_event_filter.set_point_mode(False, callback=None)

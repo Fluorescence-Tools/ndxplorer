@@ -21,9 +21,9 @@ class FixedImageItem(guiqwt.image.ImageItem):
             yMap.transform(yb) + 1,
         )
 
-        # Convert float to int for W and H
-        W = int(canvasRect.right())
-        H = int(canvasRect.bottom())
+        # Use canvas width and height for W and H
+        W = int(canvasRect.width())
+        H = int(canvasRect.height())
         if self._offscreen.shape != (H, W):
             self._offscreen = np.empty((H, W), np.uint32)
             self._image = QImage(self._offscreen, W, H, QImage.Format_ARGB32)
