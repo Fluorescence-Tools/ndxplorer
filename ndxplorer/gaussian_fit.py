@@ -38,6 +38,7 @@ class GaussianFit(QtCore.QObject):
         m.btnClearGaussians = QtWidgets.QPushButton("Clear", m)
         m.btnSelectPoint = QtWidgets.QCheckBox("Select point", m)
         m.checkBoxShowMarginals = QtWidgets.QCheckBox("Show marginals", m)
+        m.checkBoxShowMarginals.setChecked(True)
         btn_row.addWidget(m.btnFit2DGauss)
         btn_row.addWidget(m.btnClearGaussians)
         btn_row.addWidget(m.btnSelectPoint)
@@ -275,6 +276,12 @@ class GaussianFit(QtCore.QObject):
             color = None
         # Draw overlay with stable color
         self._add_gaussian_overlay(mu, cov, label=f"({mu[0]:.3g},{mu[1]:.3g})", color=color)
+        # If marginals are enabled, redraw overlays and marginals immediately
+        try:
+            if hasattr(m, 'checkBoxShowMarginals') and m.checkBoxShowMarginals.isChecked():
+                self._redraw_gaussian_overlays_from_table()
+        except Exception:
+            pass
 
     def on_clear_gaussians(self):
         """Remove all Gaussian overlays and clear the table and marginals."""
