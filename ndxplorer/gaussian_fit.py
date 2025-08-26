@@ -66,39 +66,31 @@ class GaussianFit(QtCore.QObject):
     # ------------------------------ UI ---------------------------------
     def _build_ui(self):
         m = self.main
-        # Button row: Fit + Clear + Select + Marginals
+        # Button row: Fit + Clear + Select + Marginals + Settings
         btn_row = QtWidgets.QHBoxLayout()
         m.btnFit2DGauss = QtWidgets.QPushButton("Fit", m)
         m.btnClearGaussians = QtWidgets.QPushButton("Clear", m)
-        m.btnSelectGaussian = QtWidgets.QPushButton("Select 1σ", m)
+        m.btnSelectGaussian = QtWidgets.QPushButton("Select", m)
         m.btnSelectPoint = QtWidgets.QCheckBox("Select point", m)
-        m.checkBoxShowMarginals = QtWidgets.QCheckBox("Show marginals", m)
+        m.checkBoxShowMarginals = QtWidgets.QCheckBox("Marginals", m)
         m.checkBoxShowMarginals.setChecked(True)
         # New: toggle to choose fitting in log-space vs normal
         m.checkBoxGaussFitLog = QtWidgets.QCheckBox("Log Gauss", m)
         m.checkBoxGaussFitLog.setChecked(False)
         m.checkBoxGaussFitLog.setToolTip("Log Gauss: when enabled, fit Gaussians in log scale (both X and Y; positive values only). When disabled, fit in linear scale.")
+        # New: GMM Settings button
+        m.btnGMMSettings = QtWidgets.QPushButton("Settings", m)
+        m.btnGMMSettings.setToolTip("Configure GaussianMixture (sklearn) parameters and save them to your user settings.")
         btn_row.addWidget(m.btnFit2DGauss)
         btn_row.addWidget(m.btnClearGaussians)
         btn_row.addWidget(m.btnSelectGaussian)
         btn_row.addWidget(m.btnSelectPoint)
         btn_row.addWidget(m.checkBoxShowMarginals)
         btn_row.addWidget(m.checkBoxGaussFitLog)
+        btn_row.addWidget(m.btnGMMSettings)
         # Place the button row directly into the target layout
         m.verticalLayout_18.addLayout(btn_row)
 
-        # Local window controls for click-based covariance estimation
-        m.lblLocalWindow = QtWidgets.QLabel("Local window (bins):", m)
-        m.spinLocalWindow = QtWidgets.QSpinBox(m)
-        m.spinLocalWindow.setRange(1, 200)
-        m.spinLocalWindow.setSingleStep(1)
-        m.spinLocalWindow.setValue(10)
-        m.spinLocalWindow.setToolTip("Size of half-window in bins for local covariance estimation around the clicked point.\nEffective window size is (2*value+1) in each dimension.")
-        window_row = QtWidgets.QHBoxLayout()
-        window_row.addWidget(m.lblLocalWindow)
-        window_row.addWidget(m.spinLocalWindow)
-        window_row.addStretch(1)
-        m.verticalLayout_18.addLayout(window_row)
 
         # Table of gaussians (x, y, cov, weight)
         m.tableGaussians = QtWidgets.QTableWidget(m)
@@ -140,6 +132,11 @@ class GaussianFit(QtCore.QObject):
         m.btnSelectPoint.toggled.connect(self.on_select_point_toggled)
         m.btnClearGaussians.clicked.connect(self.on_clear_gaussians)
         m.btnSelectGaussian.clicked.connect(self.on_select_gaussian)
+        # Open GMM settings dialog
+        try:
+            m.btnGMMSettings.clicked.connect(self.on_open_gmm_settings)
+        except Exception:
+            pass
         # Table edits update overlays
         m.tableGaussians.itemChanged.connect(self.on_gaussian_table_item_changed)
 
@@ -253,6 +250,40 @@ class GaussianFit(QtCore.QObject):
             except Exception:
                 continue
         # Trigger update (addGaussianSelection already triggers update)
+
+    def on_open_gmm_settings(self):
+        """Open the GMM settings dialog and refresh cached settings if accepted."""
+        try:
+            from .gaussian_settings_dialog import GMMSettingsDialog, load_gmm_settings
+        except Exception:
+            return
+        dlg = GMMSettingsDialog(parent=self.main)
+        if dlg.exec_():
+            # Reload settings into cache and refresh UI elements relying on settings
+            try:
+                cfg = load_gmm_settings()
+                self._gmm_settings = cfg
+                m = self.main
+                if hasattr(m, 'spinLocalWindow') and m.spinLocalWindow is not None:
+                    lw = int(cfg.get("local_window_bins", 10))
+                    lw = max(1, min(lw, 200))
+                    try:
+                        m.spinLocalWindow.blockSignals(True)
+                        m.spinLocalWindow.setValue(lw)
+                    finally:
+                        m.spinLocalWindow.blockSignals(False)
+            except Exception:
+                pass
+
+    def _get_gmm_settings(self):
+        """Load or return cached GMM settings dict."""
+        if not hasattr(self, "_gmm_settings") or not isinstance(self._gmm_settings, dict):
+            try:
+                from .gaussian_settings_dialog import load_gmm_settings
+                self._gmm_settings = load_gmm_settings()
+            except Exception:
+                self._gmm_settings = {}
+        return dict(self._gmm_settings)
 
     def on_fit_2d_gaussian(self):
         """
@@ -399,16 +430,35 @@ class GaussianFit(QtCore.QObject):
         else:
             w_init = w_init / s
 
-        gm = GaussianMixture(
+        # Load user-configured GMM settings
+        cfg = self._get_gmm_settings()
+        covariance_type = str(cfg.get('covariance_type', 'full'))
+        params = dict(
             n_components=n_components,
-            covariance_type='full',
-            random_state=0,
-            init_params='kmeans',
-            max_iter=200,
-            means_init=means_init_fit,
-            precisions_init=precs_fit,
-            weights_init=w_init
+            covariance_type=covariance_type,
+            tol=float(cfg.get('tol', 1e-3)),
+            reg_covar=float(cfg.get('reg_covar', 1e-6)),
+            max_iter=int(cfg.get('max_iter', 200)),
+            n_init=int(cfg.get('n_init', 1)),
+            init_params=str(cfg.get('init_params', 'kmeans')),
+            warm_start=bool(cfg.get('warm_start', False)),
+            verbose=int(cfg.get('verbose', 0)),
+            verbose_interval=int(cfg.get('verbose_interval', 10)),
         )
+        rs = cfg.get('random_state', None)
+        if rs is not None:
+            try:
+                params['random_state'] = int(rs)
+            except Exception:
+                params['random_state'] = None
+        # Only pass precisions_init if covariance_type is 'full' to match shapes
+        if covariance_type == 'full':
+            params['precisions_init'] = precs_fit
+        # We can safely pass means_init and weights_init for all types
+        params['means_init'] = means_init_fit
+        params['weights_init'] = w_init
+
+        gm = GaussianMixture(**params)
 
         # Fit to data in fitting space
         try:
@@ -485,11 +535,16 @@ class GaussianFit(QtCore.QObject):
         # Therefore, fix the mean to the clicked bin center and estimate covariance locally.
         x_c = m.bin_to_x_value(ix, x_edges)
         y_c = m.bin_to_y_value(iy, y_edges)
-        # Read local window half-size from UI control if available
+        # Read local window half-size from UI control if available; fallback to settings
         try:
             window_size = int(m.spinLocalWindow.value())
         except Exception:
-            window_size = 10
+            try:
+                from .gaussian_settings_dialog import load_gmm_settings
+                cfg = load_gmm_settings()
+                window_size = int(cfg.get("local_window_bins", 10))
+            except Exception:
+                window_size = 10
         window_size = max(1, min(window_size, 200))
         mu_local, cov = self._compute_local_moments(H, x_edges, y_edges, ix, iy, window=window_size)
         if cov is None:
