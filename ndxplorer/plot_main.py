@@ -3713,7 +3713,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
             return self.gaussian_fit._delete_selected_gaussian_rows(rows)
 
-
     def _on_fit_dock_visibility_changed(self, visible: bool):
         """Delegate to GaussianFit."""
         return self.gaussian_fit.on_fit_dock_visibility_changed(visible)
