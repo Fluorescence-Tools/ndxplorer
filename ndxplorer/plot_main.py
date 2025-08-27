@@ -3152,8 +3152,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         Args:
             event: The key event
         """
-        # Check if the 'c' key was pressed
-        if event.key() == QtCore.Qt.Key_C:
+        # Check if Ctrl+L was pressed to toggle clustering dialog
+        if (event.modifiers() & QtCore.Qt.ControlModifier) and event.key() == QtCore.Qt.Key_L:
             # Open the clustering dialog
             self.toggle_clustering_dialog()
         else:
