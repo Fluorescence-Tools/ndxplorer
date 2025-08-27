@@ -8,6 +8,11 @@ It wires all Gaussian-related signal handlers here and implements the logic
 """
 from typing import Iterator, Optional, Tuple, List
 
+import json
+import csv
+import os
+from datetime import datetime
+
 import numpy as np
 from qtpy import QtCore, QtWidgets
 
@@ -66,11 +71,19 @@ class GaussianFit(QtCore.QObject):
     # ------------------------------ UI ---------------------------------
     def _build_ui(self):
         m = self.main
-        # Button row: Fit + Clear + Select + Marginals + Settings
+        # Button row: Fit + Clear + Select + Selection σ + Settings
         btn_row = QtWidgets.QHBoxLayout()
-        m.btnFit2DGauss = QtWidgets.QPushButton("Fit", m)
-        m.btnClearGaussians = QtWidgets.QPushButton("Clear", m)
-        m.btnSelectGaussian = QtWidgets.QPushButton("Select", m)
+        m.btnFit2DGauss = QtWidgets.QToolButton(m); m.btnFit2DGauss.setText("Fit")
+        m.btnClearGaussians = QtWidgets.QToolButton(m); m.btnClearGaussians.setText("Clear")
+        m.btnSelectGaussian = QtWidgets.QToolButton(m); m.btnSelectGaussian.setText("Select")
+        # Selection height (number of sigmas) next to Select button
+        lblSigma = QtWidgets.QLabel("Selection σ:", m)
+        m.spinSelectionSigma = QtWidgets.QDoubleSpinBox(m)
+        m.spinSelectionSigma.setRange(0.1, 4.0)
+        m.spinSelectionSigma.setSingleStep(0.2)
+        m.spinSelectionSigma.setDecimals(2)
+        m.spinSelectionSigma.setValue(1.0)
+        m.spinSelectionSigma.setToolTip("Number of sigmas used for Gaussian burst selection (1.0 = 1σ).")
         m.btnSelectPoint = QtWidgets.QCheckBox("Select point", m)
         m.checkBoxShowMarginals = QtWidgets.QCheckBox("Marginals", m)
         m.checkBoxShowMarginals.setChecked(True)
@@ -79,14 +92,13 @@ class GaussianFit(QtCore.QObject):
         m.checkBoxGaussFitLog.setChecked(False)
         m.checkBoxGaussFitLog.setToolTip("Log Gauss: when enabled, fit Gaussians in log scale (both X and Y; positive values only). When disabled, fit in linear scale.")
         # New: GMM Settings button
-        m.btnGMMSettings = QtWidgets.QPushButton("Settings", m)
+        m.btnGMMSettings = QtWidgets.QToolButton(m); m.btnGMMSettings.setText("Settings")
         m.btnGMMSettings.setToolTip("Configure GaussianMixture (sklearn) parameters and save them to your user settings.")
         btn_row.addWidget(m.btnFit2DGauss)
         btn_row.addWidget(m.btnClearGaussians)
         btn_row.addWidget(m.btnSelectGaussian)
-        btn_row.addWidget(m.btnSelectPoint)
-        btn_row.addWidget(m.checkBoxShowMarginals)
-        btn_row.addWidget(m.checkBoxGaussFitLog)
+        btn_row.addWidget(lblSigma)
+        btn_row.addWidget(m.spinSelectionSigma)
         btn_row.addWidget(m.btnGMMSettings)
         # Place the button row directly into the target layout
         m.verticalLayout_18.addLayout(btn_row)
@@ -112,6 +124,19 @@ class GaussianFit(QtCore.QObject):
         )
         # Add table directly into the target layout
         m.verticalLayout_18.addWidget(m.tableGaussians)
+
+        # Options row placed below the table: checkboxes + Save/Load
+        options_row = QtWidgets.QHBoxLayout()
+        options_row.addWidget(m.btnSelectPoint)
+        options_row.addWidget(m.checkBoxShowMarginals)
+        options_row.addWidget(m.checkBoxGaussFitLog)
+        # Save/Load in same row as checkboxes
+        m.btnSaveGaussians = QtWidgets.QToolButton(m); m.btnSaveGaussians.setText("Save")
+        m.btnLoadGaussians = QtWidgets.QToolButton(m); m.btnLoadGaussians.setText("Load")
+        options_row.addWidget(m.btnSaveGaussians)
+        options_row.addWidget(m.btnLoadGaussians)
+        options_row.addStretch(1)
+        m.verticalLayout_18.addLayout(options_row)
 
         # Guard flag to avoid recursive redraws during programmatic updates
         m._updating_gaussian_table = False
@@ -148,6 +173,10 @@ class GaussianFit(QtCore.QObject):
         m.tableGaussians.itemSelectionChanged.connect(lambda: self.on_gaussian_table_selection_changed(None, None))
         # Marginals toggle
         m.checkBoxShowMarginals.toggled.connect(self.on_toggle_gaussian_marginals)
+        # Save/Load buttons
+        m.btnSaveGaussians.clicked.connect(self.on_save_gaussians)
+        m.btnLoadGaussians.clicked.connect(self.on_load_gaussians)
+
         # Install event filter on table to allow Delete key to remove rows
         m.tableGaussians.installEventFilter(self)
         
@@ -222,27 +251,16 @@ class GaussianFit(QtCore.QObject):
                 mu_s = mu_v.copy()
                 cov_s = cov_v.copy()
                 if self.is_log_x or self.is_log_y:
-                    eps = 1e-12
-                    J = np.eye(2, dtype=float)
-                    if is_log_x:
-                        mu_safe = mu_v[0] if mu_v[0] > eps else eps
-                        mu_s[0] = np.log(mu_safe)
-                        J[0, 0] = 1.0 / mu_safe
-                    if is_log_y:
-                        mu_safe = mu_v[1] if mu_v[1] > eps else eps
-                        mu_s[1] = np.log(mu_safe)
-                        J[1, 1] = 1.0 / mu_safe
-                    cov_s = J @ cov_v @ J.T
-                    # Regularize
-                    try:
-                        eig = np.linalg.eigvalsh(cov_s)
-                        if np.any(eig <= 0):
-                            cov_s = cov_s + 1e-9 * np.eye(2)
-                    except Exception:
-                        cov_s = cov_s + 1e-9 * np.eye(2)
+                    mu_s, cov_s = self._transform_params_for_axes(mu_v, cov_v)
                 # Add selection to the selection table with log flags
                 try:
-                    m.plot_control.addGaussianSelection(idx1, idx2, mu_s, cov_s, sigma=1.0, invert=False, enabled=True, name=label, log_x=is_log_x, log_y=is_log_y)
+                    try:
+                        sigma_val = float(m.spinSelectionSigma.value())
+                    except Exception:
+                        sigma_val = 1.0
+                    if not np.isfinite(sigma_val) or sigma_val <= 0:
+                        sigma_val = 1.0
+                    m.plot_control.addGaussianSelection(idx1, idx2, mu_s, cov_s, sigma=sigma_val, invert=False, enabled=True, name=label, log_x=is_log_x, log_y=is_log_y)
                 except Exception:
                     # Fallback: show warning
                     QtWidgets.QMessageBox.warning(m, "Selection Error", "Could not add Gaussian selection to the selection table.")
@@ -595,6 +613,60 @@ class GaussianFit(QtCore.QObject):
         m.overlay_plot.replot()
 
     # ---------------------------- Helpers -------------------------------
+    def _transform_params_for_axes(self, mu: Tuple[float, float], cov: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Transform mean/covariance to construction space depending on log axes.
+        If an axis is log, we linearize around mu using J=diag(1/mu) for that axis.
+        Returns (mu_s, cov_s). Safe against non-positive means by clamping with eps.
+        """
+        mx, my = float(mu[0]), float(mu[1])
+        cov = np.asarray(cov, dtype=float).reshape(2, 2)
+        mu_s = np.array([mx, my], dtype=float)
+        cov_s = cov.copy()
+        if self.is_log_x or self.is_log_y:
+            eps = 1e-12
+            J = np.eye(2, dtype=float)
+            if self.is_log_x:
+                mx_safe = mx if mx > eps else eps
+                mu_s[0] = np.log(mx_safe)
+                J[0, 0] = 1.0 / mx_safe
+            if self.is_log_y:
+                my_safe = my if my > eps else eps
+                mu_s[1] = np.log(my_safe)
+                J[1, 1] = 1.0 / my_safe
+            cov_s = J @ cov @ J.T
+        # Minimal regularization if needed
+        try:
+            eig = np.linalg.eigvalsh(cov_s)
+            if np.any(eig <= 0):
+                cov_s = cov_s + 1e-9 * np.eye(2)
+        except Exception:
+            cov_s = cov_s + 1e-9 * np.eye(2)
+        return mu_s, cov_s
+
+    def _component_marginal_pdf(self, centers: np.ndarray, mean: float, var: float, is_log_axis: bool) -> np.ndarray:
+        """Return 1D marginal density for a single Gaussian component on given centers.
+        - If is_log_axis: use log-normal with parameters from linearization at mean.
+        - Else: use normal N(mean, var).
+        """
+        centers = np.asarray(centers, dtype=float)
+        var = float(var)
+        if not np.isfinite(var) or var <= 0:
+            return np.zeros_like(centers, dtype=float)
+        s = np.sqrt(var)
+        eps = 1e-12
+        if is_log_axis:
+            m_safe = mean if mean > eps else eps
+            var_log = max(var / (m_safe * m_safe), 1e-12)
+            s_log = np.sqrt(var_log)
+            out = np.zeros_like(centers, dtype=float)
+            pos = centers > 0.0
+            z = (np.log(centers[pos]) - np.log(m_safe)) / s_log
+            out[pos] = np.exp(-0.5 * z * z) / (centers[pos] * s_log * np.sqrt(2 * np.pi))
+            return out
+        else:
+            z = (centers - mean) / s
+            return np.exp(-0.5 * z * z) / (s * np.sqrt(2 * np.pi))
+
     def _compute_moments(self, H: np.ndarray, x_edges: np.ndarray, y_edges: np.ndarray):
         """Compute weighted mean (mu) and covariance (cov) from histogram H."""
         S = float(np.sum(H))
@@ -657,20 +729,8 @@ class GaussianFit(QtCore.QObject):
         # Transform parameters to the construction space (log for log-axes)
         mx, my = float(mu[0]), float(mu[1])
         cov = np.asarray(cov, dtype=float).reshape(2, 2)
-        mu_s = np.array([mx, my], dtype=float)
-        cov_s = cov.copy()
-        if is_log_x or is_log_y:
-            eps = 1e-12
-            J = np.eye(2, dtype=float)
-            if is_log_x:
-                mu_safe = mx if mx > eps else eps
-                mu_s[0] = np.log(mu_safe)
-                J[0, 0] = 1.0 / mu_safe
-            if is_log_y:
-                mu_safe = my if my > eps else eps
-                mu_s[1] = np.log(mu_safe)
-                J[1, 1] = 1.0 / mu_safe
-            cov_s = J @ cov @ J.T
+        # Transform parameters to the construction space (log for log-axes)
+        mu_s, cov_s = self._transform_params_for_axes((mx, my), cov)
         # Build ellipse points in construction space for c=1 contour
         vals, vecs = np.linalg.eigh(cov_s)
         vals = np.maximum(vals, 1e-12)
@@ -963,33 +1023,8 @@ class GaussianFit(QtCore.QObject):
             # - linear axis: Normal in value space N(mu, var)
             # - log axis: Log-normal in value space with log-parameters from linearization at mu
             try:
-                eps = 1e-12
-                # X marginal
-                if self.is_log_x:
-                    mx_safe = mx if mx > eps else eps
-                    # linearized log-variance consistent with 2D overlay (J = 1/mu)
-                    var_logx = max(varx / (mx_safe * mx_safe), 1e-12)
-                    s_logx = np.sqrt(var_logx)
-                    # log-normal pdf over positive centers only
-                    xc = np.asarray(x_centers, dtype=float)
-                    gx0 = np.zeros_like(xc, dtype=float)
-                    pos = xc > 0.0
-                    z = (np.log(xc[pos]) - np.log(mx_safe)) / s_logx
-                    gx0[pos] = np.exp(-0.5 * z * z) / (xc[pos] * s_logx * np.sqrt(2 * np.pi))
-                else:
-                    gx0 = np.exp(-0.5 * ((x_centers - mx) / sx) ** 2) / (sx * np.sqrt(2 * np.pi))
-                # Y marginal
-                if self.is_log_y:
-                    my_safe = my if my > eps else eps
-                    var_logy = max(vary / (my_safe * my_safe), 1e-12)
-                    s_logy = np.sqrt(var_logy)
-                    yc = np.asarray(y_centers, dtype=float)
-                    gy0 = np.zeros_like(yc, dtype=float)
-                    posy = yc > 0.0
-                    z = (np.log(yc[posy]) - np.log(my_safe)) / s_logy
-                    gy0[posy] = np.exp(-0.5 * z * z) / (yc[posy] * s_logy * np.sqrt(2 * np.pi))
-                else:
-                    gy0 = np.exp(-0.5 * ((y_centers - my) / sy) ** 2) / (sy * np.sqrt(2 * np.pi))
+                gx0 = self._component_marginal_pdf(x_centers, mx, varx, self.is_log_x)
+                gy0 = self._component_marginal_pdf(y_centers, my, vary, self.is_log_y)
                 gxw = gx0 * wn
                 gyw = gy0 * wn
                 mxx = float(np.nanmax(gxw)) if gxw.size else 0.0
@@ -1063,6 +1098,493 @@ class GaussianFit(QtCore.QObject):
                 return
         except Exception:
             pass
+        try:
+            self._redraw_gaussian_overlays_from_table()
+        except Exception:
+            pass
+
+    # ----------------------------- Save/Load -----------------------------
+    def _rows_to_dicts(self):
+        rows = []
+        for mu, cov, w in self._read_gaussian_table():
+            rows.append({
+                "x": float(mu[0]),
+                "y": float(mu[1]),
+                "cov_xx": float(cov[0, 0]),
+                "cov_xy": float(cov[0, 1]),
+                "cov_yy": float(cov[1, 1]),
+                "w": float(w)
+            })
+        return rows
+
+    def _current_axes_info(self):
+        """Return a dict with axis info: index, name, and scale (linear/log) for x and y.
+        Falls back gracefully if plot_control does not provide expected attributes.
+        """
+        m = self.main
+        try:
+            idx1, name1 = m.plot_control.p1
+        except Exception:
+            idx1, name1 = None, None
+        try:
+            idx2, name2 = m.plot_control.p2
+        except Exception:
+            idx2, name2 = None, None
+        scale_x = "log" if self.is_log_x else "linear"
+        scale_y = "log" if self.is_log_y else "linear"
+        return {
+            "x": {"index": idx1, "name": name1, "scale": scale_x},
+            "y": {"index": idx2, "name": name2, "scale": scale_y},
+            "fit_in_log": bool(getattr(self, "fit_in_log", False)),
+        }
+
+    def _compute_data_marginals(self, H, x_edges, y_edges):
+        try:
+            x_centers = 0.5 * (np.asarray(x_edges[:-1]) + np.asarray(x_edges[1:]))
+            y_centers = 0.5 * (np.asarray(y_edges[:-1]) + np.asarray(y_edges[1:]))
+            data_x = np.sum(H, axis=1).astype(float)
+            data_y = np.sum(H, axis=0).astype(float)
+            return x_centers.tolist(), y_centers.tolist(), data_x.tolist(), data_y.tolist()
+        except Exception:
+            return None, None, None, None
+
+    def _compute_model_marginals(self, rows, x_edges, y_edges, total_counts: float):
+        """Compute combined 1D model marginals on centers to match data domain.
+        Scales each component by its weight w and overall so that the model area matches data counts.
+        """
+        try:
+            x_centers = 0.5 * (np.asarray(x_edges[:-1]) + np.asarray(x_edges[1:]))
+            y_centers = 0.5 * (np.asarray(y_edges[:-1]) + np.asarray(y_edges[1:]))
+            dx = float(np.mean(np.diff(x_centers))) if len(x_centers) > 1 else 1.0
+            dy = float(np.mean(np.diff(y_centers))) if len(y_centers) > 1 else 1.0
+            model_x = np.zeros_like(x_centers, dtype=float)
+            model_y = np.zeros_like(y_centers, dtype=float)
+            # normalize weights
+            wsum = sum(max(0.0, float(w)) for (_, _, w) in rows) or 1.0
+            for (mu, cov, w) in rows:
+                try:
+                    w = max(0.0, float(w)) / wsum
+                    mx, my = float(mu[0]), float(mu[1])
+                    varx = float(cov[0, 0]); vary = float(cov[1, 1])
+                    if not np.isfinite(varx) or varx <= 0: continue
+                    if not np.isfinite(vary) or vary <= 0: continue
+                    gx = self._component_marginal_pdf(x_centers, mx, varx, self.is_log_x)
+                    gy = self._component_marginal_pdf(y_centers, my, vary, self.is_log_y)
+                    model_x += w * gx
+                    model_y += w * gy
+                except Exception:
+                    continue
+            # convert densities to counts roughly by multiplying bin width and total counts
+            model_x_counts = (model_x * dx * total_counts).tolist()
+            model_y_counts = (model_y * dy * total_counts).tolist()
+            return x_centers.tolist(), y_centers.tolist(), model_x_counts, model_y_counts
+        except Exception:
+            return None, None, None, None
+
+    def _compute_model_grid_2d(self, rows, x_edges, y_edges, total_counts: float):
+        """Compute 2D model counts grid aligned with data histogram bins.
+        - Evaluate mixture density at bin centers in value space.
+        - Account for log axes by transforming to log space for Gaussian evaluation and applying Jacobian factors.
+        - Convert densities to counts by multiplying by bin areas and total_counts.
+        Returns (x_centers, y_centers, M) where M shape matches (nx, ny).
+        """
+        try:
+            x_edges = np.asarray(x_edges, dtype=float)
+            y_edges = np.asarray(y_edges, dtype=float)
+            x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+            y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+            nx = x_centers.size
+            ny = y_centers.size
+            if nx == 0 or ny == 0:
+                return x_centers.tolist(), y_centers.tolist(), None
+            # Bin widths (value space)
+            dx = np.diff(x_edges)
+            dy = np.diff(y_edges)
+            # Precompute transformed centers and jacobian factors
+            Xc, Yc = np.meshgrid(x_centers, y_centers, indexing='ij')
+            # Mask invalid for log axes
+            valid = np.ones_like(Xc, dtype=bool)
+            if self.is_log_x:
+                valid &= (Xc > 0.0)
+            if self.is_log_y:
+                valid &= (Yc > 0.0)
+            # Transformed coordinates
+            Sx = np.log(Xc, where=(Xc>0.0), out=np.zeros_like(Xc)) if self.is_log_x else Xc
+            Sy = np.log(Yc, where=(Yc>0.0), out=np.zeros_like(Yc)) if self.is_log_y else Yc
+            # Jacobian determinant factor |d(s)/d(v)| = 1/(x^alpha y^beta)
+            jac = np.ones_like(Xc, dtype=float)
+            if self.is_log_x:
+                jac = jac / np.maximum(Xc, 1e-300)
+            if self.is_log_y:
+                jac = jac / np.maximum(Yc, 1e-300)
+            # Normalize weights
+            rows_full = rows
+            if not rows_full:
+                return x_centers.tolist(), y_centers.tolist(), None
+            wsum = sum(max(0.0, float(w)) for (_, _, w) in rows_full) or 1.0
+            density = np.zeros((nx, ny), dtype=float)
+            for (mu, cov, w) in rows_full:
+                try:
+                    w = max(0.0, float(w)) / wsum
+                    mx, my = float(mu[0]), float(mu[1])
+                    cov = np.asarray(cov, dtype=float).reshape(2, 2)
+                    # Transform mean/cov to construction space
+                    mu_s, cov_s = self._transform_params_for_axes((mx, my), cov)
+                    # Evaluate 2D normal in transformed space
+                    try:
+                        inv = np.linalg.inv(cov_s)
+                        det = float(np.linalg.det(cov_s))
+                        if not np.isfinite(det) or det <= 0:
+                            continue
+                        norm = 1.0 / (2.0 * np.pi * np.sqrt(det))
+                    except Exception:
+                        continue
+                    # Quadratic form for all grid points
+                    dxs = Sx - mu_s[0]
+                    dys = Sy - mu_s[1]
+                    Q = inv[0,0]*dxs*dxs + 2.0*inv[0,1]*dxs*dys + inv[1,1]*dys*dys
+                    comp = norm * np.exp(-0.5 * Q)
+                    comp = comp * jac
+                    comp[~valid] = 0.0
+                    density += w * comp
+                except Exception:
+                    continue
+            # Multiply by bin areas (outer product of dx and dy) and total counts
+            A = np.outer(dx, dy)
+            M = density * A * float(total_counts)
+            return x_centers.tolist(), y_centers.tolist(), M
+        except Exception:
+            return None, None, None
+
+    def on_save_gaussians(self):
+        m = self.main
+        rows = self._rows_to_dicts()
+        if not rows:
+            QtWidgets.QMessageBox.information(m, "Save Gaussians", "There are no Gaussian rows to save.")
+            return
+        # Ask for base filename
+        default_dir = os.path.expanduser("~")
+        base_path, _ = QtWidgets.QFileDialog.getSaveFileName(m, "Save Gaussian Fits", default_dir, "Gaussian Files (*.json *.csv);;All Files (*.*)")
+        if not base_path:
+            return
+        root, ext = os.path.splitext(base_path)
+        if ext.lower() in (".json", ".csv"):
+            base = root
+        else:
+            base = base_path
+        json_path = base + ".json"
+        gauss_csv_path = base + "_gaussians.csv"
+        hist_csv_path = base + "_hist2d.csv"
+        model_csv_path = base + "_model2d.csv"
+        margx_csv_path = base + "_marginal_x.csv"
+        margy_csv_path = base + "_marginal_y.csv"
+        axes_info = self._current_axes_info()
+        # Collect histogram and compute marginals
+        marg = {}
+        try:
+            H, x_edges, y_edges = m._histogram["2d"]
+            if H is not None and H.size:
+                x_centers, y_centers, data_x, data_y = self._compute_data_marginals(H, x_edges, y_edges)
+                total_counts = float(np.sum(H)) if np.isfinite(np.sum(H)) else 0.0
+                # rows for model from table reader
+                rows_full = self._read_gaussian_table()
+                # Convert to same tuple layout (mu,cov,w)
+                model_xc, model_yc, model_x, model_y = self._compute_model_marginals(rows_full, x_edges, y_edges, total_counts)
+                # Also compute individual component marginals
+                comps_x = []
+                comps_y = []
+                # normalize weights
+                wsum = sum(max(0.0, float(w)) for (_, _, w) in rows_full) or 1.0
+                for (mu, cov, w) in rows_full:
+                    try:
+                        wn = max(0.0, float(w)) / wsum
+                        mx, my = float(mu[0]), float(mu[1])
+                        varx = float(cov[0, 0]); vary = float(cov[1, 1])
+                        gx = self._component_marginal_pdf(x_centers, mx, varx, self.is_log_x)
+                        gy = self._component_marginal_pdf(y_centers, my, vary, self.is_log_y)
+                        # convert to counts similar to model scaling
+                        dxw = float(np.mean(np.diff(x_centers))) if len(x_centers) > 1 else 1.0
+                        dyw = float(np.mean(np.diff(y_centers))) if len(y_centers) > 1 else 1.0
+                        comps_x.append((wn * gx * dxw * total_counts).tolist())
+                        comps_y.append((wn * gy * dyw * total_counts).tolist())
+                    except Exception:
+                        comps_x.append([])
+                        comps_y.append([])
+                marg = {
+                    "x": {"centers": x_centers, "data": data_x, "model": model_x, "components": comps_x},
+                    "y": {"centers": y_centers, "data": data_y, "model": model_y, "components": comps_y},
+                }
+        except Exception:
+            marg = {}
+        # Save JSON (single file including marginals and axes)
+        try:
+            payload = {
+                "type": "ndxplorer.gaussians",
+                "version": 3,
+                "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "columns": ["x", "y", "cov_xx", "cov_xy", "cov_yy", "w"],
+                "axes": axes_info,
+                "rows": rows,
+                "marginals": marg,
+            }
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(m, "Save Error", f"Failed to save JSON:\n{e}")
+            return
+        # Save Gaussians CSV (separate file)
+        try:
+            with open(gauss_csv_path, "w", newline="", encoding="utf-8") as f:
+                try:
+                    xinfo = axes_info.get("x", {})
+                    yinfo = axes_info.get("y", {})
+                    f.write(f"# ndxplorer.gaussians version=3\n")
+                    f.write(f"# created={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"# x_axis index={xinfo.get('index')} name={xinfo.get('name')} scale={xinfo.get('scale')}\n")
+                    f.write(f"# y_axis index={yinfo.get('index')} name={yinfo.get('name')} scale={yinfo.get('scale')}\n")
+                    f.write(f"# fit_in_log={axes_info.get('fit_in_log', False)}\n")
+                except Exception:
+                    pass
+                writer = csv.DictWriter(f, fieldnames=["x", "y", "cov_xx", "cov_xy", "cov_yy", "w"]) 
+                writer.writeheader()
+                for r in rows:
+                    writer.writerow(r)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(m, "Save Error", f"Failed to save Gaussians CSV:\n{e}")
+            return
+        # Save 2D histogram CSV (separate file)
+        try:
+            with open(hist_csv_path, "w", newline="", encoding="utf-8") as f:
+                try:
+                    xinfo = axes_info.get("x", {})
+                    yinfo = axes_info.get("y", {})
+                    f.write(f"# ndxplorer.hist2d version=1\n")
+                    f.write(f"# created={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"# x_axis index={xinfo.get('index')} name={xinfo.get('name')} scale={xinfo.get('scale')}\n")
+                    f.write(f"# y_axis index={yinfo.get('index')} name={yinfo.get('name')} scale={yinfo.get('scale')}\n")
+                    f.write(f"# shape={list(H.shape) if 'H' in locals() and H is not None else None}\n")
+                except Exception:
+                    pass
+                if 'H' in locals() and H is not None and H.size:
+                    # header row: first empty cell then y-centers
+                    y_centers = 0.5 * (np.asarray(y_edges[:-1]) + np.asarray(y_edges[1:]))
+                    header = ["x\\y"] + [float(v) for v in y_centers]
+                    writer = csv.writer(f)
+                    writer.writerow(header)
+                    x_centers = 0.5 * (np.asarray(x_edges[:-1]) + np.asarray(x_edges[1:]))
+                    for i, xv in enumerate(x_centers):
+                        row = [float(xv)] + [float(v) for v in H[i, :].tolist()]
+                        writer.writerow(row)
+                else:
+                    f.write("# No histogram available\n")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(m, "Save Error", f"Failed to save 2D histogram CSV:\n{e}")
+            return
+        # Save 2D model CSV (mixture and individual components)
+        try:
+            with open(model_csv_path, "w", newline="", encoding="utf-8") as f:
+                try:
+                    xinfo = axes_info.get("x", {})
+                    yinfo = axes_info.get("y", {})
+                    f.write(f"# ndxplorer.model2d version=2\n")
+                    f.write(f"# created={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"# x_axis index={xinfo.get('index')} name={xinfo.get('name')} scale={xinfo.get('scale')}\n")
+                    f.write(f"# y_axis index={yinfo.get('index')} name={yinfo.get('name')} scale={yinfo.get('scale')}\n")
+                except Exception:
+                    pass
+                if 'H' in locals() and H is not None and H.size:
+                    rows_full = self._read_gaussian_table()
+                    # Mixture grid
+                    xc, yc, M = self._compute_model_grid_2d(rows_full, x_edges, y_edges, float(np.sum(H)))
+                    writer = csv.writer(f)
+                    if M is not None:
+                        f.write("# section=mixture\n")
+                        header = ["x\\y"] + [float(v) for v in yc]
+                        writer.writerow(header)
+                        for i, xv in enumerate(xc):
+                            row = [float(xv)] + [float(v) for v in M[i, :].tolist()]
+                            writer.writerow(row)
+                    else:
+                        f.write("# No model available\n")
+                    # Individual component grids
+                    if rows_full:
+                        for idx, comp in enumerate(rows_full):
+                            xc1, yc1, M1 = self._compute_model_grid_2d([comp], x_edges, y_edges, float(np.sum(H)))
+                            f.write(f"# section=component index={idx}\n")
+                            if M1 is not None:
+                                header1 = ["x\\y"] + [float(v) for v in yc1]
+                                writer.writerow(header1)
+                                for i, xv in enumerate(xc1):
+                                    row1 = [float(xv)] + [float(v) for v in M1[i, :].tolist()]
+                                    writer.writerow(row1)
+                            else:
+                                f.write("# component empty\n")
+                else:
+                    f.write("# No histogram available (cannot compute model grid)\n")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(m, "Save Error", f"Failed to save 2D model CSV:\n{e}")
+            return
+        # Save 1D marginals CSV (X)
+        try:
+            with open(margx_csv_path, "w", newline="", encoding="utf-8") as f:
+                try:
+                    xinfo = axes_info.get("x", {})
+                    yinfo = axes_info.get("y", {})
+                    f.write(f"# ndxplorer.marginal_x version=1\n")
+                    f.write(f"# created={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"# x_axis index={xinfo.get('index')} name={xinfo.get('name')} scale={xinfo.get('scale')}\n")
+                    f.write(f"# y_axis index={yinfo.get('index')} name={yinfo.get('name')} scale={yinfo.get('scale')}\n")
+                except Exception:
+                    pass
+                writer = csv.writer(f)
+                # dynamic header includes component columns
+                comp_count = 0
+                comps = []
+                if marg and "x" in marg:
+                    comps = marg["x"].get("components") or []
+                    comp_count = len(comps)
+                header = ["center", "data", "model"] + [f"comp_{i}" for i in range(comp_count)]
+                writer.writerow(header)
+                if marg and "x" in marg:
+                    xc = marg["x"].get("centers") or []
+                    dx = marg["x"].get("data") or []
+                    mx = marg["x"].get("model") or []
+                    n = min(len(xc), len(dx), len(mx))
+                    for i in range(n):
+                        row = [float(xc[i]), float(dx[i]), float(mx[i])]
+                        for k in range(comp_count):
+                            try:
+                                row.append(float(comps[k][i]))
+                            except Exception:
+                                row.append(0.0)
+                        writer.writerow(row)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(m, "Save Error", f"Failed to save X marginal CSV:\n{e}")
+            return
+        # Save 1D marginals CSV (Y)
+        try:
+            with open(margy_csv_path, "w", newline="", encoding="utf-8") as f:
+                try:
+                    xinfo = axes_info.get("x", {})
+                    yinfo = axes_info.get("y", {})
+                    f.write(f"# ndxplorer.marginal_y version=1\n")
+                    f.write(f"# created={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"# x_axis index={xinfo.get('index')} name={xinfo.get('name')} scale={xinfo.get('scale')}\n")
+                    f.write(f"# y_axis index={yinfo.get('index')} name={yinfo.get('name')} scale={yinfo.get('scale')}\n")
+                except Exception:
+                    pass
+                writer = csv.writer(f)
+                comp_count = 0
+                comps = []
+                if marg and "y" in marg:
+                    comps = marg["y"].get("components") or []
+                    comp_count = len(comps)
+                header = ["center", "data", "model"] + [f"comp_{i}" for i in range(comp_count)]
+                writer.writerow(header)
+                if marg and "y" in marg:
+                    yc = marg["y"].get("centers") or []
+                    dy_ = marg["y"].get("data") or []
+                    my_ = marg["y"].get("model") or []
+                    n = min(len(yc), len(dy_), len(my_))
+                    for i in range(n):
+                        row = [float(yc[i]), float(dy_[i]), float(my_[i])]
+                        for k in range(comp_count):
+                            try:
+                                row.append(float(comps[k][i]))
+                            except Exception:
+                                row.append(0.0)
+                        writer.writerow(row)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(m, "Save Error", f"Failed to save Y marginal CSV:\n{e}")
+            return
+        QtWidgets.QMessageBox.information(m, "Saved", (
+            "Saved files:\n"
+            + os.path.basename(json_path) + "\n"
+            + os.path.basename(gauss_csv_path) + "\n"
+            + os.path.basename(hist_csv_path) + "\n"
+            + os.path.basename(model_csv_path) + "\n"
+            + os.path.basename(margx_csv_path) + "\n"
+            + os.path.basename(margy_csv_path)
+        ))
+
+    def _load_from_json(self, path):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and "rows" in data:
+            rows = data.get("rows", [])
+        elif isinstance(data, list):
+            rows = data
+        else:
+            rows = []
+        out = []
+        for r in rows:
+            try:
+                x = float(r["x"]) ; y = float(r["y"]) ; cxx = float(r["cov_xx"]) ; cxy = float(r["cov_xy"]) ; cyy = float(r["cov_yy"]) ; w = float(r.get("w", 1.0))
+            except Exception:
+                continue
+            out.append((np.array([x, y], dtype=float), np.array([[cxx, cxy],[cxy, cyy]], dtype=float), float(w)))
+        return out, (data.get("axes") if isinstance(data, dict) else None)
+
+    def _load_from_csv(self, path):
+        out = []
+        with open(path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                try:
+                    x = float(r.get("x")) ; y = float(r.get("y"))
+                    cxx = float(r.get("cov_xx")) ; cxy = float(r.get("cov_xy")) ; cyy = float(r.get("cov_yy"))
+                    w = float(r.get("w", 1.0))
+                except Exception:
+                    continue
+                out.append((np.array([x, y], dtype=float), np.array([[cxx, cxy],[cxy, cyy]], dtype=float), float(w)))
+        return out
+
+    def on_load_gaussians(self):
+        m = self.main
+        start_dir = os.path.expanduser("~")
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(m, "Load Gaussian Fits", start_dir, "Gaussian Files (*.json *.csv);;All Files (*.*)")
+        if not path:
+            return
+        ext = os.path.splitext(path)[1].lower()
+        axes_meta = None
+        try:
+            if ext == ".json":
+                rows, axes_meta = self._load_from_json(path)
+            elif ext == ".csv":
+                rows = self._load_from_csv(path)
+            else:
+                # Try JSON first, then CSV
+                try:
+                    rows, axes_meta = self._load_from_json(path)
+                except Exception:
+                    rows = self._load_from_csv(path)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(m, "Load Error", f"Failed to load file:\n{e}")
+            return
+        if not rows:
+            QtWidgets.QMessageBox.warning(m, "Load Gaussians", "No valid Gaussian rows found in the selected file.")
+            return
+        # Optional: warn if axes differ from current configuration
+        try:
+            if axes_meta:
+                cur = self._current_axes_info()
+                def s(ax):
+                    a = axes_meta.get(ax, {}) ; b = cur.get(ax, {})
+                    return f"{a.get('name')} ({a.get('scale')})" , f"{b.get('name')} ({b.get('scale')})"
+                (sx_old, sx_cur), (sy_old, sy_cur) = (s('x'), s('y'))
+                if sx_old != sx_cur or sy_old != sy_cur:
+                    QtWidgets.QMessageBox.information(m, "Axis Mismatch", f"File axes:\nX: {sx_old}\nY: {sy_old}\nCurrent axes:\nX: {sx_cur}\nY: {sy_cur}\n\nGaussians were loaded regardless.")
+        except Exception:
+            pass
+        # Clear existing table and populate
+        try:
+            m._updating_gaussian_table = True
+            m.tableGaussians.setRowCount(0)
+            for mu, cov, w in rows:
+                self._append_gaussian_row((float(mu[0]), float(mu[1])), np.array(cov, dtype=float), float(w))
+        finally:
+            m._updating_gaussian_table = False
+        # Redraw overlays from the table
         try:
             self._redraw_gaussian_overlays_from_table()
         except Exception:
