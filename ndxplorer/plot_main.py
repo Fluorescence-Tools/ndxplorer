@@ -631,6 +631,13 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.verticalLayout_15.addWidget(self.equation_editor)
         self.verticalLayout_10.addWidget(self.curve_overlay_widget)
 
+        # Connect screenshot tool button if present
+        try:
+            if hasattr(self, 'toolButton_screenshot') and self.toolButton_screenshot is not None:
+                self.toolButton_screenshot.clicked.connect(self.on_take_screenshot)
+        except Exception as e:
+            logging.debug(f"Could not connect screenshot button: {e}")
+
         # Make Fit action checkable and wire it to the Fit dock visibility
         self.actionFit_Gaussians.toggled.connect(self.dockWidget_Fit.setVisible)
         self.dockWidget_Fit.visibilityChanged.connect(self._on_fit_dock_visibility_changed)
@@ -972,6 +979,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Settings
         self.actionLoad_settings.triggered.connect(self.onLoad_settings)
         self.actionSave_axis_settings.triggered.connect(self.onSaveAxisSettings)
+        self.actionSet_default_axis.triggered.connect(self.onSetDefaultAxis)
         # GUI updates
         self.actionUpdate_plot.triggered.connect(lambda: self.update_plots())
         self.actionClear_plot.triggered.connect(self.clear_plots)
@@ -1344,6 +1352,54 @@ class NDXplorer(QtWidgets.QMainWindow):
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Report Tool Error", str(e))
 
+    def on_take_screenshot(self):
+        """Capture a screenshot of the NDXplorer window and ask the user where to save it."""
+        try:
+            # Grab the entire window as a pixmap
+            pixmap = self.grab()
+
+            # Build a default filename in the working path
+            try:
+                base_dir = self.working_path if getattr(self, 'working_path', None) else os.getcwd()
+            except Exception:
+                base_dir = os.getcwd()
+
+            # Create default name with timestamp
+            from datetime import datetime
+            ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            default_name = os.path.join(base_dir, f"ndxplorer_screenshot_{ts}.png")
+
+            # Ask the user where to save
+            filename, selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+                self,
+                'Save Screenshot',
+                default_name,
+                'PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;BMP Image (*.bmp)'
+            )
+            if not filename:
+                return
+
+            # Determine image format from extension
+            ext = os.path.splitext(filename)[1].lower()
+            if ext in ('.jpg', '.jpeg'):
+                img_format = 'JPEG'
+            elif ext == '.bmp':
+                img_format = 'BMP'
+            else:
+                img_format = 'PNG'
+                if not ext:
+                    # Append default extension if none provided
+                    filename = filename + '.png'
+
+            ok = pixmap.save(filename, img_format)
+            if not ok:
+                QtWidgets.QMessageBox.warning(self, 'Save Screenshot', f'Failed to save screenshot to:\n{filename}')
+            else:
+                logging.info(f"Saved screenshot to {filename}")
+        except Exception as e:
+            logging.error(f"Error while taking screenshot: {e}")
+            QtWidgets.QMessageBox.critical(self, 'Save Screenshot', f'An error occurred while saving the screenshot:\n{e}')
+
     def onSelectWorkingPath(self):
         working_path = QtWidgets.QFileDialog.getExistingDirectory(None, 'Select current path', self.working_path)
         # If user cancels the dialog, do not change the working path
@@ -1699,6 +1755,71 @@ class NDXplorer(QtWidgets.QMainWindow):
         except Exception as e:
             logging.error(f"Failed to save axis settings to {settings_json_fn}: {e}")
 
+    def onSetDefaultAxis(self):
+        """
+        Set the current axis selections (and weight, if available) as the new defaults
+        in the active ndxplorer settings JSON under the 'default_axes' key.
+        """
+        # Determine target settings file
+        settings_path = getattr(self, "_settings_json_path", None)
+        if not settings_path:
+            try:
+                settings_path = str(get_settings_path() / "mfd.settings.json")
+            except Exception:
+                settings_path = None
+        if not settings_path:
+            QtWidgets.QMessageBox.warning(self, "Set default axis", "Could not determine settings file path.")
+            return
+
+        # Load settings from file (fallback to in-memory settings on failure)
+        try:
+            with open(settings_path, "r", encoding="utf-8") as fp:
+                settings_data = json.load(fp) or {}
+        except Exception as e:
+            logging.debug(f"Could not read settings file '{settings_path}', using in-memory settings. Reason: {e}")
+            settings_data = dict(self.settings) if hasattr(self, 'settings') and isinstance(self.settings, dict) else {}
+
+        # Get the current axis names
+        try:
+            x_name = self.plot_control.p1[1]
+            y_name = self.plot_control.p2[1]
+            z_name = self.plot_control.p3[1]
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Set default axis", f"Unable to read current axis selections: {e}")
+            return
+
+        weight_name = None
+        try:
+            if hasattr(self, 'comboBoxWeight') and self.comboBoxWeight is not None:
+                weight_name = str(self.comboBoxWeight.currentText())
+        except Exception:
+            weight_name = None
+
+        # Update default_axes
+        settings_data.setdefault("default_axes", {})
+        settings_data["default_axes"].update({
+            "x": x_name,
+            "y": y_name,
+            "z": z_name
+        })
+        if weight_name:
+            settings_data["default_axes"]["weight"] = weight_name
+
+        # Save back to file
+        try:
+            with open(settings_path, "w", encoding="utf-8") as fp:
+                json.dump(settings_data, fp, indent=4)
+            # Update in-memory settings
+            try:
+                self.settings.update(settings_data)
+            except Exception:
+                pass
+            QtWidgets.QMessageBox.information(self, "Set default axis", "Default axis settings have been updated.")
+            logging.info(f"Updated default_axes in '{settings_path}' to {settings_data.get('default_axes')}")
+        except Exception as e:
+            logging.error(f"Failed to save default axes to '{settings_path}': {e}")
+            QtWidgets.QMessageBox.critical(self, "Set default axis", f"Failed to save default axis settings:\n{e}")
+
     def onLoad_settings(
             self,
             settings_json_fn=None  # type: str
@@ -1716,6 +1837,11 @@ class NDXplorer(QtWidgets.QMainWindow):
                 settings_json_fn = file_sel
         if not settings_json_fn:
             return
+        # Remember which settings file is active for later updates
+        try:
+            self._settings_json_path = str(settings_json_fn)
+        except Exception:
+            self._settings_json_path = None
         with open(settings_json_fn, "r", encoding="utf-8") as fp:
             d = json.load(fp)
             self.settings.update(d)
@@ -1908,8 +2034,13 @@ class NDXplorer(QtWidgets.QMainWindow):
                 self._data_source = combined_data_source
                 self.update()
 
-            # Detect image axes if any, then EXIT so we don't hit the generic loader
-            self.check_and_set_image_axes()
+            # Detect image axes if any; if not applied, try default axes from settings, then EXIT
+            _img_applied = self.check_and_set_image_axes()
+            if not _img_applied:
+                try:
+                    self.apply_default_axes_from_settings()
+                except Exception as _e:
+                    logging.debug(f"Could not apply default axes after HDF5 load: {_e}")
             logging.debug("Handled mfd_hdf5; returning before generic loader.")
             return
 
@@ -1940,7 +2071,14 @@ class NDXplorer(QtWidgets.QMainWindow):
                 self._data_source = data_reader(file_handles)
                 self.update()
 
-        self.check_and_set_image_axes()
+        _img_applied = self.check_and_set_image_axes()
+        if not _img_applied:
+            try:
+                self.apply_default_axes_from_settings()
+            except Exception as _e:
+                logging.debug(f"Could not apply default axes after generic load: {_e}")
+        # Ensure plots are updated after applying axes
+        self.on_auto_contrast()
 
     def show_merge_dialog(self, title):
         """
@@ -3412,7 +3550,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         """Convert a y value to a bin index with linear interpolation."""
         return self.value_to_bin(y_value, y_edges)
 
-
     def on_auto_contrast(self):
         """
         Automatically adjust vmin and vmax for the 2D histogram based on the data.
@@ -3589,11 +3726,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         Check if the loaded data contains image information (X pixel and Y pixel columns)
         and set the appropriate axes and weighting.
+        
+        Returns:
+            bool: True if image axes were detected and applied; False otherwise.
         """
         logging.debug("Checking image axes")
         if self._data_source is None or self._data_source.empty:
             logging.debug("No data loaded, skipping image axes check")
-            return
+            return False
             
         # Get parameter names from data source
         param_names = self._data_source.parameter_names
@@ -3662,6 +3802,81 @@ class NDXplorer(QtWidgets.QMainWindow):
             # Apply auto contrast as final action
             logging.debug("Applying auto contrast to image")
             self.on_auto_contrast()
+            # Ensure plots reflect new image axes
+            try:
+                self.update_plots()
+            except Exception:
+                pass
+            return True
+        return False
+
+    def apply_default_axes_from_settings(self):
+        """
+        Apply default axis selections from settings (if provided).
+        This is used after a dataset is loaded to preselect X/Y/Z/weight axes.
+        It will not override image axes (the caller should check first).
+        """
+        try:
+            defaults = self.settings.get("default_axes", {}) if hasattr(self, 'settings') else {}
+        except Exception:
+            defaults = {}
+        if not isinstance(defaults, dict) or not defaults:
+            logging.debug("No default_axes configured in settings; skipping.")
+            return False
+
+        # Parameter names available
+        try:
+            param_names = list(self.data_source.parameter_names)
+        except Exception:
+            param_names = []
+
+        changed = False
+        # Helper to try set axis by exact match or contains
+        def _set_axis(ax_key, axis_name):
+            if not axis_name or not isinstance(axis_name, str):
+                return False
+            # Try exact match first
+            if axis_name in param_names:
+                ok = self.plot_control.set_axis_by_name(ax_key, axis_name, match_contains=False, block_signals=True)
+                return bool(ok)
+            # Fallback to contains
+            ok = self.plot_control.set_axis_by_name(ax_key, axis_name, match_contains=True, block_signals=True)
+            return bool(ok)
+
+        # X, Y, Z axes
+        for ax_key in ('x', 'y', 'z'):
+            name = defaults.get(ax_key)
+            if _set_axis(ax_key, name):
+                changed = True
+
+        # Weight parameter (optional)
+        wname = defaults.get('weight')
+        if wname:
+            if _set_axis('weight', wname):
+                try:
+                    self.weight_enabled = True
+                except Exception:
+                    pass
+                changed = True
+
+        # Trigger axis changed handlers to apply ranges/bins/scales
+        if changed:
+            try:
+                self.plot_control.on_x_axis_changed()
+            except Exception:
+                pass
+            try:
+                self.plot_control.on_y_axis_changed()
+            except Exception:
+                pass
+            try:
+                self.plot_control.on_z_axis_changed()
+            except Exception:
+                pass
+            logging.info("Applied default axes from settings.")
+            return True
+        logging.debug("No default axes were applied (names may not match current dataset).")
+        return False
 
     def on_gaussian_table_item_changed(self, item: QtWidgets.QTableWidgetItem):
         """Delegate to GaussianFit."""
