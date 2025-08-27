@@ -717,6 +717,12 @@
    </attribute>
   </widget>
   <widget class="QDockWidget" name="dockWidget_Fit">
+   <property name="minimumSize">
+    <size>
+     <width>80</width>
+     <height>180</height>
+    </size>
+   </property>
    <property name="windowTitle">
     <string>Gaussian Fit</string>
    </property>
