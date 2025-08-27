@@ -3,5 +3,11 @@
   "constants": "mfd.constants.json",
   "axis": "mfd.axis.json",
   "axis_labels": "axis_labels.yaml",
-  "colormap": "gist_earth"
+  "colormap": "gist_earth",
+  "default_axes": {
+    "x": "Tau (green)",
+    "y": "Proximity ratio",
+    "z": "r Experimental (green)",
+    "weight": "Number of Photons"
+  }
 }
