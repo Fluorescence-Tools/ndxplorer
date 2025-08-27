@@ -3347,16 +3347,6 @@ class NDXplorer(QtWidgets.QMainWindow):
             # numpy.histogram2d outputs shape (x_bins, y_bins);
             # ImageItem expects (rows=y, cols=x), so use transpose only.
             self.cax.set_data(new_data.T)
-            # Also lock the plot's axis scales to the histogram bin edges to keep a stable mapping
-            try:
-                if x_edges is not None and y_edges is not None:
-                    # Ensure monotonicity in case edges are descending
-                    x1, x0 = float(x_edges[0]), float(x_edges[-1])
-                    y1, y0 = float(y_edges[0]), float(y_edges[-1])
-                    self.g_2dplot.setAxisScale(QwtPlot.xBottom, min(x0, x1), max(x0, x1))
-                    self.g_2dplot.setAxisScale(QwtPlot.yLeft, min(y0, y1), max(y0, y1))
-            except Exception:
-                pass
         except ValueError as e:
             logging.warning(f"Error setting 2D plot data: {str(e)}")
             # If setting data fails, try with a simple valid array

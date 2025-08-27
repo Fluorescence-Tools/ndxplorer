@@ -1071,8 +1071,8 @@ class GaussianFit(QtCore.QObject):
     # ------------------------- Event filtering ---------------------------
     def eventFilter(self, obj, event):
         """Intercept Delete key presses on the Gaussians table to delete selected rows."""
-        m = self.main
         try:
+            m = self.main
             if obj is getattr(m, 'tableGaussians', None) and event.type() == QtCore.QEvent.KeyPress:
                 if event.key() in (QtCore.Qt.Key_Delete,):
                     sel_model = m.tableGaussians.selectionModel()
