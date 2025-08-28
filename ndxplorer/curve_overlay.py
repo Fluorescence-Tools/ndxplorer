@@ -59,9 +59,9 @@ class CurveWidget(QtWidgets.QGroupBox):
         filled_eq_layout.addWidget(self.filled_equation_edit)
         layout.addLayout(filled_eq_layout)
 
-        # Color picker
+        # Color picker + Delete aligned right
         color_layout = QtWidgets.QHBoxLayout()
-        color_layout.setSpacing(0)  # Reduce spacing
+        color_layout.setSpacing(0)
         color_layout.addWidget(QtWidgets.QLabel("Color:"))
         self.color_button = QtWidgets.QPushButton()
         self.color_button.setFixedSize(24, 24)
@@ -69,31 +69,43 @@ class CurveWidget(QtWidgets.QGroupBox):
         self.color_button.clicked.connect(self._choose_color)
         color_layout.addWidget(self.color_button)
         color_layout.addStretch(1)
+        self.delete_button = QtWidgets.QPushButton("Delete")
+        self.delete_button.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        color_layout.addWidget(self.delete_button, 0, Qt.AlignRight)
         layout.addLayout(color_layout)
 
-        # Parameters container
+        # Parameters container (grid, 2 per row, unified label widths)
         self.param_container = QtWidgets.QWidget()
-        self.param_layout = QtWidgets.QVBoxLayout(self.param_container)
+        self.param_layout = QtWidgets.QGridLayout(self.param_container)
         self.param_layout.setContentsMargins(0, 0, 0, 0)
+        self.param_layout.setHorizontalSpacing(0)
+        self.param_layout.setVerticalSpacing(0)
         layout.addWidget(self.param_container)
-
-        # Delete button
-        self.delete_button = QtWidgets.QPushButton("Delete")
-        layout.addWidget(self.delete_button)
 
         # Connect signals
         self.toggled.connect(self.visibilityChanged)
+        self.toggled.connect(self._on_toggled)
         self.equation_edit.editingFinished.connect(self._equation_changed)
         self.delete_button.clicked.connect(self.deleteRequested)
 
         # Parse initial equation and update filled equation
         self._parse_equation()
         self._update_filled_equation()
+        # Ensure correct initial visibility state of content
+        self._on_toggled(self.isChecked())
 
     def _equation_changed(self):
         self._parse_equation()
         self._update_filled_equation()
         self.equationChanged.emit()
+
+    def _on_toggled(self, checked: bool):
+        """Hide or show the contents of the groupbox when toggled."""
+        # Iterate over direct child widgets and set their visibility
+        for child in self.findChildren(QtWidgets.QWidget):
+            if child is self:
+                continue
+            child.setVisible(checked)
 
     def _parse_equation(self):
         """
@@ -139,7 +151,7 @@ class CurveWidget(QtWidgets.QGroupBox):
                 del self.parameters[param]
 
         # Add new parameters
-        for param in params:
+        for param in sorted(params):
             if param not in self.parameters:
                 # Use generic defaults for all parameters
                 min_val, max_val, default_value = 0.1, 10.0, 1.0
@@ -148,18 +160,26 @@ class CurveWidget(QtWidgets.QGroupBox):
                 if not self.use_sliders:
                     from .widgets import ScientificSpinBox
                     param_widget = QtWidgets.QWidget()
-                    layout = QtWidgets.QHBoxLayout(param_widget)
-                    layout.setContentsMargins(0, 0, 0, 0)
+                    row_layout = QtWidgets.QHBoxLayout(param_widget)
+                    row_layout.setContentsMargins(0, 0, 0, 0)
 
                     # Label
                     label = QtWidgets.QLabel(param)
-                    layout.addWidget(label)
+                    # Add tooltip with full name and apply middle-ellipsis
+                    label.setToolTip(param)
+                    label.setMinimumWidth(50)
+                    label.setMaximumWidth(160)
+                    label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    # Pre-elide text to fit max width
+                    elided = label.fontMetrics().elidedText(param, Qt.ElideMiddle, label.maximumWidth())
+                    label.setText(elided)
+                    row_layout.addWidget(label)
 
                     # SpinBox
-                    spinbox = ScientificSpinBox(format_str="%.8e", relative_step=0.01)
+                    spinbox = ScientificSpinBox(format_str="%.3e", relative_step=0.01, decimals=3)
                     spinbox.setRange(min_val, max_val)
                     spinbox.setValue(default_value)
-                    layout.addWidget(spinbox)
+                    row_layout.addWidget(spinbox)
 
                     # Connect signal
                     spinbox.valueChanged.connect(lambda value, p=param: self._parameter_changed(value))
@@ -171,9 +191,17 @@ class CurveWidget(QtWidgets.QGroupBox):
                     param_widget.setRange = lambda min_val, max_val, sb=spinbox: sb.setRange(min_val, max_val)
                 else:
                     param_widget = ParameterSlider(param, min_val, max_val, default_value)
+                    # unify label width and alignment if available
+                    if hasattr(param_widget, 'label'):
+                        param_widget.label.setMinimumWidth(50)
+                        param_widget.label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     param_widget.valueChanged.connect(self._parameter_changed)
 
-                self.param_layout.addWidget(param_widget)
+                # Place parameters two per row in grid
+                current_count = self.param_layout.count()
+                row = current_count // 2
+                col = current_count % 2
+                self.param_layout.addWidget(param_widget, row, col)
                 self.parameters[param] = param_widget
 
     def _parameter_changed(self, value):
@@ -189,31 +217,50 @@ class CurveWidget(QtWidgets.QGroupBox):
         Updates the filled equation display by replacing parameter names with their values.
         """
         equation_or_function = self.equation_edit.text()
-        parameters = self.get_parameters()
+
+        # Build both raw and formatted parameter mappings
+        raw_params = {}
+        formatted_params = {}
+        for name, widget in self.parameters.items():
+            try:
+                raw_val = widget.value()
+            except Exception:
+                # Fallback if widget has no value() method
+                raw_val = None
+            raw_params[name] = raw_val
+            try:
+                if hasattr(widget, 'spinbox') and widget.spinbox is not None:
+                    # Use the spinbox's own text so decimals/format_str are respected
+                    formatted_params[name] = widget.spinbox.text()
+                else:
+                    # Reasonable fallback formatting
+                    formatted_params[name] = f"{raw_val:.6g}" if isinstance(raw_val, (int, float)) else str(raw_val)
+            except Exception:
+                formatted_params[name] = str(raw_val)
 
         if self.is_function:
-            # For functions, just show the function name and parameter values
+            # For functions, just show the function name and parameter values (formatted)
             try:
                 if self.function:
                     func_name = self.function.__name__
-                    params_str = ", ".join([f"{name}={value}" for name, value in parameters.items()])
+                    params_str = ", ".join([f"{name}={formatted_params.get(name, str(val))}" for name, val in raw_params.items()])
                     filled_equation = f"{func_name}({params_str})"
                 else:
                     filled_equation = "Function not compiled"
             except Exception as e:
                 filled_equation = f"Error: {str(e)}"
         else:
-            # For equations, replace parameter names with their values
+            # For equations, replace parameter names with their formatted values
             # If there's an equals sign, only use the right side
             if '=' in equation_or_function:
                 equation_or_function = equation_or_function.split('=', 1)[1].strip()
 
             # Replace parameter names with their values
             filled_equation = equation_or_function
-            for param_name, param_value in parameters.items():
+            for param_name, formatted_value in formatted_params.items():
                 # Use word boundaries to ensure we only replace whole parameter names
                 pattern = r'\b' + re.escape(param_name) + r'\b'
-                filled_equation = re.sub(pattern, str(param_value), filled_equation)
+                filled_equation = re.sub(pattern, formatted_value, filled_equation)
 
         self.filled_equation_edit.setText(filled_equation)
 
@@ -379,20 +426,15 @@ class CurveOverlayWidget(QtWidgets.QWidget):
 
         # Get the selected equation data
         equation_data = self.predefined_equations[index]
+        base_name = equation_data.get('name', 'Curve')
 
         # Check if it's a function or an equation
         if 'function' in equation_data:
-            # Get the function string
             function_str = equation_data['function']
-
-            # Print the function string for debugging
             print(f"Function string from YAML:\n{function_str}")
-
-            # Create a new curve with the function
-            curve_widget = self.add_curve(function_str, use_sliders=True, is_function=True)
+            curve_widget = self.add_curve(function_str, use_sliders=True, is_function=True, base_name=base_name)
         else:
-            # Create a new curve with the equation
-            curve_widget = self.add_curve(equation_data['equation'], use_sliders=True)
+            curve_widget = self.add_curve(equation_data['equation'], use_sliders=True, is_function=False, base_name=base_name)
 
         # Set the parameter values and ranges
         if 'parameters' in equation_data:
@@ -401,7 +443,7 @@ class CurveOverlayWidget(QtWidgets.QWidget):
 
         return curve_widget
 
-    def add_curve(self, equation_or_function="x", use_sliders=True, is_function=False):
+    def add_curve(self, equation_or_function="x", use_sliders=True, is_function=False, base_name: str = None):
         """
         Add a new curve widget with the given equation or function.
 
@@ -409,9 +451,14 @@ class CurveOverlayWidget(QtWidgets.QWidget):
             equation_or_function (str): The equation or function to add
             use_sliders (bool): Whether to use sliders for parameters (default: True)
             is_function (bool): Whether the input is a function (True) or an equation (False)
+            base_name (str): Base name for the groupbox title (e.g., "Static FRET line")
         """
-        curve_name = f"Curve {len(self.curves) + 1}"
-        curve_widget = CurveWidget(curve_name, equation_or_function, is_function=is_function)
+        if base_name is None:
+            base_name = "Custom Equation"
+        # Count existing curves with the same base name
+        existing = sum(1 for c in self.curves if str(c.title()).startswith(base_name))
+        curve_title = f"{base_name} {existing + 1}"
+        curve_widget = CurveWidget(curve_title, equation_or_function, is_function=is_function)
         curve_widget.use_sliders = use_sliders
 
         # Connect signals
