@@ -52,7 +52,8 @@ class ScientificSpinBox(QDoubleSpinBox):
         exp3 = max(min(exp3, 12), -12)
         scaled = value / (10 ** exp3)
         prefix = self.si_prefixes.get(exp3, f"e{exp3}")
-        return f"{scaled:.3f} {prefix}{self._suffix}".strip()
+        decimals = self.decimals() if hasattr(self, 'decimals') else 3
+        return f"{scaled:.{decimals}f} {prefix}{self._suffix}".strip()
 
     def _parse_si(self, text):
         text = text.strip()
