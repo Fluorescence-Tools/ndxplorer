@@ -20,6 +20,12 @@ class ParameterSlider(QtWidgets.QWidget):
 
         # Label
         self.label = QtWidgets.QLabel(name)
+        # Store full text for tooltip and elision
+        self._full_label_text = name
+        self.label.setToolTip(self._full_label_text)
+        # Constrain width so elision can take effect consistently
+        self.label.setMinimumWidth(50)
+        self.label.setMaximumWidth(160)
         layout.addWidget(self.label)
 
         # Slider
@@ -41,6 +47,20 @@ class ParameterSlider(QtWidgets.QWidget):
 
         # Initialize slider position
         self._update_slider()
+        # Apply initial elision after layout
+        QtCore.QTimer.singleShot(0, self._apply_elision)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_elision()
+
+    def _apply_elision(self):
+        # Use label's font metrics to elide in the middle according to available width
+        width = self.label.width() if self.label.width() > 0 else self.label.maximumWidth()
+        elided = self.label.fontMetrics().elidedText(self._full_label_text, Qt.ElideMiddle, width)
+        # Avoid recursive updates if unchanged
+        if self.label.text() != elided:
+            self.label.setText(elided)
 
     def _slider_changed(self, value):
         # Convert slider value (0-1000) to parameter value (min_val-max_val)
