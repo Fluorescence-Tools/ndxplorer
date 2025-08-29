@@ -1834,7 +1834,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         except Exception:
             weight_name = None
 
-        # Update default_axes
+        # Update default_axes and colormap
         settings_data.setdefault("default_axes", {})
         settings_data["default_axes"].update({
             "x": x_name,
@@ -1843,6 +1843,11 @@ class NDXplorer(QtWidgets.QMainWindow):
         })
         if weight_name:
             settings_data["default_axes"]["weight"] = weight_name
+        # Also persist the current colormap selection so it becomes the user default
+        try:
+            settings_data["colormap"] = self.current_cmap
+        except Exception:
+            pass
 
         # Save back to file
         try:
