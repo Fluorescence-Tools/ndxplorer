@@ -1,7 +1,7 @@
 """
 GMM Settings dialog for ndxplorer.
-Allows users to configure sklearn.mixture.GaussianMixture parameters
-and persists them in the ndxplorer user settings folder.
+Configure parameters for the built-in Gaussian Mixture (EM) implementation
+and persist them in the ndxplorer user settings folder.
 """
 from typing import Optional, Dict, Any
 
@@ -14,17 +14,13 @@ import json
 from .settings import get_settings_path, ensure_default_settings
 
 _DEFAULTS: Dict[str, Any] = {
-    "covariance_type": "full",          # {'full', 'tied', 'diag', 'spherical'}
     "tol": 1e-3,                         # float > 0
     "reg_covar": 1e-6,                   # float >= 0
     "max_iter": 200,                     # int > 0
-    "n_init": 1,                         # int >= 1
-    "init_params": "kmeans",            # {'kmeans', 'random'}
-    "random_state": None,                # int or None
-    "warm_start": False,                 # bool
     "verbose": 0,                        # int >= 0
-    "verbose_interval": 10,              # int >= 1 (used if verbose > 0)
-    "local_window_bins": 10              # int >= 1, half-window size in bins for local covariance
+    "local_window_bins": 10,             # int >= 1, half-window size in bins for local covariance
+    "weight_floor": 0.0,                 # float >= 0, minimum component weight (0 disables clamping)
+    "fix_new_means": True                # bool, fix mean when adding new Gaussians from point selection
 }
 
 _SETTINGS_FILENAME = "gmm_settings.json"
@@ -70,7 +66,7 @@ def save_gmm_settings(cfg: Dict[str, Any]) -> None:
 
 
 class GMMSettingsDialog(QtWidgets.QDialog):
-    """Qt dialog exposing GaussianMixture configuration parameters."""
+    """Qt dialog exposing built-in GMM (EM) configuration parameters."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("GMM Settings")
@@ -80,11 +76,6 @@ class GMMSettingsDialog(QtWidgets.QDialog):
 
     def _build_ui(self):
         layout = QtWidgets.QFormLayout(self)
-
-        # covariance_type
-        self.combo_cov = QtWidgets.QComboBox(self)
-        self.combo_cov.addItems(["full", "tied", "diag", "spherical"])
-        layout.addRow("Covariance type:", self.combo_cov)
 
         # tol
         self.spin_tol = QtWidgets.QDoubleSpinBox(self)
@@ -105,44 +96,27 @@ class GMMSettingsDialog(QtWidgets.QDialog):
         self.spin_max_iter.setRange(1, 10000)
         layout.addRow("Max iterations:", self.spin_max_iter)
 
-        # n_init
-        self.spin_n_init = QtWidgets.QSpinBox(self)
-        self.spin_n_init.setRange(1, 1000)
-        layout.addRow("n_init:", self.spin_n_init)
-
-        # init_params
-        self.combo_init = QtWidgets.QComboBox(self)
-        self.combo_init.addItems(["kmeans", "random"])
-        layout.addRow("Init params:", self.combo_init)
-
-        # random_state
-        rs_layout = QtWidgets.QHBoxLayout()
-        self.check_rs_enable = QtWidgets.QCheckBox("Use fixed random_state")
-        self.spin_rs = QtWidgets.QSpinBox(self)
-        self.spin_rs.setRange(-2**31, 2**31-1)
-        rs_layout.addWidget(self.check_rs_enable)
-        rs_layout.addWidget(self.spin_rs)
-        layout.addRow("Random state:", rs_layout)
-
-        # warm_start
-        self.check_warm = QtWidgets.QCheckBox(self)
-        layout.addRow("Warm start:", self.check_warm)
-
         # verbose
         self.spin_verbose = QtWidgets.QSpinBox(self)
         self.spin_verbose.setRange(0, 10)
         layout.addRow("Verbose:", self.spin_verbose)
 
-        # verbose_interval
-        self.spin_verbose_int = QtWidgets.QSpinBox(self)
-        self.spin_verbose_int.setRange(1, 1000)
-        layout.addRow("Verbose interval:", self.spin_verbose_int)
+        # weight floor
+        self.spin_weight_floor = QtWidgets.QDoubleSpinBox(self)
+        self.spin_weight_floor.setDecimals(8)
+        self.spin_weight_floor.setRange(0.0, 1.0)
+        self.spin_weight_floor.setSingleStep(1e-4)
+        layout.addRow("Weight floor:", self.spin_weight_floor)
 
         # local window (bins) for local covariance estimation in Gaussian Fit
         self.spin_local_window = QtWidgets.QSpinBox(self)
         self.spin_local_window.setRange(1, 200)
         self.spin_local_window.setSingleStep(1)
         layout.addRow("Local window (bins):", self.spin_local_window)
+
+        # Fix means for new Gaussians (when added via point selection)
+        self.check_fix_new_means = QtWidgets.QCheckBox("Fix new means by default", self)
+        layout.addRow(self.check_fix_new_means)
 
         # buttons
         btn_box = QtWidgets.QDialogButtonBox(
@@ -158,58 +132,32 @@ class GMMSettingsDialog(QtWidgets.QDialog):
         btn_box.rejected.connect(self.reject)
         layout.addRow(btn_box)
 
-        # react to verbose
-        self.spin_verbose.valueChanged.connect(self._on_verbose_changed)
-
-    def _on_verbose_changed(self, v: int):
-        self.spin_verbose_int.setEnabled(v > 0)
 
     def _load_to_widgets(self):
         cfg = self._cfg
-        self.combo_cov.setCurrentText(str(cfg.get("covariance_type", _DEFAULTS["covariance_type"])) )
         self.spin_tol.setValue(float(cfg.get("tol", _DEFAULTS["tol"])) )
         self.spin_reg.setValue(float(cfg.get("reg_covar", _DEFAULTS["reg_covar"])) )
         self.spin_max_iter.setValue(int(cfg.get("max_iter", _DEFAULTS["max_iter"])) )
-        self.spin_n_init.setValue(int(cfg.get("n_init", _DEFAULTS["n_init"])) )
-        self.combo_init.setCurrentText(str(cfg.get("init_params", _DEFAULTS["init_params"])) )
-        rs = cfg.get("random_state", _DEFAULTS["random_state"]) 
-        if rs is None:
-            self.check_rs_enable.setChecked(False)
-            self.spin_rs.setEnabled(False)
-            self.spin_rs.setValue(0)
-        else:
-            self.check_rs_enable.setChecked(True)
-            self.spin_rs.setEnabled(True)
-            try:
-                self.spin_rs.setValue(int(rs))
-            except Exception:
-                self.spin_rs.setValue(0)
-        self.check_warm.setChecked(bool(cfg.get("warm_start", _DEFAULTS["warm_start"])) )
         self.spin_verbose.setValue(int(cfg.get("verbose", _DEFAULTS["verbose"])) )
-        self.spin_verbose_int.setValue(int(cfg.get("verbose_interval", _DEFAULTS["verbose_interval"])) )
-        # local window bins
+        try:
+            self.spin_weight_floor.setValue(float(cfg.get("weight_floor", _DEFAULTS["weight_floor"])) )
+        except Exception:
+            self.spin_weight_floor.setValue(_DEFAULTS["weight_floor"])
         try:
             self.spin_local_window.setValue(int(cfg.get("local_window_bins", _DEFAULTS["local_window_bins"])) )
         except Exception:
             self.spin_local_window.setValue(_DEFAULTS["local_window_bins"])
-        self._on_verbose_changed(self.spin_verbose.value())
-
-        # connect enabling toggle
-        self.check_rs_enable.toggled.connect(self.spin_rs.setEnabled)
+        self.check_fix_new_means.setChecked(bool(cfg.get("fix_new_means", _DEFAULTS["fix_new_means"])) )
 
     def get_settings(self) -> Dict[str, Any]:
         cfg = {
-            "covariance_type": self.combo_cov.currentText(),
             "tol": float(self.spin_tol.value()),
             "reg_covar": float(self.spin_reg.value()),
             "max_iter": int(self.spin_max_iter.value()),
-            "n_init": int(self.spin_n_init.value()),
-            "init_params": self.combo_init.currentText(),
-            "random_state": int(self.spin_rs.value()) if self.check_rs_enable.isChecked() else None,
-            "warm_start": bool(self.check_warm.isChecked()),
             "verbose": int(self.spin_verbose.value()),
-            "verbose_interval": int(self.spin_verbose_int.value()),
             "local_window_bins": int(self.spin_local_window.value()),
+            "weight_floor": float(self.spin_weight_floor.value()),
+            "fix_new_means": bool(self.check_fix_new_means.isChecked()),
         }
         return cfg
 
