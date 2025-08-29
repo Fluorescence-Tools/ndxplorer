@@ -738,7 +738,7 @@
   <widget class="QDockWidget" name="dockWidget_Fit">
    <property name="minimumSize">
     <size>
-     <width>80</width>
+     <width>340</width>
      <height>180</height>
     </size>
    </property>
@@ -766,7 +766,11 @@
       <number>0</number>
      </property>
      <item>
-      <layout class="QVBoxLayout" name="verticalLayout_18"/>
+      <layout class="QVBoxLayout" name="verticalLayout_18">
+       <property name="spacing">
+        <number>0</number>
+       </property>
+      </layout>
      </item>
     </layout>
    </widget>
