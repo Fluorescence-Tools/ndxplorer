@@ -135,6 +135,28 @@ def compute_values(
         for key in eq:
             try:
                 expr = eq[key]
+                # Detect pure-alias expressions of the form 'Name' or "Name"
+                if isinstance(expr, str):
+                    m = re.match(r"^\s*(['\"])\s*(.*?)\s*\1\s*$", expr)
+                    if m:
+                        alias_name = m.group(2)
+                        # Normalization helper (same as in _preprocess_equation)
+                        def _normalize_name(s: str) -> str:
+                            try:
+                                left = str(s).split('|', 1)[0]
+                                return left.strip()
+                            except Exception:
+                                return str(s).strip()
+                        # Build lookup sets
+                        cols_lower_exact = {str(col).lower() for col in d.columns}
+                        cols_lower_normalized = {_normalize_name(col).lower() for col in d.columns}
+                        consts_lower = {str(name).lower() for name in c.keys()}
+                        lname = str(alias_name).lower()
+                        lname_norm = _normalize_name(alias_name).lower()
+                        # If alias target is unknown (not a column, not a constant, not another equation), skip creating this column
+                        if not ((lname in cols_lower_exact) or (lname_norm in cols_lower_normalized) or (lname in consts_lower) or (lname in eq_keys_lower)):
+                            # Skip silently to avoid creating a column filled with the literal string
+                            continue
                 expr = _preprocess_equation(expr)
                 # Use the original DataFrame for assignment but the wrapper for evaluation
                 d[key] = pd.eval(expr, local_dict={'d': d_case_insensitive, 'c': c}, engine=engine)
