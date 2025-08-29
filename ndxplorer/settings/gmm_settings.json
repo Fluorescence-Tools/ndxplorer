@@ -1,0 +1,9 @@
+{
+  "tol": 0.001,
+  "reg_covar": 1e-6,
+  "max_iter": 200,
+  "verbose": 0,
+  "local_window_bins": 10,
+  "weight_floor": 0.0,
+  "fix_new_means": true
+}
