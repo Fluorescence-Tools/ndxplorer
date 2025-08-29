@@ -1380,10 +1380,22 @@ class NDXplorer(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "Report Tool Error", str(e))
 
     def on_take_screenshot(self):
-        """Capture a screenshot of the NDXplorer window and ask the user where to save it."""
+        """Capture a screenshot of the NDXplorer window and ask the user where to save it.
+        Also copies the screenshot to the system clipboard.
+        """
         try:
             # Grab the entire window as a pixmap
             pixmap = self.grab()
+
+            # Copy to clipboard (in addition to asking to save)
+            try:
+                app = QtWidgets.QApplication.instance()
+                if app is not None:
+                    clipboard = app.clipboard()
+                    if clipboard is not None:
+                        clipboard.setPixmap(pixmap)
+            except Exception as e:
+                logging.debug(f"Failed to copy screenshot to clipboard: {e}")
 
             # Build a default filename in the working path
             try:
