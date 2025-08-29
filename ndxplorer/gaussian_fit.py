@@ -17,6 +17,134 @@ import numpy as np
 from qtpy import QtCore, QtWidgets
 
 
+
+class GaussianMixtureFixedEM:
+    """
+    Minimal 2D GMM EM implementation that supports fixing subset of means/covariances per component.
+    Work in 'fit space' (i.e., already log-transformed axes if needed).
+    """
+    def __init__(self, means_init, covs_init, weights_init=None,
+                 reg_covar=1e-6, max_iter=200, tol=1e-3, verbose=0, weight_floor=0.0):
+        self.means_ = np.array(means_init, dtype=float)         # (K,2)
+        self.covs_  = np.array(covs_init, dtype=float)          # (K,2,2)
+        K = self.means_.shape[0]
+        if weights_init is None:
+            self.weights_ = np.ones(K, dtype=float) / K
+        else:
+            w = np.array(weights_init, dtype=float)
+            s = float(np.sum(w)); self.weights_ = (w/s) if s > 0 else (np.ones(K)/K)
+        self.reg_covar   = float(reg_covar)
+        self.max_iter    = int(max_iter)
+        self.tol         = float(tol)
+        self.verbose     = int(verbose)
+        self.weight_floor= float(max(0.0, weight_floor))
+        self.converged_  = False
+        self.n_iter_     = 0
+        self.lower_bound_= -np.inf
+
+    @staticmethod
+    def _log_gaussian_2d(X, mu, cov):
+        # X: (N,2), mu: (2,), cov: (2,2)
+        # return log N(x|mu,cov) for each row
+        try:
+            L = np.linalg.cholesky(cov)
+        except Exception:
+            # fallback via eig-clip
+            ev, V = np.linalg.eigh(cov)
+            ev = np.maximum(ev, 1e-12)
+            cov = (V @ np.diag(ev) @ V.T)
+            L = np.linalg.cholesky(cov)
+        diff = X - mu[None, :]
+        # solve L y = diff^T  -> y^T = L^{-1} diff
+        y = np.linalg.solve(L, diff.T)  # (2,N)
+        maha = np.sum(y*y, axis=0)      # (N,)
+        log_det = 2.0 * np.sum(np.log(np.diag(L)))
+        return -0.5*(maha + log_det + 2*np.log(2*np.pi))
+
+    @staticmethod
+    def _nearest_psd(M, eps=1e-12):
+        M = 0.5*(M + M.T)
+        ev, V = np.linalg.eigh(M)
+        ev = np.maximum(ev, eps)
+        return (V @ np.diag(ev) @ V.T)
+
+    def fit(self, X, fix_mu_mask, fix_cov_mask, mu_fixed_vals, cov_fixed_vals):
+        """
+        X: (N,2)
+        fix_mu_mask: (K,2) bool   (True=fix that mean element)
+        fix_cov_mask:(K,2,2) bool (True=fix that cov element; symmetric)
+        mu_fixed_vals: (K,2) float
+        cov_fixed_vals:(K,2,2) float
+        """
+        X = np.asarray(X, dtype=float)
+        N = X.shape[0]
+        K = self.means_.shape[0]
+
+        # regularize initial covs
+        for k in range(K):
+            self.covs_[k] = self._nearest_psd(self.covs_[k]) + self.reg_covar*np.eye(2)
+
+        def e_step():
+            # compute responsibilities (N,K)
+            log_prob = np.empty((N, K), dtype=float)
+            for k in range(K):
+                log_prob[:, k] = (np.log(self.weights_[k]+1e-300) +
+                                  self._log_gaussian_2d(X, self.means_[k], self.covs_[k]))
+            # log-sum-exp
+            m = np.max(log_prob, axis=1, keepdims=True)
+            lse = m + np.log(np.sum(np.exp(log_prob - m), axis=1, keepdims=True))
+            log_resp = log_prob - lse
+            resp = np.exp(log_resp)
+            lower_bound = float(np.sum(lse))
+            return resp, lower_bound
+
+        def m_step(resp):
+            Nk = np.clip(np.sum(resp, axis=0), 1e-12, np.inf)  # (K,)
+            self.weights_ = Nk / float(N)
+
+            # means
+            new_means = (resp.T @ X) / Nk[:, None]  # (K,2)
+            # apply mean constraints
+            for k in range(K):
+                if fix_mu_mask[k, 0]: new_means[k, 0] = mu_fixed_vals[k, 0]
+                if fix_mu_mask[k, 1]: new_means[k, 1] = mu_fixed_vals[k, 1]
+            self.means_ = new_means
+
+            # covariances
+            new_covs = np.zeros_like(self.covs_)
+            for k in range(K):
+                diff = X - self.means_[k][None, :]
+                Sk = (resp[:, k][:, None] * diff).T @ diff / Nk[k]
+                Sk = self._nearest_psd(Sk) + self.reg_covar*np.eye(2)
+                # apply element-wise constraints (keep symmetry)
+                Cfix = cov_fixed_vals[k]
+                Mfix = fix_cov_mask[k]
+                if np.any(Mfix):
+                    Sk[Mfix] = Cfix[Mfix]
+                    Sk = 0.5*(Sk + Sk.T)
+                    Sk = self._nearest_psd(Sk) + self.reg_covar*np.eye(2)
+                new_covs[k] = Sk
+            self.covs_ = new_covs
+
+        # EM loop
+        prev_lb = -np.inf
+        for it in range(1, self.max_iter+1):
+            resp, lb = e_step()
+            m_step(resp)
+            improve = lb - prev_lb
+            if self.verbose and (it % 10 == 0 or it == 1):
+                print(f"[EM] iter={it}  lower_bound={lb:.6f}  +{improve:.6f}")
+            if improve < self.tol:
+                self.converged_ = True
+                self.lower_bound_ = lb
+                self.n_iter_ = it
+                return self
+            prev_lb = lb
+        self.lower_bound_ = prev_lb
+        self.n_iter_ = self.max_iter
+        return self
+
+
 class GaussianFit(QtCore.QObject):
     """
     Helper that constructs and wires the Gaussian Fit UI into the provided
@@ -27,6 +155,14 @@ class GaussianFit(QtCore.QObject):
     Plot/marginal state lists (gaussian_items, etc.) and palette are also
     initialized on `main` to minimize changes elsewhere.
     """
+
+    # ---- Table column indices (6 columns) ----
+    COL_X = 0
+    COL_Y = 1
+    COL_CXX = 2
+    COL_CYY = 3
+    COL_CXY = 4
+    COL_W = 5
 
     @property
     def is_log_x(self) -> bool:
@@ -69,6 +205,35 @@ class GaussianFit(QtCore.QObject):
         self._connect_signals()
 
     # ------------------------------ UI ---------------------------------
+    def _num_item(self, val: float) -> QtWidgets.QTableWidgetItem:
+        # Display numbers in scientific notation with 2 decimals; align left so checkbox appears in front of text
+        it = QtWidgets.QTableWidgetItem(f"{float(val):.2e}")
+        it.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        return it
+
+    def _make_fixable(self, item: QtWidgets.QTableWidgetItem, checked: bool = False):
+        # Add an in-cell checkbox without losing editability
+        flags = (item.flags()
+                 | QtCore.Qt.ItemIsUserCheckable
+                 | QtCore.Qt.ItemIsEditable
+                 | QtCore.Qt.ItemIsEnabled
+                 | QtCore.Qt.ItemIsSelectable)
+        item.setFlags(flags)
+        item.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
+
+    def _is_fixed_item(self, item: QtWidgets.QTableWidgetItem) -> bool:
+        return item is not None and item.checkState() == QtCore.Qt.Checked
+
+    def _make_check_item(self, checked: bool = False) -> QtWidgets.QTableWidgetItem:
+        it = QtWidgets.QTableWidgetItem("")
+        it.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+        it.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
+        it.setTextAlignment(QtCore.Qt.AlignCenter)
+        return it
+
+    def _is_checked(self, item: Optional[QtWidgets.QTableWidgetItem]) -> bool:
+        return (item is not None) and (item.checkState() == QtCore.Qt.Checked)
+
     def _build_ui(self):
         m = self.main
         # Button row: Fit + Clear + Select + Selection σ + Settings
@@ -93,7 +258,7 @@ class GaussianFit(QtCore.QObject):
         m.checkBoxGaussFitLog.setToolTip("Log Gauss: when enabled, fit Gaussians in log scale (both X and Y; positive values only). When disabled, fit in linear scale.")
         # New: GMM Settings button
         m.btnGMMSettings = QtWidgets.QToolButton(m); m.btnGMMSettings.setText("Settings")
-        m.btnGMMSettings.setToolTip("Configure GaussianMixture (sklearn) parameters and save them to your user settings.")
+        m.btnGMMSettings.setToolTip("Configure built-in GMM (EM) parameters and save them to your user settings.")
         btn_row.addWidget(m.btnFit2DGauss)
         btn_row.addWidget(m.btnClearGaussians)
         btn_row.addWidget(m.btnSelectGaussian)
@@ -103,18 +268,27 @@ class GaussianFit(QtCore.QObject):
         # Place the button row directly into the target layout
         m.verticalLayout_18.addLayout(btn_row)
 
-
-        # Table of gaussians (x, y, cov, weight)
         m.tableGaussians = QtWidgets.QTableWidget(m)
         m.tableGaussians.setColumnCount(6)
-        m.tableGaussians.setHorizontalHeaderLabels(["x", "y", "cov_xx", "cov_xy", "cov_yy", "w"])
-        # Make columns compact: do not stretch and size to contents
+        m.tableGaussians.setHorizontalHeaderLabels(["x", "y", "sd_x", "sd_y", "rho", "w"])
         header = m.tableGaussians.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
-        # Hide row numbers to save space
-        m.tableGaussians.verticalHeader().setVisible(False)
-        # Adjust to contents to keep the table compact
+        header.setMinimumSectionSize(20)
+        # Reduce vertical spacing between rows
+        vheader = m.tableGaussians.verticalHeader()
+        vheader.setVisible(False)
+        try:
+            # Compute a compact default row height based on current font
+            fm = m.tableGaussians.fontMetrics()
+            row_h = max(16, fm.height() + 2)  # minimal padding
+            vheader.setDefaultSectionSize(row_h)
+        except Exception:
+            pass
+        # Remove extra item padding; keep a couple of horizontal pixels for readability
+        m.tableGaussians.setStyleSheet("QTableWidget::item{padding:0px 2px;} QTableWidget{gridline-color: palette(mid);} ")
+        m.tableGaussians.setWordWrap(False)
+        m.tableGaussians.setShowGrid(True)
         m.tableGaussians.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
         m.tableGaussians.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         m.tableGaussians.setEditTriggers(
@@ -122,7 +296,6 @@ class GaussianFit(QtCore.QObject):
             | QtWidgets.QAbstractItemView.SelectedClicked
             | QtWidgets.QAbstractItemView.EditKeyPressed
         )
-        # Add table directly into the target layout
         m.verticalLayout_18.addWidget(m.tableGaussians)
 
         # Options row placed below the table: checkboxes + Save/Load
@@ -179,6 +352,13 @@ class GaussianFit(QtCore.QObject):
 
         # Install event filter on table to allow Delete key to remove rows
         m.tableGaussians.installEventFilter(self)
+
+        # Add context menu on the Gaussians table to remove selected rows
+        try:
+            m.tableGaussians.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            m.tableGaussians.customContextMenuRequested.connect(self._on_gaussian_table_context_menu)
+        except Exception:
+            pass
         
     # ---------------------------- Handlers ------------------------------
     def on_gaussian_table_selection_changed(self, selected, deselected):
@@ -235,11 +415,17 @@ class GaussianFit(QtCore.QObject):
                 def getf(c):
                     it = table.item(r, c)
                     return float(it.text()) if it is not None else None
-                x = getf(0); y = getf(1); cxx = getf(2); cxy = getf(3); cyy = getf(4)
-                if None in (x, y, cxx, cxy, cyy):
+                x = getf(self.COL_X); y = getf(self.COL_Y); sd_x = getf(self.COL_CXX); sd_y = getf(self.COL_CYY); rho = getf(self.COL_CXY)
+                if None in (x, y, sd_x, rho, sd_y):
                     continue
                 mu_v = np.array([x, y], dtype=float)
-                cov_v = np.array([[cxx, cxy], [cxy, cyy]], dtype=float)
+                try:
+                    sdx = max(0.0, float(sd_x)); sdy = max(0.0, float(sd_y)); rh = float(rho)
+                    rh = np.clip(rh, -1.0, 1.0)
+                    cov_xy = rh * sdx * sdy
+                    cov_v = np.array([[sdx*sdx, cov_xy], [cov_xy, sdy*sdy]], dtype=float)
+                except Exception:
+                    cov_v = np.array([[0.0, 0.0],[0.0, 0.0]], dtype=float)
                 # minimal regularization if needed
                 try:
                     eig = np.linalg.eigvalsh(cov_v)
@@ -377,131 +563,126 @@ class GaussianFit(QtCore.QObject):
             # Replace with transformed subset
             X_fit = X_pos
 
-        # Lazy import of sklearn GaussianMixture via documented API
-        try:
-            from sklearn.mixture import GaussianMixture
-        except Exception:
-            QtWidgets.QMessageBox.warning(m, "scikit-learn Not Available", "GaussianMixture (scikit-learn) is not installed.")
-            return
+        # Build init arrays (fit space) and FIX masks/values
+        rows_full = self._read_gaussian_table_with_fixed()
+        n_components = len(rows_full)
 
-        n_components = len(rows)
+        means_init_fit = np.zeros((n_components, 2), dtype=float)
+        covs_fit       = np.zeros((n_components, 2, 2), dtype=float)
+        weights_init   = np.zeros((n_components,), dtype=float)
+        fix_mu_mask    = np.zeros((n_components, 2), dtype=bool)
+        fix_cov_mask   = np.zeros((n_components, 2, 2), dtype=bool)
+        mu_fixed_vals  = np.zeros((n_components, 2), dtype=float)
+        cov_fixed_vals = np.zeros((n_components, 2, 2), dtype=float)
 
-        # Helper to transform (mu, cov) between value space and fitting space
+        # --- helpers to map between value space and fit space (log axes supported) ---
         eps = 1e-12
-        def to_fit_space(mu_v: np.ndarray, cov_v: np.ndarray) -> (np.ndarray, np.ndarray):
+
+        def to_fit_space(mu_v: np.ndarray, cov_v: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            """Map (mu, cov) from value space → fit space.
+               For log-axes we linearize log() around mu via J = diag(1/mu)."""
             mu_v = np.asarray(mu_v, dtype=float).reshape(2)
             cov_v = np.asarray(cov_v, dtype=float).reshape(2, 2)
+
             mu_z = mu_v.copy()
             J = np.eye(2, dtype=float)
+
             if is_log_x:
-                mu_safe = mu_v[0] if mu_v[0] > eps else eps
-                mu_z[0] = np.log(mu_safe)
-                J[0, 0] = 1.0 / mu_safe
+                mx = mu_v[0] if mu_v[0] > eps else eps
+                mu_z[0] = np.log(mx)
+                J[0, 0] = 1.0 / mx
             if is_log_y:
-                mu_safe = mu_v[1] if mu_v[1] > eps else eps
-                mu_z[1] = np.log(mu_safe)
-                J[1, 1] = 1.0 / mu_safe
+                my = mu_v[1] if mu_v[1] > eps else eps
+                mu_z[1] = np.log(my)
+                J[1, 1] = 1.0 / my
+
             cov_z = J @ cov_v @ J.T
-            # Minimal regularization to ensure positive semidefinite
-            eig = np.linalg.eigvalsh(cov_z)
-            if np.any(eig <= 0):
+            try:
+                if np.any(np.linalg.eigvalsh(cov_z) <= 0):
+                    cov_z = cov_z + 1e-9 * np.eye(2)
+            except Exception:
                 cov_z = cov_z + 1e-9 * np.eye(2)
             return mu_z, cov_z
 
-        def to_value_space(mu_z: np.ndarray, cov_z: np.ndarray) -> (np.ndarray, np.ndarray):
+        def to_value_space(mu_z: np.ndarray, cov_z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            """Map (mu, cov) from fit space → value space (inverse of above)."""
             mu_z = np.asarray(mu_z, dtype=float).reshape(2)
             cov_z = np.asarray(cov_z, dtype=float).reshape(2, 2)
+
             mu_v = mu_z.copy()
             G = np.eye(2, dtype=float)
+
             if is_log_x:
                 mu_v[0] = np.exp(mu_z[0])
                 G[0, 0] = mu_v[0]
             if is_log_y:
                 mu_v[1] = np.exp(mu_z[1])
                 G[1, 1] = mu_v[1]
+
             cov_v = G @ cov_z @ G.T
-            # Minimal regularization
             try:
-                eig = np.linalg.eigvalsh(cov_v)
-                if np.any(eig <= 0):
+                if np.any(np.linalg.eigvalsh(cov_v) <= 0):
                     cov_v = cov_v + 1e-9 * np.eye(2)
             except Exception:
                 cov_v = cov_v + 1e-9 * np.eye(2)
             return mu_v, cov_v
 
-        # Build initialization arrays in fitting space according to sklearn API
-        means_init_fit = []
-        covs_fit = []
-        w_init = []
-        for (mu_v, cov_v, w) in rows:
-            mu_z, cov_z = (mu_v, cov_v) if not np.any(log_axes) else to_fit_space(mu_v, cov_v)
-            means_init_fit.append(mu_z)
-            covs_fit.append(cov_z)
-            w_init.append(max(0.0, float(w)))
-        means_init_fit = np.array(means_init_fit, dtype=float)
-        covs_fit = np.array(covs_fit, dtype=float)
-        precs_fit = np.array([np.linalg.pinv(c) for c in covs_fit])
-        w_init = np.array(w_init, dtype=float)
-        s = np.sum(w_init)
+        # --- end helpers ---
+
+        for k, r in enumerate(rows_full):
+            mu_v, cov_v, w = r["mu"], r["cov"], r["w"]
+            mu_z, cov_z = (mu_v, cov_v)
+            if np.any(log_axes):
+                mu_z, cov_z = to_fit_space(mu_v, cov_v)
+            means_init_fit[k] = mu_z
+            covs_fit[k]       = cov_z
+            weights_init[k]   = max(0.0, float(w))
+            # fix masks
+            fix_mu_mask[k]    = r["fix_mu"]
+            fix_cov_mask[k]   = r["fix_cov"]
+            # fixed values (in FIT space!)
+            mu_fv, cov_fv = mu_z.copy(), cov_z.copy()
+            # ensure if fixed, values come from the current row
+            mu_fixed_vals[k]  = mu_fv
+            cov_fixed_vals[k] = cov_fv
+
+        s = float(np.sum(weights_init))
         if not np.isfinite(s) or s <= 0:
-            w_init = np.ones(n_components, dtype=float) / n_components
+            weights_init[:] = 1.0 / n_components
         else:
-            w_init = w_init / s
+            weights_init /= s
 
-        # Load user-configured GMM settings
+        # Load settings
         cfg = self._get_gmm_settings()
-        covariance_type = str(cfg.get('covariance_type', 'full'))
-        params = dict(
-            n_components=n_components,
-            covariance_type=covariance_type,
-            tol=float(cfg.get('tol', 1e-3)),
-            reg_covar=float(cfg.get('reg_covar', 1e-6)),
-            max_iter=int(cfg.get('max_iter', 200)),
-            n_init=int(cfg.get('n_init', 1)),
-            init_params=str(cfg.get('init_params', 'kmeans')),
-            warm_start=bool(cfg.get('warm_start', False)),
-            verbose=int(cfg.get('verbose', 0)),
-            verbose_interval=int(cfg.get('verbose_interval', 10)),
+        reg_covar = float(cfg.get('reg_covar', 1e-6))
+        tol       = float(cfg.get('tol', 1e-3))
+        max_iter  = int(cfg.get('max_iter', 200))
+        verbose   = int(cfg.get('verbose', 0))
+        weight_floor = float(cfg.get('weight_floor', 0.0))
+
+        # Run EM with constraints in FIT space
+        em = GaussianMixtureFixedEM(
+            means_init=means_init_fit,
+            covs_init=covs_fit,
+            weights_init=weights_init,
+            reg_covar=reg_covar,
+            max_iter=max_iter,
+            tol=tol,
+            verbose=verbose,
+            weight_floor=weight_floor,
+        ).fit(
+            X_fit,
+            fix_mu_mask=fix_mu_mask,
+            fix_cov_mask=fix_cov_mask,
+            mu_fixed_vals=mu_fixed_vals,
+            cov_fixed_vals=cov_fixed_vals
         )
-        rs = cfg.get('random_state', None)
-        if rs is not None:
-            try:
-                params['random_state'] = int(rs)
-            except Exception:
-                params['random_state'] = None
-        # Only pass precisions_init if covariance_type is 'full' to match shapes
-        if covariance_type == 'full':
-            params['precisions_init'] = precs_fit
-        # We can safely pass means_init and weights_init for all types
-        params['means_init'] = means_init_fit
-        params['weights_init'] = w_init
 
-        gm = GaussianMixture(**params)
+        means_fit = np.array(em.means_, dtype=float)
+        covariances_fit = np.array(em.covs_, dtype=float)
+        weights_fitted = np.array(em.weights_, dtype=float)
 
-        # Fit to data in fitting space
-        try:
-            gm.fit(X_fit)
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(m, "Fit failed", f"GMM fit failed: {e}")
-            return
-
-        # Retrieve fitted parameters (in fitting space)
-        means_fit = np.array(gm.means_, dtype=float)
-        try:
-            covariances_fit = np.array(gm.covariances_, dtype=float)
-        except Exception:
-            try:
-                precisions = np.array(gm.precisions_, dtype=float)
-                covariances_fit = np.array([np.linalg.pinv(P) for P in precisions])
-            except Exception:
-                QtWidgets.QMessageBox.warning(m, "Fit failed", "Could not retrieve covariances from the fitted model.")
-                return
-        try:
-            weights_fitted = np.array(getattr(gm, 'weights_', None), dtype=float)
-        except Exception:
-            weights_fitted = None
-
-        # Transform fitted parameters back to value space if needed and update table
+        # Transform back to VALUE space and update table
         for i in range(n_components):
             mu_i = means_fit[i]
             cov_i = covariances_fit[i]
@@ -509,13 +690,8 @@ class GaussianFit(QtCore.QObject):
                 mu_v_i, cov_v_i = to_value_space(mu_i, cov_i)
             else:
                 mu_v_i, cov_v_i = mu_i, cov_i
-            wi = None
-            try:
-                if weights_fitted is not None and i < len(weights_fitted):
-                    wi = float(weights_fitted[i])
-            except Exception:
-                wi = None
-            self._update_gaussian_row(i, mu_v_i, cov_v_i, wi)
+            self._update_gaussian_row(i, mu_v_i, cov_v_i, float(weights_fitted[i]))
+
         # Redraw overlays from the updated table
         self._redraw_gaussian_overlays_from_table()
 
@@ -570,8 +746,13 @@ class GaussianFit(QtCore.QObject):
             cov = np.diag([((x_edges[-1]-x_edges[0])/20.0)**2, ((y_edges[-1]-y_edges[0])/20.0)**2])
         # Fix the mean to the clicked center regardless of local mean
         mu = (x_c, y_c)
-        # Append to table first to get stable row index
-        row_index = self._append_gaussian_row(mu, cov)
+        # Append to table first to get stable row index, honoring default fix flags
+        try:
+            cfg = self._get_gmm_settings()
+            fix_new = bool(cfg.get("fix_new_means", True))
+        except Exception:
+            fix_new = True
+        row_index = self._append_gaussian_row(mu, cov, fix_x=fix_new, fix_y=fix_new)
         # Determine stable color by row index
         try:
             palette = getattr(m, '_gaussian_palette', ["#ff0000", "#00aa00", "#0000ff", "#aa00aa", "#00aaaa", "#ffaa00"])
@@ -784,53 +965,136 @@ class GaussianFit(QtCore.QObject):
         m.gaussian_items.append(curve_item)
         m.overlay_plot.replot()
 
-    def _append_gaussian_row(self, mu: Tuple[float, float], cov: np.ndarray, w: float = 1.0):
-        """Append a Gaussian (mu, cov, w) as a new row in the table."""
+    def _append_gaussian_row(self, mu, cov, w: float = 1.0,
+                             fix_x=False, fix_y=False, fix_cxx=False, fix_cxy=False, fix_cyy=False):
         m = self.main
         try:
             m._updating_gaussian_table = True
             row = m.tableGaussians.rowCount()
             m.tableGaussians.insertRow(row)
-            vals = [float(mu[0]), float(mu[1]), float(cov[0, 0]), float(cov[0, 1]), float(cov[1, 1]), float(w)]
-            for col, v in enumerate(vals):
-                item = QtWidgets.QTableWidgetItem(f"{v:.6g}")
-                item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-                m.tableGaussians.setItem(row, col, item)
+
+            # numeric items
+            ix = self._num_item(mu[0]);
+            m.tableGaussians.setItem(row, self.COL_X, ix)
+            iy = self._num_item(mu[1]);
+            m.tableGaussians.setItem(row, self.COL_Y, iy)
+            # store standard deviations and correlation instead of raw covariances
+            var_x = float(cov[0, 0]); var_y = float(cov[1, 1]); cov_xy = float(cov[0, 1])
+            sd_x = np.sqrt(max(var_x, 0.0)); sd_y = np.sqrt(max(var_y, 0.0))
+            denom = sd_x*sd_y if sd_x>0 and sd_y>0 else 0.0
+            rho = cov_xy/denom if denom>0 else 0.0
+            icxx = self._num_item(sd_x); m.tableGaussians.setItem(row, self.COL_CXX, icxx)
+            icxy = self._num_item(rho);  m.tableGaussians.setItem(row, self.COL_CXY, icxy)
+            icyy = self._num_item(sd_y); m.tableGaussians.setItem(row, self.COL_CYY, icyy)
+            iw = self._num_item(w);
+            # Override weight formatting to normal notation with two decimals
+            iw.setText(f"{float(w):.2f}")
+            iw.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+            m.tableGaussians.setItem(row, self.COL_W, iw)
+
+            # make fixable (checkbox in same cell). Weight is NOT fixable.
+            self._make_fixable(ix, fix_x)
+            self._make_fixable(iy, fix_y)
+            self._make_fixable(icxx, fix_cxx)
+            self._make_fixable(icxy, fix_cxy)
+            self._make_fixable(icyy, fix_cyy)
+
             return row
-        except Exception:
-            return -1
         finally:
             m._updating_gaussian_table = False
 
     def _update_gaussian_row(self, row: int, mu: np.ndarray, cov: np.ndarray, w: float = None):
-        """Update an existing row with new mu, cov (and optionally weight) values."""
         m = self.main
-        if not hasattr(m, 'tableGaussians'):
-            return
-        if row < 0 or row >= m.tableGaussians.rowCount():
-            return
+        if not hasattr(m, 'tableGaussians'): return
+        if row < 0 or row >= m.tableGaussians.rowCount(): return
         try:
             m._updating_gaussian_table = True
-            vals = [float(mu[0]), float(mu[1]), float(cov[0, 0]), float(cov[0, 1]), float(cov[1, 1])]
-            for col, v in enumerate(vals):
-                item = m.tableGaussians.item(row, col)
-                if item is None:
-                    item = QtWidgets.QTableWidgetItem()
-                    m.tableGaussians.setItem(row, col, item)
-                item.setText(f"{v:.6g}")
-                item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-            # Optionally update weight in last column if provided and column exists
-            if w is not None and m.tableGaussians.columnCount() >= 6:
-                item_w = m.tableGaussians.item(row, 5)
-                if item_w is None:
-                    item_w = QtWidgets.QTableWidgetItem()
-                    m.tableGaussians.setItem(row, 5, item_w)
-                item_w.setText(f"{float(w):.6g}")
-                item_w.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        except Exception:
-            pass
+
+            def _set(col, val, fixable=False):
+                it = m.tableGaussians.item(row, col)
+                if it is None:
+                    it = self._num_item(val)
+                    if col == self.COL_W:
+                        it.setText(f"{float(val):.2f}")
+                        it.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                    m.tableGaussians.setItem(row, col, it)
+                    if fixable: self._make_fixable(it, False)
+                else:
+                    # keep the current check state
+                    cs = it.checkState()
+                    if col == self.COL_W:
+                        it.setText(f"{float(val):.2f}")
+                    else:
+                        it.setText(f"{float(val):.2e}")
+                    it.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                    if fixable:
+                        it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+                        it.setCheckState(cs)
+
+            _set(self.COL_X, float(mu[0]), fixable=True)
+            _set(self.COL_Y, float(mu[1]), fixable=True)
+            # update from covariance but display as sd and rho
+            var_x = float(cov[0, 0]); var_y = float(cov[1, 1]); cov_xy = float(cov[0, 1])
+            sd_x = np.sqrt(max(var_x, 0.0)); sd_y = np.sqrt(max(var_y, 0.0))
+            denom = sd_x*sd_y if sd_x>0 and sd_y>0 else 0.0
+            rho = cov_xy/denom if denom>0 else 0.0
+            _set(self.COL_CXX, sd_x, fixable=True)
+            _set(self.COL_CXY, rho,  fixable=True)
+            _set(self.COL_CYY, sd_y, fixable=True)
+            if w is not None:
+                _set(self.COL_W, float(w), fixable=False)
         finally:
             m._updating_gaussian_table = False
+
+    def _read_gaussian_table_with_fixed(self):
+        m = self.main
+        out = []
+        n = m.tableGaussians.rowCount()
+        for r in range(n):
+            def getf(c):
+                it = m.tableGaussians.item(r, c)
+                if it is None: return None
+                try:
+                    return float(it.text())
+                except Exception:
+                    return None
+
+            x = getf(self.COL_X);
+            y = getf(self.COL_Y)
+            sd_x = getf(self.COL_CXX);
+            rho  = getf(self.COL_CXY);
+            sd_y = getf(self.COL_CYY)
+            w = getf(self.COL_W) or 1.0
+            if None in (x, y, sd_x, rho, sd_y): continue
+
+            mu = np.array([x, y], dtype=float)
+            try:
+                sdx = max(0.0, float(sd_x)); sdy = max(0.0, float(sd_y)); rh = float(rho)
+                rh = np.clip(rh, -1.0, 1.0)
+                cov_xy = rh * sdx * sdy
+                cov = np.array([[sdx*sdx, cov_xy], [cov_xy, sdy*sdy]], dtype=float)
+            except Exception:
+                cov = np.array([[0.0, 0.0], [0.0, 0.0]], dtype=float)
+            try:
+                ev = np.linalg.eigvalsh(cov)
+                if np.any(ev <= 0): cov = cov + 1e-9 * np.eye(2)
+            except Exception:
+                cov = cov + 1e-9 * np.eye(2)
+
+            fix_mu = np.array([
+                self._is_fixed_item(m.tableGaussians.item(r, self.COL_X)),
+                self._is_fixed_item(m.tableGaussians.item(r, self.COL_Y)),
+            ], dtype=bool)
+            fix_cov = np.array([
+                [self._is_fixed_item(m.tableGaussians.item(r, self.COL_CXX)),
+                 self._is_fixed_item(m.tableGaussians.item(r, self.COL_CXY))],
+                [self._is_fixed_item(m.tableGaussians.item(r, self.COL_CXY)),
+                 self._is_fixed_item(m.tableGaussians.item(r, self.COL_CYY))]
+            ], dtype=bool)
+
+            out.append({"mu": mu, "cov": cov, "w": float(w),
+                        "fix_mu": fix_mu, "fix_cov": fix_cov})
+        return out
 
     def _read_gaussian_table(self) -> List[Tuple[np.ndarray, np.ndarray, float]]:
         """Read all rows from the table and return list of (mu(2,), cov(2,2), w)."""
@@ -849,14 +1113,20 @@ class GaussianFit(QtCore.QObject):
                         return float(it.text())
                     except Exception:
                         return None
-                x = getf(0); y = getf(1); cxx = getf(2); cxy = getf(3); cyy = getf(4)
-                w = getf(5) if m.tableGaussians.columnCount() >= 6 else 1.0
-                if None in (x, y, cxx, cxy, cyy):
+                x = getf(self.COL_X); y = getf(self.COL_Y); sd_x = getf(self.COL_CXX); sd_y = getf(self.COL_CYY); rho = getf(self.COL_CXY)
+                w = getf(self.COL_W) if m.tableGaussians.columnCount() >= 6 else 1.0
+                if None in (x, y, sd_x, rho, sd_y):
                     continue
                 if w is None or not np.isfinite(w) or w < 0:
                     w = 1.0
                 mu = np.array([x, y], dtype=float)
-                cov = np.array([[cxx, cxy], [cxy, cyy]], dtype=float)
+                try:
+                    sdx = max(0.0, float(sd_x)); sdy = max(0.0, float(sd_y)); rh = float(rho)
+                    rh = np.clip(rh, -1.0, 1.0)
+                    cov_xy = rh * sdx * sdy
+                    cov = np.array([[sdx*sdx, cov_xy], [cov_xy, sdy*sdy]], dtype=float)
+                except Exception:
+                    cov = np.array([[0.0, 0.0], [0.0, 0.0]], dtype=float)
                 # Ensure positive semi-definite by minimal regularization
                 try:
                     eigvals = np.linalg.eigvalsh(cov)
@@ -899,7 +1169,7 @@ class GaussianFit(QtCore.QObject):
             color = palette[idx % len(palette)] if len(palette) else "#ff0000"
             self._add_gaussian_overlay((float(mu[0]), float(mu[1])), np.array(cov, dtype=float), color=color)
         m._collect_gaussian_colors = False
-        m.overlay_plot.replot()
+        #m.overlay_plot.replot()
         # Re-apply selection highlighting after redraw
         try:
             self.on_gaussian_table_selection_changed(None, None)
@@ -959,23 +1229,28 @@ class GaussianFit(QtCore.QObject):
             return
         # Clear existing items first
         self._clear_gaussian_marginal_items()
-        # Access histograms
+        # Access histograms (stored as (edges, values))
         try:
-            x_edges, x_counts = m._histogram["x"]
-            y_edges, y_counts = m._histogram["y"]
+            x_edges, x_vals = m._histogram["x"]
+            y_edges, y_vals = m._histogram["y"]
         except Exception:
             return
-        # Build centers
+        # Build centers and bin widths in value space
         try:
+            x_edges = np.asarray(x_edges, dtype=float)
+            y_edges = np.asarray(y_edges, dtype=float)
             x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
             y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+            x_bw = np.diff(x_edges)
+            y_bw = np.diff(y_edges)
         except Exception:
             return
-        # Detect log axes to match 2D Gaussian handling
-        x_max = float(np.nanmax(x_counts)) if len(x_counts) else 1.0
-        y_max = float(np.nanmax(y_counts)) if len(y_counts) else 1.0
-        x_scale = 0.9 * x_max if x_max > 0 else 1.0
-        y_scale = 0.9 * y_max if y_max > 0 else 1.0
+        # Determine whether histograms are normalized to density
+        norm_x = bool(getattr(m.plot_control, 'normed_hist_x', False)) if hasattr(m, 'plot_control') else False
+        norm_y = bool(getattr(m.plot_control, 'normed_hist_y', False)) if hasattr(m, 'plot_control') else False
+        # Total counts (or total weight) per axis when not using density
+        Nx = float(np.nansum(x_vals)) if (x_vals is not None and len(x_vals)) and not norm_x else 1.0
+        Ny = float(np.nansum(y_vals)) if (y_vals is not None and len(y_vals)) and not norm_y else 1.0
         # Prepare storage
         if not hasattr(m, 'gaussian_marginal_items_x'):
             m.gaussian_marginal_items_x = []
@@ -983,34 +1258,25 @@ class GaussianFit(QtCore.QObject):
             m.gaussian_marginal_items_y = []
         # Default color cycle fallback
         default_colors = ["#ff0000", "#00aa00", "#0000ff", "#aa00aa", "#00aaaa", "#ffaa00"]
-        # Normalize weights for visualization
+        # Normalize component weights from rows (non-negative)
         try:
-            w_list = [max(0.0, float(w)) for (mu, cov, w) in rows]
+            w_list = [max(0.0, float(w)) for (_mu, _cov, w) in rows]
             w_sum = float(np.sum(w_list)) if len(w_list) else 0.0
-            if not np.isfinite(w_sum) or w_sum <= 0:
-                w_norm = [1.0/len(rows)]*len(rows) if rows else []
-            else:
-                w_norm = [w/w_sum for w in w_list]
+            w_norm = [w / w_sum for w in w_list] if (np.isfinite(w_sum) and w_sum > 0) else ([1.0/len(rows)]*len(rows) if rows else [])
         except Exception:
             w_norm = [1.0/len(rows)]*len(rows) if rows else []
-        # Precompute weighted PDFs and colors to get global maxima
-        comp_gx = []
-        comp_gy = []
-        col_list = []
-        max_x_comp = 0.0
-        max_y_comp = 0.0
+        # Draw each component scaled consistently with histogram normalization
         for idx, (row, wn) in enumerate(zip(rows, w_norm)):
             try:
                 mu, cov, _w = row
                 mx, my = float(mu[0]), float(mu[1])
                 varx = float(cov[0, 0])
                 vary = float(cov[1, 1])
-                sx = np.sqrt(max(varx, 1e-12))
-                sy = np.sqrt(max(vary, 1e-12))
+                if not (np.isfinite(varx) and varx > 0 and np.isfinite(vary) and vary > 0):
+                    continue
             except Exception:
-                comp_gx.append(None); comp_gy.append(None); col_list.append(None)
                 continue
-            # Colors
+            # Color selection
             color = None
             try:
                 if colors is not None and idx < len(colors):
@@ -1019,55 +1285,40 @@ class GaussianFit(QtCore.QObject):
                 color = None
             if color is None:
                 color = default_colors[idx % len(default_colors)]
-            # Compute normalized marginal pdfs matching 2D handling:
-            # - linear axis: Normal in value space N(mu, var)
-            # - log axis: Log-normal in value space with log-parameters from linearization at mu
+            # Compute component PDFs in value space (handles log axes internally)
+            gx_pdf = self._component_marginal_pdf(x_centers, mx, varx, self.is_log_x)
+            gy_pdf = self._component_marginal_pdf(y_centers, my, vary, self.is_log_y)
+            # Scale according to histogram normalization
+            if norm_x:
+                gx_plot = wn * gx_pdf  # density overlay
+            else:
+                gx_plot = wn * gx_pdf * x_bw * Nx  # counts per bin
+            if norm_y:
+                gy_plot = wn * gy_pdf
+            else:
+                gy_plot = wn * gy_pdf * y_bw * Ny
+            # Create and add curve items
             try:
-                gx0 = self._component_marginal_pdf(x_centers, mx, varx, self.is_log_x)
-                gy0 = self._component_marginal_pdf(y_centers, my, vary, self.is_log_y)
-                gxw = gx0 * wn
-                gyw = gy0 * wn
-                mxx = float(np.nanmax(gxw)) if gxw.size else 0.0
-                myy = float(np.nanmax(gyw)) if gyw.size else 0.0
-                if np.isfinite(mxx) and mxx > max_x_comp:
-                    max_x_comp = mxx
-                if np.isfinite(myy) and myy > max_y_comp:
-                    max_y_comp = myy
+                curveparam_x = guiqwt.styles.CurveParam()
+                curveparam_x.line.color = color
+                curveparam_x.line.width = 2.0
+                item_x = guiqwt.curve.CurveItem(curveparam=curveparam_x)
+                item_x.set_data(list(x_centers), list(gx_plot))
+                m.g_xplot.add_item(item_x)
+                m.gaussian_marginal_items_x.append(item_x)
             except Exception:
-                gxw = None; gyw = None
-            comp_gx.append(gxw)
-            comp_gy.append(gyw)
-            col_list.append(color)
-        # Compute global scale factors so relative amplitudes are preserved
-        fac_x = (x_scale / max_x_comp) if max_x_comp > 0 else 1.0
-        fac_y = (y_scale / max_y_comp) if max_y_comp > 0 else 1.0
-        # Now draw each component with global scaling
-        for gxw, gyw, color in zip(comp_gx, comp_gy, col_list):
-            if gxw is not None:
-                try:
-                    gx_plot = gxw * fac_x
-                    curveparam_x = guiqwt.styles.CurveParam()
-                    curveparam_x.line.color = color
-                    curveparam_x.line.width = 2.0
-                    item_x = guiqwt.curve.CurveItem(curveparam=curveparam_x)
-                    item_x.set_data(list(x_centers), list(gx_plot))
-                    m.g_xplot.add_item(item_x)
-                    m.gaussian_marginal_items_x.append(item_x)
-                except Exception:
-                    pass
-            if gyw is not None:
-                try:
-                    gy_plot = gyw * fac_y
-                    curveparam_y = guiqwt.styles.CurveParam()
-                    curveparam_y.line.color = color
-                    curveparam_y.line.width = 2.0
-                    item_y = guiqwt.curve.CurveItem(curveparam=curveparam_y)
-                    # For Y marginal: counts on X-axis, y-centers on Y-axis
-                    item_y.set_data(list(gy_plot), list(y_centers))
-                    m.g_yplot.add_item(item_y)
-                    m.gaussian_marginal_items_y.append(item_y)
-                except Exception:
-                    pass
+                pass
+            try:
+                curveparam_y = guiqwt.styles.CurveParam()
+                curveparam_y.line.color = color
+                curveparam_y.line.width = 2.0
+                item_y = guiqwt.curve.CurveItem(curveparam=curveparam_y)
+                # For Y marginal: counts on X-axis, y-centers on Y-axis
+                item_y.set_data(list(gy_plot), list(y_centers))
+                m.g_yplot.add_item(item_y)
+                m.gaussian_marginal_items_y.append(item_y)
+            except Exception:
+                pass
         # Replot 1D plots
         try:
             m.g_xplot.replot()
@@ -1106,14 +1357,29 @@ class GaussianFit(QtCore.QObject):
     # ----------------------------- Save/Load -----------------------------
     def _rows_to_dicts(self):
         rows = []
-        for mu, cov, w in self._read_gaussian_table():
+        m = self.main
+        n = m.tableGaussians.rowCount()
+        for r in range(n):
+            def getf(c):
+                it = m.tableGaussians.item(r, c)
+                if it is None: return None
+                try: return float(it.text())
+                except Exception: return None
+            x   = getf(self.COL_X)
+            y   = getf(self.COL_Y)
+            cxx = getf(self.COL_CXX)
+            cxy = getf(self.COL_CXY)
+            cyy = getf(self.COL_CYY)
+            w   = getf(self.COL_W) or 1.0
+            if None in (x, y, cxx, cxy, cyy):
+                continue
             rows.append({
-                "x": float(mu[0]),
-                "y": float(mu[1]),
-                "cov_xx": float(cov[0, 0]),
-                "cov_xy": float(cov[0, 1]),
-                "cov_yy": float(cov[1, 1]),
-                "w": float(w)
+                "x": x, "y": y, "sd_x": cxx, "rho": cxy, "sd_y": cyy, "w": w,
+                "fix_x": self._is_fixed_item(m.tableGaussians.item(r, self.COL_X)),
+                "fix_y": self._is_fixed_item(m.tableGaussians.item(r, self.COL_Y)),
+                "fix_sd_x": self._is_fixed_item(m.tableGaussians.item(r, self.COL_CXX)),
+                "fix_rho": self._is_fixed_item(m.tableGaussians.item(r, self.COL_CXY)),
+                "fix_sd_y": self._is_fixed_item(m.tableGaussians.item(r, self.COL_CYY)),
             })
         return rows
 
@@ -1320,9 +1586,10 @@ class GaussianFit(QtCore.QObject):
         try:
             payload = {
                 "type": "ndxplorer.gaussians",
-                "version": 3,
+                "version": 4,
                 "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "columns": ["x", "y", "cov_xx", "cov_xy", "cov_yy", "w"],
+                "columns": ["x","y","sd_x","sd_y","rho","w",
+                            "fix_x","fix_y","fix_sd_x","fix_sd_y","fix_rho"],
                 "axes": axes_info,
                 "rows": rows,
                 "marginals": marg,
@@ -1338,14 +1605,20 @@ class GaussianFit(QtCore.QObject):
                 try:
                     xinfo = axes_info.get("x", {})
                     yinfo = axes_info.get("y", {})
-                    f.write(f"# ndxplorer.gaussians version=3\n")
+                    f.write(f"# ndxplorer.gaussians version=4\n")
                     f.write(f"# created={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                     f.write(f"# x_axis index={xinfo.get('index')} name={xinfo.get('name')} scale={xinfo.get('scale')}\n")
                     f.write(f"# y_axis index={yinfo.get('index')} name={yinfo.get('name')} scale={yinfo.get('scale')}\n")
                     f.write(f"# fit_in_log={axes_info.get('fit_in_log', False)}\n")
                 except Exception:
                     pass
-                writer = csv.DictWriter(f, fieldnames=["x", "y", "cov_xx", "cov_xy", "cov_yy", "w"]) 
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "x","y","sd_x","sd_y","rho","w",
+                        "fix_x","fix_y","fix_sd_x","fix_sd_y","fix_rho"
+                    ]
+                )
                 writer.writeheader()
                 for r in rows:
                     writer.writerow(r)
@@ -1510,19 +1783,38 @@ class GaussianFit(QtCore.QObject):
     def _load_from_json(self, path):
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if isinstance(data, dict) and "rows" in data:
-            rows = data.get("rows", [])
-        elif isinstance(data, list):
-            rows = data
-        else:
-            rows = []
+        rows = data.get("rows", data if isinstance(data, list) else [])
         out = []
         for r in rows:
             try:
-                x = float(r["x"]) ; y = float(r["y"]) ; cxx = float(r["cov_xx"]) ; cxy = float(r["cov_xy"]) ; cyy = float(r["cov_yy"]) ; w = float(r.get("w", 1.0))
+                x = float(r["x"]); y = float(r["y"])
+                # support both old cov_* and new sd/rho
+                if "sd_x" in r or "rho" in r or "sd_y" in r:
+                    sd_x = float(r.get("sd_x", 0.0)); rho = float(r.get("rho", 0.0)); sd_y = float(r.get("sd_y", 0.0))
+                    rho = float(np.clip(rho, -1.0, 1.0))
+                    cov_xy = rho * sd_x * sd_y
+                    cxx = sd_x*sd_x; cxy = cov_xy; cyy = sd_y*sd_y
+                    fx  = bool(r.get("fix_x", False))
+                    fy  = bool(r.get("fix_y", False))
+                    fcx = bool(r.get("fix_sd_x", False))
+                    fcy = bool(r.get("fix_rho", False))
+                    fcyy= bool(r.get("fix_sd_y", False))
+                else:
+                    cxx = float(r["cov_xx"]); cxy = float(r["cov_xy"]); cyy = float(r["cov_yy"]) 
+                    fx  = bool(r.get("fix_x", False))
+                    fy  = bool(r.get("fix_y", False))
+                    fcx = bool(r.get("fix_cxx", False))
+                    fcy = bool(r.get("fix_cxy", False))
+                    fcyy= bool(r.get("fix_cyy", False))
+                w = float(r.get("w", 1.0))
             except Exception:
                 continue
-            out.append((np.array([x, y], dtype=float), np.array([[cxx, cxy],[cxy, cyy]], dtype=float), float(w)))
+            out.append((
+                np.array([x, y], dtype=float),
+                np.array([[cxx, cxy],[cxy, cyy]], dtype=float),
+                float(w),
+                fx, fy, fcx, fcy, fcyy
+            ))
         return out, (data.get("axes") if isinstance(data, dict) else None)
 
     def _load_from_csv(self, path):
@@ -1531,12 +1823,38 @@ class GaussianFit(QtCore.QObject):
             reader = csv.DictReader(f)
             for r in reader:
                 try:
-                    x = float(r.get("x")) ; y = float(r.get("y"))
-                    cxx = float(r.get("cov_xx")) ; cxy = float(r.get("cov_xy")) ; cyy = float(r.get("cov_yy"))
-                    w = float(r.get("w", 1.0))
+                    x   = float(r.get("x"))
+                    y   = float(r.get("y"))
+                    if r.get("sd_x") is not None or r.get("rho") is not None or r.get("sd_y") is not None:
+                        sd_x = float(r.get("sd_x", 0.0))
+                        rho  = float(r.get("rho", 0.0))
+                        sd_y = float(r.get("sd_y", 0.0))
+                        rho = float(np.clip(rho, -1.0, 1.0))
+                        cov_xy = rho * sd_x * sd_y
+                        cxx = sd_x*sd_x; cxy = cov_xy; cyy = sd_y*sd_y
+                        fx  = r.get("fix_x", "False").strip().lower() in ("1","true","yes","y")
+                        fy  = r.get("fix_y", "False").strip().lower() in ("1","true","yes","y")
+                        fcx = r.get("fix_sd_x", "False").strip().lower() in ("1","true","yes","y")
+                        fcy = r.get("fix_rho", "False").strip().lower() in ("1","true","yes","y")
+                        fcyy= r.get("fix_sd_y", "False").strip().lower() in ("1","true","yes","y")
+                    else:
+                        cxx = float(r.get("cov_xx"))
+                        cxy = float(r.get("cov_xy"))
+                        cyy = float(r.get("cov_yy"))
+                        fx  = r.get("fix_x", "False").strip().lower() in ("1","true","yes","y")
+                        fy  = r.get("fix_y", "False").strip().lower() in ("1","true","yes","y")
+                        fcx = r.get("fix_cxx", "False").strip().lower() in ("1","true","yes","y")
+                        fcy = r.get("fix_cxy", "False").strip().lower() in ("1","true","yes","y")
+                        fcyy= r.get("fix_cyy", "False").strip().lower() in ("1","true","yes","y")
+                    w   = float(r.get("w", 1.0))
                 except Exception:
                     continue
-                out.append((np.array([x, y], dtype=float), np.array([[cxx, cxy],[cxy, cyy]], dtype=float), float(w)))
+                out.append((
+                    np.array([x, y], dtype=float),
+                    np.array([[cxx, cxy],[cxy, cyy]], dtype=float),
+                    float(w),
+                    fx, fy, fcx, fcy, fcyy
+                ))
         return out
 
     def on_load_gaussians(self):
@@ -1576,14 +1894,22 @@ class GaussianFit(QtCore.QObject):
                     QtWidgets.QMessageBox.information(m, "Axis Mismatch", f"File axes:\nX: {sx_old}\nY: {sy_old}\nCurrent axes:\nX: {sx_cur}\nY: {sy_cur}\n\nGaussians were loaded regardless.")
         except Exception:
             pass
-        # Clear existing table and populate
+
+        # Clear existing and populate
         try:
             m._updating_gaussian_table = True
             m.tableGaussians.setRowCount(0)
-            for mu, cov, w in rows:
-                self._append_gaussian_row((float(mu[0]), float(mu[1])), np.array(cov, dtype=float), float(w))
+            for row in rows:
+                if len(row) == 8:  # from JSON/CSV with fix flags
+                    mu, cov, w, fx, fy, fcx, fcy, fcyy = row
+                    self._append_gaussian_row((float(mu[0]), float(mu[1])), np.array(cov, dtype=float), float(w),
+                                              fix_x=fx, fix_y=fy, fix_cxx=fcx, fix_cxy=fcy, fix_cyy=fcyy)
+                else:  # legacy (no fix flags)
+                    mu, cov, w = row
+                    self._append_gaussian_row((float(mu[0]), float(mu[1])), np.array(cov, dtype=float), float(w))
         finally:
             m._updating_gaussian_table = False
+
         # Redraw overlays from the table
         try:
             self._redraw_gaussian_overlays_from_table()
@@ -1591,6 +1917,31 @@ class GaussianFit(QtCore.QObject):
             pass
 
     # ------------------------- Event filtering ---------------------------
+    def _on_gaussian_table_context_menu(self, pos: QtCore.QPoint):
+        """Show context menu on the Gaussians table to remove selected gaussians.
+        Right-click -> Remove Gaussian(s) removes all selected rows.
+        """
+        m = self.main
+        try:
+            table = m.tableGaussians
+            if table is None:
+                return
+            # Map the point to global for the popup menu
+            global_pos = table.viewport().mapToGlobal(pos)
+            sel_model = table.selectionModel()
+            selected_rows = []
+            if sel_model is not None:
+                selected_rows = [idx.row() for idx in sel_model.selectedRows()]
+            menu = QtWidgets.QMenu(table)
+            act_remove = QtWidgets.QAction("Remove Gaussian(s)", menu)
+            act_remove.setEnabled(len(selected_rows) > 0)
+            menu.addAction(act_remove)
+            action = menu.exec_(global_pos)
+            if action == act_remove and selected_rows:
+                self._delete_selected_gaussian_rows(selected_rows)
+        except Exception:
+            pass
+
     def eventFilter(self, obj, event):
         """Intercept Delete key presses on the Gaussians table to delete selected rows."""
         try:
