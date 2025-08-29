@@ -1067,9 +1067,36 @@ class NDXplorer(QtWidgets.QMainWindow):
         #    (But remember, this does NOT fix comboBoxSelX/Y/Z)
         self.plot_control.onClearSelection()
 
-        # 2.5. Clear all curve overlays
-        if hasattr(self, 'curve_overlay_widget'):
-            self.curve_overlay_widget.clear_curves()
+        # 2.5. Clear all overlays (curve overlays and Gaussian overlays)
+        try:
+            # Remove any existing curve overlay items from the overlay plot
+            if hasattr(self, 'curve_items') and hasattr(self, 'overlay_plot') and self.overlay_plot is not None:
+                for item in list(self.curve_items):
+                    try:
+                        self.overlay_plot.del_item(item)
+                    except Exception:
+                        pass
+                try:
+                    self.curve_items.clear()
+                except Exception:
+                    self.curve_items = []
+            # Clear curve overlay widgets (also resets internal state and emits signal)
+            if hasattr(self, 'curve_overlay_widget') and self.curve_overlay_widget is not None:
+                self.curve_overlay_widget.clear_curves()
+            # Clear Gaussian overlays (ellipses, marginals, and table)
+            try:
+                self.on_clear_gaussians()
+            except Exception:
+                # If GaussianFit not initialized, ignore
+                pass
+            # Ensure overlay canvas is refreshed
+            if hasattr(self, 'overlay_plot') and self.overlay_plot is not None:
+                try:
+                    self.overlay_plot.replot()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         # 2.6. Clear clustering data
         if hasattr(self, '_cluster_labels'):
