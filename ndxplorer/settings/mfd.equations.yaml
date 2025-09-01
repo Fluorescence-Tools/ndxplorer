@@ -54,3 +54,50 @@
     'Green Count Rate (KHz)' + 'Red Count Rate (KHz)'
 - 1/Sensitivity: >-
     1./(1. - 'FRET efficiency' * (1. - ('gG/gR' * 'PhiD' / 'PhiA')))
+# ---- ALEX-identified rates from counts (+ duration) ----
+- Sg(ALEX): >-
+    'F_Dexc_Dem' / 'Tau' / 1.0e3
+- Sr(ALEX): >-
+    'F_Dexc_Aem' / 'Tau' / 1.0e3
+- Sy(ALEX): >-
+    'F_Aexc_Aem' / 'Tau' / 1.0e3  # acceptor-excitation acceptor-emission
+
+# (optional, available in your CSV; not used below but handy)
+- Sx(ALEX): >-
+    'F_Aexc_Dem' / 'Tau' / 1.0e3  # acceptor-excitation donor-emission (usually leakage)
+
+# ---- Background / leakage corrected ALEX channels ----
+# expects same constants as PIE: Bg, Br, By, alpha, beta, r, gG/gR, PhiA, PhiD
+- Fg(ALEX): >-
+    'Sg(ALEX)' - 'Bg'
+- Fr(ALEX): >-
+    'Sr(ALEX)' - 'Br' - 'alpha' * 'Sg(ALEX)'
+- Fy(ALEX): >-
+    'Sy(ALEX)' - 'By'
+
+# ---- Derived ALEX ratios and efficiencies ----
+- Fg/Fr(ALEX): >-
+    'Fg(ALEX)' / 'Fr(ALEX)'
+- Sg/Sr(ALEX): >-
+    'Sg(ALEX)' / 'Sr(ALEX)'
+- Fd/Fa(ALEX): >-
+    'Fg/Fr(ALEX)' / 'gG/gR'
+- Proximity ratio(ALEX): >-
+    'Sr(ALEX)' / ('Sr(ALEX)' + 'Sg(ALEX)')
+- FRET efficiency(ALEX): >-
+    (1. + 'Fd/Fa(ALEX)' * 'PhiA' / 'PhiD')**(-1.0)
+
+# ---- Apparent stoichiometry from signals and from corrected fluxes (ALEX) ----
+- Sapp(ALEX,S): >-
+    ('Sr(ALEX)' + 'Sg(ALEX)') / ('Sr(ALEX)' + 'Sy(ALEX)' + 'Sg(ALEX)')
+- Sapp(ALEX,F): >-
+    ('Fr(ALEX)' + 'Fg(ALEX)') / ('Fr(ALEX)' + 'Fy(ALEX)' + 'Fg(ALEX)')
+
+# ---- Full ALEX stoichiometry (same form as PIE, just using ALEX channels) ----
+- Stoichiometry (ALEX): >-
+    ('Fr(ALEX)' - 'beta' * 'Fy(ALEX)' - 'alpha' * 'Fg(ALEX)' + (1/'gG/gR') * ('PhiA'/'PhiD') * 'Fg(ALEX)') /
+    ('Fr(ALEX)' - 'beta' * 'Fy(ALEX)' - 'alpha' * 'Fg(ALEX)' + (1/'gG/gR') * ('PhiA'/'PhiD') * 'Fg(ALEX)' + 'r' * 'Fy(ALEX)')
+
+# ---- Convenience sums (ALEX) ----
+- Total count rate (ALEX): >-
+    'Sg(ALEX)' + 'Sr(ALEX)'

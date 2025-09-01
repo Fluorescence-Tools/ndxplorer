@@ -1169,7 +1169,6 @@ class GaussianFit(QtCore.QObject):
             color = palette[idx % len(palette)] if len(palette) else "#ff0000"
             self._add_gaussian_overlay((float(mu[0]), float(mu[1])), np.array(cov, dtype=float), color=color)
         m._collect_gaussian_colors = False
-        #m.overlay_plot.replot()
         # Re-apply selection highlighting after redraw
         try:
             self.on_gaussian_table_selection_changed(None, None)
@@ -1181,6 +1180,11 @@ class GaussianFit(QtCore.QObject):
                 self._draw_gaussian_marginals_from_table(rows, getattr(m, '_last_gaussian_draw_colors', None))
         except Exception:
             pass
+
+        # Trigger resize / otherwise plot flipped ? - Ugly fix
+        def _do_update():
+            m.update_plots()
+        QtCore.QTimer.singleShot(1, _do_update)
 
     def _clear_gaussian_marginal_items(self):
         """Remove marginal overlay curves from x and y plots."""

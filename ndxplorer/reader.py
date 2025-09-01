@@ -612,7 +612,7 @@ def _detect_and_build_kwargs(lines: List[str]) -> Dict:
     Returns kwargs for pandas.read_csv.
     """
     N = min(len(lines), 5000)
-    candidates = [",", "\t", ";", "|", None]
+    candidates = [",", "\t", ";"]
     has_comma_digits = any(re.search(r"\d,\d", ln) for ln in lines[:N])
 
     best = dict(score=-1.0, delim=None, complete_cols=0, first_idx=0, header_prev_idx=None, dec_comma=False)
