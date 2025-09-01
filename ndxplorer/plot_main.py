@@ -284,14 +284,18 @@ class NDXplorer(QtWidgets.QMainWindow):
             # Get z values
             d3 = self.data_source.values[p13[2]]
 
-            # Create a mask for values within the Z selection range
-            z_mask = (d3 >= z_min) & (d3 <= z_max)
+            # Create a selection mask (True for points within the Z range)
+            z_select = (d3 >= z_min) & (d3 <= z_max)
 
-            # Update the combined mask
-            mask = mask & z_mask
+            # Build a per-parameter mask that excludes points outside the selection
+            new_mask = np.zeros_like(mask)
+            new_mask[:, ~z_select] = True  # mask out-of-range points across all parameters
+
+            # Combine with the existing mask (keep any point masked by either condition)
+            mask = mask | new_mask
 
             # Log the number of points in the selection
-            logging.debug(f"Dynamic selection: {np.sum(z_mask)} points selected out of {len(d3)}")
+            logging.debug(f"Dynamic selection: {np.sum(z_select)} points selected out of {len(d3)}")
 
         # If clustering is enabled and a specific cluster is selected, filter by cluster
         if use_clustering:
@@ -3607,11 +3611,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.cax.set_lut_range([self.vmin, self.vmax])
 
         # Redraw once
-        self.g_2dplot.replot()
-
-        # Keep overlays in sync with the current edges/data
-        self.update_curve_overlays()
-
         self.g_2dplot.setAxisScale(QwtPlot.xBottom, 0, len(x_edges)-1)
         self.g_2dplot.setAxisScale(QwtPlot.yLeft, 0, len(y_edges)-1)
 
