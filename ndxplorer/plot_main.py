@@ -532,7 +532,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             logging.info( f"Default colormap {self.current_cmap} not found in available colormaps")
 
     def on_vmin_vmax_changed(self):
-        logging.info( "vmin/vmax values changed")
+        logging.info("vmin/vmax values changed")
         # Get current values from the spin boxes using the properties
         current_vmin = self.vmin  # this should read from doubleSpinBox_vmin.value()
         current_vmax = self.vmax  # similarly for doubleSpinBox_vmax.value()
@@ -735,11 +735,15 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Set initial visibility of z-axis plot based on checkbox state
         # This will be properly set after the z-axis plot is created
 
-        # Create a timer to check for Z selection range changes
+        # Create a timer to check for Z selection range changes (only active when dynamic selection is enabled)
         self.z_range_check_timer = QtCore.QTimer(self)
-        self.z_range_check_timer.timeout.connect(self.check_z_range_changes)
-        # Check every 500 ms
-        self.z_range_check_timer.start(500)
+        self.z_range_check_timer.setInterval(500)
+        # Guard flag to avoid duplicate connections
+        self._z_timer_connected = False
+        # Connect dynamic selection toggle to enable/disable the timer
+        self.checkBoxDynamicSelection.toggled.connect(self.on_dynamic_selection_toggled)
+        # Initialize timer state based on current checkbox
+        self.on_dynamic_selection_toggled(self.checkBoxDynamicSelection.isChecked())
 
         # Plots
         #############
@@ -1025,6 +1029,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         Show the data in the data source using DataFrameEditor.
         """
+        logging.debug("show_dataframe_editor")
         if self._data_source.empty:
             QtWidgets.QMessageBox.warning(
                 self, "No Data", "No data loaded—nothing to show."
@@ -1043,7 +1048,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.update_plots()
 
     def clear_plots(self):
-        logging.info( "clearing plots")
+        logging.debug(f"clear_plots")
         # 0. Also clear the working path line edit (global clear should reset path)
         try:
             self.lineEditWorkingPath.blockSignals(True)
@@ -1129,6 +1134,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.update_plots()
 
     def copy_1d_hists_to_clipboard_csv(self):
+        logging.debug(f"copy_1d_hists_to_clipboard_csv")
         try:
             x_hist = self._histogram["x"]  # tuple: (bin_edges, counts)
             y_hist = self._histogram["y"]
@@ -1143,7 +1149,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Extract histogram components for X, Y, and Z
         x_edges, x_counts = x_hist
         y_edges, y_counts = y_hist
-        
+
         # Check if z_hist is not empty before unpacking
         if z_hist:
             z_edges, z_counts = z_hist
@@ -1219,6 +1225,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Returns:
             bool: True if napari is available, False otherwise
         """
+        logging.debug(f"is_napari_available")
         global napari
         if napari is None:
             try:
@@ -1247,6 +1254,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         
         The image is transposed to ensure correct orientation in napari.
         """
+        logging.debug(f"send_to_napari")
         # Check if napari is available
         if not self.is_napari_available():
             QtWidgets.QMessageBox.warning(
@@ -1296,6 +1304,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Args:
             pos: The position where the context menu should be displayed
         """
+        logging.debug(f"on_canvas_context_menu")
         menu = QtWidgets.QMenu(self.g_2dplot.canvas())
         action_csv = menu.addAction("Copy 2D Histogram (CSV)")
         #action_json = menu.addAction("Copy 2D Histogram (JSON)")
@@ -1319,6 +1328,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Whenever the user toggles the Inf/NaN masks,
         invalidate the cache and re-plot.
         """
+        logging.debug(f"onMaskChanged")
         self._mask_inf = self.checkBoxMaskInf.isChecked()
         self._mask_nan = self.checkBoxMaskNaN.isChecked()
         self.invalidate_values_cache()
@@ -1329,6 +1339,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Show the Axis Control dialog.
         This method is triggered when the user clicks the Axis Control action in the View menu.
         """
+        logging.debug(f"onShowAxisControl")
         # Create and show the axis control dialog
         dialog = AxisControlDialog(parent=self)
         dialog.exec_()
@@ -1338,6 +1349,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Show the UMAP plot.
         This method is triggered when the user clicks the UMAP action in the View menu.
         """
+        logging.debug(f"onShowUMAP")
         try:
             # Create the clustering dialog if it doesn't exist
             if self.clustering_dialog is None:
@@ -1372,6 +1384,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def onShowReportWizard(self):
         """Open the Report Tool dialog."""
+        logging.debug(f"onShowReportWizard")
         try:
             from .report_tool import ReportWizard
             dlg = ReportWizard(parent=self)
@@ -1383,6 +1396,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         """Capture a screenshot of the NDXplorer window and ask the user where to save it.
         Also copies the screenshot to the system clipboard.
         """
+        logging.debug(f"on_take_screenshot")
         try:
             # Grab the entire window as a pixmap
             pixmap = self.grab()
@@ -1440,6 +1454,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, 'Save Screenshot', f'An error occurred while saving the screenshot:\n{e}')
 
     def onSelectWorkingPath(self):
+        logging.debug(f"onSelectWorkingPath")
         working_path = QtWidgets.QFileDialog.getExistingDirectory(None, 'Select current path', self.working_path)
         # If user cancels the dialog, do not change the working path
         if not working_path:
@@ -1455,6 +1470,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         - If an HDF5 (.h5/.hdf5) file is dropped: open via onOpenMfdHdf5.
         - If a CSV (.csv) file is dropped: open via onOpenCsv.
         """
+        logging.debug(f"_install_working_path_drop")
         le = self.lineEditWorkingPath
         try:
             le.setAcceptDrops(True)
@@ -1538,6 +1554,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             evt: Event that triggered this method (not used)
             folder: Folder where burst IDs will be saved. If None, a folder selection dialog will be shown.
         """
+        logging.debug(f"onSaveBurstIDs")
         if folder is None:
             folder = QtWidgets.QFileDialog.getExistingDirectory(
                 None, 'Folder for Burst IDs', self.working_path
@@ -1643,6 +1660,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             evt: Event that triggered this method (not used)
             folder: Folder where clustering data will be saved. If None, a folder selection dialog will be shown.
         """
+        logging.debug(f"onSaveClusteringData")
         # Check if we have cluster labels
         if self._cluster_labels is None:
             QtWidgets.QMessageBox.warning(
@@ -1691,6 +1709,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Save the current parameters to a JSON file in the user's settings folder.
         If chisurf module exists, parameters are saved in the user folder.
         """
+        logging.debug(f"save_parameters")
         # Get the settings path (this will use chisurf user folder if available)
         settings_path = get_settings_path()
         
@@ -1712,6 +1731,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             event,
             settings_json_fn=None  # type: str
     ):
+        logging.debug(f"onSaveAxisSettings")
         # Qt signals like triggered(bool) may pass a boolean; treat it as no filename provided
         if isinstance(settings_json_fn, bool):
             settings_json_fn = None
@@ -1799,6 +1819,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Set the current axis selections (and weight, if available) as the new defaults
         in the active ndxplorer settings JSON under the 'default_axes' key.
         """
+        logging.debug(f"onSetDefaultAxis")
         # Determine target settings file
         settings_path = getattr(self, "_settings_json_path", None)
         if not settings_path:
@@ -1868,6 +1889,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             self,
             settings_json_fn=None  # type: str
     ):
+        logging.debug(f"onLoad_settings")
         # Handle Qt signals possibly passing a boolean
         if isinstance(settings_json_fn, bool):
             settings_json_fn = None
@@ -2137,6 +2159,7 @@ class NDXplorer(QtWidgets.QMainWindow):
                 - merge_mode (str): The merge mode ('columns' or 'rows')
                 - None if the dialog was cancelled
         """
+        logging.debug(f"show_merge_dialog")
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle(title)
         layout = QtWidgets.QVBoxLayout()
@@ -2190,6 +2213,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             append: bool = False,
             merge_mode: str = 'columns'
     ):
+        logging.debug(f"onOpenCsv")
         # If no filenames provided, check if we should append
         if filenames is None and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
             result = self.show_merge_dialog('Open CSV Files')
@@ -2205,6 +2229,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             append: bool = False,
             merge_mode: str = 'columns'
     ):
+        logging.debug(f"onOpenChiSurfSampling")
         # If no filenames provided, check if we should append
         if filenames is None and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
             result = self.show_merge_dialog('Open ChiSurf Sampling Files')
@@ -2229,6 +2254,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             append: Whether to append to existing data
             merge_mode: How to merge the data - 'columns' or 'rows'
         """
+        logging.debug(f"onOpenMfdHdf5")
         # If no filenames provided, check if we should append
         if filenames is None and hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
             result = self.show_merge_dialog('Open MFD HDF5 Files')
@@ -2239,6 +2265,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.open_files(file_type="mfd_hdf5", file_handles=filenames, append=append, merge_mode=merge_mode)
 
     def onOpenSmFRET(self, merge_mode: str = 'columns'):
+        logging.debug(f"onOpenSmFRET")
         # Check if we should append
         append = False
         if hasattr(self, '_data_source') and self._data_source is not None and not self._data_source.empty:
@@ -2250,6 +2277,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.open_files(file_type="burst_dir", append=append, merge_mode=merge_mode)
 
     def update(self, *args, **kwargs):
+        logging.debug(f"update")
         super(NDXplorer, self).update()
         self.data_source.compute_columns(
             constants=self.constants,
@@ -2262,6 +2290,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         Apply font settings (tick/title sizes) to all plots. Family is fixed.
         """
+        logging.debug(f"apply_fonts")
         try:
             fs = getattr(self, 'font_settings', {})
             tick_size = int(fs.get('tick_size_pt', 8))
@@ -2308,6 +2337,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         enabled or disabled according to the user's preferences.
         In addition, it formats axis titles to be bold and slightly larger for better readability.
         """
+        logging.debug(f"update_parameter_names")
         # Get the current parameter names from the plot control
         p1, p1_name = self.plot_control.p1
         p2, p2_name = self.plot_control.p2
@@ -2408,6 +2438,7 @@ class NDXplorer(QtWidgets.QMainWindow):
                 pass
 
     def get_bins(self, arange, scale, n_1d, n_2d):
+        logging.debug(f"get_bins: arange={arange}, scale={scale}, n_1d={n_1d}, n_2d={n_2d}")
         xmin, xmax = arange
         # set log scales
         if scale == "log":
@@ -2427,6 +2458,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         return x_bins_1d, x_bins_2d
 
     def get_x_bins(self):
+        logging.debug(f"get_x_bins")
         return self.get_bins(
             self.plot_control.x_range,
             self.plot_control.scale_x,
@@ -2435,6 +2467,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
 
     def get_y_bins(self):
+        logging.debug(f"get_y_bins")
         return self.get_bins(
             self.plot_control.y_range,
             self.plot_control.scale_y,
@@ -2443,6 +2476,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
 
     def get_z_bins(self):
+        logging.debug(f"get_z_bins")
         bins = self.get_bins(
             self.plot_control.z_range,
             self.plot_control.scale_z,
@@ -2452,6 +2486,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         return bins
 
     def update_histograms(self):
+        logging.debug(f"update_histograms")
         # Check if we need to recompute histograms
         # We can skip recomputation if the data, bins, and weights haven't changed
         recompute_needed = True
@@ -2605,6 +2640,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         }
 
     def copy_2d_hist_to_clipboard_json(self):
+        logging.debug(f"copy_2d_hist_to_clipboard_json()")
         try:
             H, x_edges, y_edges = self._histogram["2d"]
         except Exception as e:
@@ -2626,6 +2662,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         logging.info( "2D histogram data copied to clipboard.")
 
     def copy_2d_hist_to_clipboard_csv(self):
+        logging.debug(f"copy_2d_hist_to_clipboard_csv: {self._histogram}")
         try:
             H, x_edges, y_edges = self._histogram["2d"]
         except Exception as e:
@@ -2660,14 +2697,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         logging.info( "2D histogram data copied to clipboard as CSV (formatted with tabs).")
 
     def update_plots(self, skip_clustering=False):
-        """
-        Update all plots with the current data.
-
-        Args:
-            skip_clustering: If True, skip the clustering step even if clustering is enabled.
-                            This is useful when update_plots is called after clustering is done
-                            or when loading data.
-        """
+        logging.debug(f"update_plots(skip_clustering={skip_clustering})")
         # Invalidate the values cache to ensure we're using the latest data
         # This is especially important when selections have changed
         self.invalidate_values_cache()
@@ -2812,22 +2842,6 @@ class NDXplorer(QtWidgets.QMainWindow):
         # 2D histogram updates as before
         self.update_2d_plot()
 
-        # ----------------------------------------------------
-        # Set the 2D plot axis scales from 0 to the number of bins
-        # This ensures the 2D plot always displays the full range of bins
-        try:
-            H, _, _ = self._histogram["2d"]
-            n_bins_x, n_bins_y = H.shape
-            self.g_2dplot.setAxisScale(QwtPlot.xBottom, 0, n_bins_x -1)
-            self.g_2dplot.setAxisScale(QwtPlot.yLeft, 0, n_bins_y -1)
-        except (ValueError, KeyError):
-            # If there's no 2D histogram data, use default scales
-            self.g_2dplot.setAxisScale(QwtPlot.xBottom, 0, 1)
-            self.g_2dplot.setAxisScale(QwtPlot.yLeft, 0, 1)
-
-        # ----------------------------------------------------
-        # Finally replot everything
-
         # Only replot x-plot if it has valid data
         if "x" in self._histogram:
             x_counts = self._histogram["x"][1]
@@ -2862,6 +2876,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Recompute the 2D histogram limits based on the newly selected parameters
         and update the vmin/vmax spin boxes.
         """
+        logging.debug(f"update_spinbox_limits(low_pct={low_pct}, high_pct={high_pct})")
         # --- 0) Guard: is there any data at all? ---
         if self._data_source.empty:
             return
@@ -2915,12 +2930,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         Set up a button to show/hide the clustering dialog.
         """
+        logging.debug("setup_clustering_button()")
         self.pushButtonShowClusteringDialog.clicked.connect(self.toggle_clustering_dialog)
 
     def toggle_clustering_dialog(self):
         """
         Show or hide the clustering dialog.
         """
+        logging.debug("toggle_clustering_dialog()")
         if self.clustering_dialog is None:
             self.create_clustering_dialog()
 
@@ -2935,6 +2952,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         Create the clustering dialog if it doesn't exist.
         """
+        logging.debug("create_clustering_dialog()")
         if self.clustering_dialog is None:
             self.clustering_dialog = ClusteringDialog(parent=self)
 
@@ -2950,6 +2968,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         Update the clustering dialog UI elements.
         """
+        logging.debug("update_clustering_dialog()")
         if self.clustering_dialog is None:
             return
 
@@ -2988,6 +3007,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             columns: Set of column names to use for clustering
             params: Dictionary of parameters for the clustering method
         """
+        logging.debug(f"start_clustering_from_dialog(method={method}, columns={columns}, params={params})")
         # Update the dialog parameters with the ones passed to this method
         self.clustering_dialog._cluster_method = method
         self.clustering_dialog._cluster_columns = columns
@@ -2999,12 +3019,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         Cancel the current clustering operation.
         """
+        logging.debug("cancel_clustering()")
         self.on_cancel_clustering()
 
     def on_select_columns(self):
         """
         Open a dialog to select columns for clustering.
         """
+        logging.debug("on_select_columns()")
         # If clustering dialog exists and is visible, use its method
         if self.clustering_dialog is not None and self.clustering_dialog.isVisible():
             self.clustering_dialog.on_select_columns()
@@ -3032,9 +3054,6 @@ class NDXplorer(QtWidgets.QMainWindow):
             else:
                 self.clustering_dialog.pushButtonSelectColumns.setText("Select Columns (Recommended)")
 
-
-
-    # Clustering functionality has been moved to clustering.py
 
     def on_apply_clustering(self):
         """
@@ -3334,6 +3353,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Args:
             event: The key event
         """
+        logging.debug("keyPressEvent: event.key() = {}".format(event.key()))
         # Check if Ctrl+L was pressed to toggle clustering dialog
         if (event.modifiers() & QtCore.Qt.ControlModifier) and event.key() == QtCore.Qt.Key_L:
             # Open the clustering dialog
@@ -3347,6 +3367,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Handle the window close event.
         Clean up resources before closing.
         """
+        logging.debug("closeEvent()")
         # Stop the Z range check timer
         if hasattr(self, 'z_range_check_timer'):
             self.z_range_check_timer.stop()
@@ -3379,6 +3400,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Check if the Z selection range has changed and update the histograms if necessary.
         This method is called periodically by a timer.
         """
+        logging.debug("check_z_range_changes()")
         if not self._dynamic_selection or not hasattr(self, 'selection_z'):
             return
 
@@ -3400,6 +3422,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Args:
             state: The new state of the checkbox (Qt.Checked or Qt.Unchecked)
         """
+        logging.debug(f"on_enable_z_changed(state={state})")
         # Show or hide the z-axis plot based on the checkbox state
         self.g_zplot.setVisible(bool(state))
 
@@ -3415,6 +3438,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Args:
             index: The index of the newly selected item in the combobox
         """
+        logging.debug(f"on_weight_param_changed(index={index})")
         # Only update if weight is enabled
         if self.checkBoxWeight.isChecked():
             # Update histograms and plots to reflect the new weight parameter
@@ -3428,6 +3452,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Args:
             state: The new state of the checkbox (Qt.Checked or Qt.Unchecked)
         """
+        logging.debug(f"on_weight_changed(state={state})")
         # Enable/disable comboBoxWeight based on checkbox state
         is_checked = bool(state)
         self.comboBoxWeight.setEnabled(is_checked)
@@ -3468,11 +3493,48 @@ class NDXplorer(QtWidgets.QMainWindow):
         Args:
             state: The new state of the checkbox (Qt.Checked or Qt.Unchecked)
         """
+        logging.debug(f"on_dynamic_selection_changed(state={state})")
         self._dynamic_selection = bool(state)
         # Update histograms to reflect the new selection state
         self.update_histograms()
         # Update plots to display the new histograms
         self.update_plots(skip_clustering=True)
+
+    def on_dynamic_selection_toggled(self, checked: bool):
+        """
+        Enable/disable periodic Z-range change checks based on the dynamic selection toggle.
+        Only connects the timer to check_z_range_changes when enabled.
+
+        Args:
+            checked: True if dynamic selection is enabled, False otherwise.
+        """
+        logging.debug(f"on_dynamic_selection_toggled(checked={checked})")
+        try:
+            if checked:
+                # Ensure the timer is connected once
+                if not getattr(self, '_z_timer_connected', False):
+                    try:
+                        # In case there is a stale connection
+                        self.z_range_check_timer.timeout.disconnect(self.check_z_range_changes)
+                    except (TypeError, RuntimeError):
+                        pass
+                    self.z_range_check_timer.timeout.connect(self.check_z_range_changes)
+                    self._z_timer_connected = True
+                if not self.z_range_check_timer.isActive():
+                    self.z_range_check_timer.start()
+            else:
+                # Stop timer and disconnect the slot
+                if self.z_range_check_timer.isActive():
+                    self.z_range_check_timer.stop()
+                if getattr(self, '_z_timer_connected', False):
+                    try:
+                        self.z_range_check_timer.timeout.disconnect(self.check_z_range_changes)
+                    except (TypeError, RuntimeError):
+                        pass
+                    self._z_timer_connected = False
+        except AttributeError:
+            # In case called early during construction
+            pass
 
     def create_umap_plot(self, columns, params):
         """
@@ -3485,6 +3547,7 @@ class NDXplorer(QtWidgets.QMainWindow):
                 min_dist: Minimum distance between points in the embedding
                 n_components: Number of components (dimensions) for the embedding
         """
+        logging.debug(f"create_umap_plot(columns={columns}, params={params})")
         # Get cluster labels if available
         cluster_labels = None
         if hasattr(self, '_cluster_labels') and self._cluster_labels is not None:
@@ -3503,45 +3566,54 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
 
     def update_2d_plot(self):
+        """
+        Update the 2D histogram image deterministically:
+        - Always map the image to physical bin-edge coordinates
+        - Apply optional log transform on a copy
+        - Set contrast and replot once
+        """
+        logging.debug("update_2d_plot()")
         try:
-            new_data, x_edges, y_edges = self._histogram["2d"]
+            H, x_edges, y_edges = self._histogram["2d"]
         except (ValueError, KeyError):
-            return None
-            
-        # Check if the data is empty or has zero size
-        if new_data is None or new_data.size == 0 or np.all(np.isnan(new_data)):
-            # Set a small valid array instead of empty data
-            new_data = np.zeros((1, 1))
-            logging.info( "Empty or invalid 2D histogram data detected, using placeholder")
+            return
 
-        log_counts = self.checkBoxLogCounts.isChecked()
-        if log_counts and new_data.size > 1:  # Only apply log transform if we have real data
-            # Handle zeros and negative values before taking log10
-            # Add a small positive value to avoid log(0) which would give -inf
-            # This ensures we can see more details in the 2D histogram
-            min_positive = np.min(new_data[new_data > 0]) if np.any(new_data > 0) else 1e-10
-            new_data = np.maximum(new_data, min_positive / 10)  # Replace zeros/negatives with a small value
-            new_data = np.log10(new_data)
-            new_data = np.nan_to_num(new_data)
+        # Guard for empty/invalid
+        if H is None or H.size == 0 or np.all(np.isnan(H)):
+            H = np.zeros((1, 1))
+            x_edges = np.array([0.0, 1.0])
+            y_edges = np.array([0.0, 1.0])
 
+        # Optional log counts (safe for zeros)
+        data = H.copy()
+        if self.checkBoxLogCounts.isChecked():
+            if np.any(data > 0):
+                mpos = float(np.min(data[data > 0]))
+            else:
+                mpos = 1e-10
+            data = np.maximum(data, mpos / 10.0)
+            data = np.log10(data)
+            data = np.nan_to_num(data)
+
+        # guiqwt expects rows=y, cols=x → transpose; ensure contiguous
+        img = np.ascontiguousarray(data.T)
         try:
-            # Update the data of the displayed image
-            # numpy.histogram2d outputs shape (x_bins, y_bins);
-            # ImageItem expects (rows=y, cols=x), so use transpose only.
-            self.cax.set_data(new_data.T)
-        except ValueError as e:
-            logging.warning(f"Error setting 2D plot data: {str(e)}")
-            # If setting data fails, try with a simple valid array
+            self.cax.set_data(img)
+        except Exception:
+            # Fallback to a trivial image if anything goes wrong
             self.cax.set_data(np.zeros((1, 1)))
 
-        # Set the intensity range using the vmin and vmax properties from the UI
+        # Apply contrast from UI
         self.cax.set_lut_range([self.vmin, self.vmax])
 
-        # Redraw the main plot to update the display
+        # Redraw once
         self.g_2dplot.replot()
 
-        # Update curve overlays
+        # Keep overlays in sync with the current edges/data
         self.update_curve_overlays()
+
+        self.g_2dplot.setAxisScale(QwtPlot.xBottom, 0, len(x_edges)-1)
+        self.g_2dplot.setAxisScale(QwtPlot.yLeft, 0, len(y_edges)-1)
 
     def bin_to_value(self, bin_idx, edges):
         """Convert a bin index to a value (center of the bin).
@@ -3553,6 +3625,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Returns:
             The center value of the bin, or None if the bin index is invalid
         """
+        logging.debug(f"bin_to_value(bin_idx={bin_idx}, edges={edges})")
         if bin_idx < 0 or bin_idx >= len(edges) - 1:
             return None
         return (edges[bin_idx] + edges[bin_idx + 1]) / 2
@@ -3567,6 +3640,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Returns:
             The bin index (as a float for interpolation), or None if the value is outside the range
         """
+        logging.debug(f"value_to_bin(value={value}, edges={edges})")
         for i in range(len(edges) - 1):
             if edges[i] <= value <= edges[i + 1]:
                 # Calculate the relative position within the bin (0.0 to 1.0)
@@ -3662,6 +3736,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def update_curve_overlays(self):
         """Update the curve overlays on the 2D histogram."""
+        logging.debug("update_curve_overlays()")
         try:
             # Get the 2D histogram data and edges
             histogram_data = self._histogram["2d"]
@@ -3774,7 +3849,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         Returns:
             bool: True if image axes were detected and applied; False otherwise.
         """
-        logging.debug("Checking image axes")
+        logging.debug("check_and_set_image_axes()")
         if self._data_source is None or self._data_source.empty:
             logging.debug("No data loaded, skipping image axes check")
             return False
@@ -3860,6 +3935,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         This is used after a dataset is loaded to preselect X/Y/Z/weight axes.
         It will not override image axes (the caller should check first).
         """
+        logging.debug("apply_default_axes_from_settings()")
         try:
             defaults = self.settings.get("default_axes", {}) if hasattr(self, 'settings') else {}
         except Exception:
@@ -3924,14 +4000,16 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def on_gaussian_table_item_changed(self, item: QtWidgets.QTableWidgetItem):
         """Delegate to GaussianFit."""
+        logging.debug(f"on_gaussian_table_item_changed(item={item})")
         if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
             return self.gaussian_fit.on_gaussian_table_item_changed(item)
 
     def eventFilter(self, obj, event):
         """
-        Handle canvas resize events to refresh the 2D plot orientation and
-        delegate to GaussianFit for other table-related events.
+        Delegate table/overlay events to GaussianFit; do not trigger 2D updates
+        from canvas-resize here to avoid race conditions with resizeEvent().
         """
+        logging.debug(f"eventFilter(obj={obj}, event={event})")
         handled_by_gaussian = False
         if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
             try:
@@ -3939,31 +4017,19 @@ class NDXplorer(QtWidgets.QMainWindow):
             except Exception:
                 handled_by_gaussian = False
 
-        # If the 2D canvas is resized, schedule an update of the 2D plot
-        try:
-            if event.type() == QtCore.QEvent.Resize and hasattr(self, 'g_2dplot') and obj is self.g_2dplot.canvas():
-                if not getattr(self, '_resize_update_pending', False):
-                    self._resize_update_pending = True
-                    def _do_update():
-                        try:
-                            self.update_2d_plot()
-                        finally:
-                            self._resize_update_pending = False
-                    QtCore.QTimer.singleShot(0, _do_update)
-        except Exception:
-            pass
-
         if handled_by_gaussian:
             return True
         return super(NDXplorer, self).eventFilter(obj, event)
 
     def _delete_selected_gaussian_rows(self, rows: List[int]):
         """Delegate to GaussianFit."""
+        logging.debug(f"_delete_selected_gaussian_rows(rows={rows})")
         if hasattr(self, 'gaussian_fit') and self.gaussian_fit is not None:
             return self.gaussian_fit._delete_selected_gaussian_rows(rows)
 
     def _on_fit_dock_visibility_changed(self, visible: bool):
         """Delegate to GaussianFit."""
+        logging.debug(f"_on_fit_dock_visibility_changed(visible={visible})")
         return self.gaussian_fit.on_fit_dock_visibility_changed(visible)
 
     def resizeEvent(self, event):
@@ -3972,9 +4038,10 @@ class NDXplorer(QtWidgets.QMainWindow):
         Use a zero-timeout singleShot to run after layout has applied new sizes.
         Debounce scheduling to avoid flooding during continuous resizing.
         """
+        logging.debug("resizeEvent()")
         # First perform the default resize handling
         super(NDXplorer, self).resizeEvent(event)
         # Then schedule an update of the 2D plot
         def _do_update():
             self.update_plots()
-        QtCore.QTimer.singleShot(1, _do_update)
+        QtCore.QTimer.singleShot(0, _do_update)
