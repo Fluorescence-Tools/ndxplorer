@@ -20,6 +20,13 @@ except ImportError:
 
 from .column_selection_dialog import ColumnSelectionDialog
 
+_umap_available = True
+try:
+    import umap as _umap
+    logging.info("Imported umap library")
+except ImportError:
+    _umap_available = False
+
 
 class ClusteringDialog(QtWidgets.QDialog):
     """
@@ -304,8 +311,10 @@ class ClusteringDialog(QtWidgets.QDialog):
         """
         logging.log(0, "Opening column selection dialog for clustering")
         # Get current parameter names from parent
-        if self.parent() is not None and hasattr(self.parent(), 'data_source'):
-            parameter_names = self.parent().data_source.parameter_names
+        parent = self.parent()
+        if parent is not None and hasattr(self.parent(), 'data_source'):
+            parameter_names = parent.data_source.parameter_names
+            print("onllslslsls")
 
             # Create and show the dialog
             dialog = ColumnSelectionDialog(
@@ -337,33 +346,33 @@ class ClusteringDialog(QtWidgets.QDialog):
 
             if not hdbscan:
                 QtWidgets.QMessageBox.warning(
-                    self,
+                    QtWidgets.QApplication.activeWindow(),
                     "HDBSCAN Not Available",
                     "HDBSCAN is not installed. Please install it using pip or conda."
                 )
                 return
         elif self._cluster_method == "kmeans":
             # Lazy import of KMeans
-            if KMeans is None:
-                try:
-                    from sklearn.cluster import KMeans
-                    logging.info("Imported KMeans library")
-                except ImportError:
-                    KMeans = None
+            try:
+                from sklearn.cluster import KMeans as _KMeans
+                logging.info("Imported KMeans library")
+                _kmeans_available = True
+            except ImportError:
+                _kmeans_available = False
 
-            if not KMeans:
+            if not _kmeans_available:
                 QtWidgets.QMessageBox.warning(
-                    self,
-                    "scikit-learn Not Available",
-                    "scikit-learn is not installed. Please install it using pip or conda."
-                )
+                QtWidgets.QApplication.activeWindow(),
+                "scikit-learn Not Available",
+                "scikit-learn is not installed. Please install it using pip or conda."
+            )
                 return
 
         # Check if any columns are selected for clustering
         if not self._cluster_columns:
             # No columns selected, ask user if they want to use default (x, y, z) values
             reply = QtWidgets.QMessageBox.question(
-                self,
+                QtWidgets.QApplication.activeWindow(),
                 "Select Columns for Clustering",
                 "It is recommended to select specific columns for clustering to get better results.\n\n"
                 "Would you like to select columns now?\n\n"
@@ -444,48 +453,28 @@ class ClusteringDialog(QtWidgets.QDialog):
         """
         logging.log(0, "Creating UMAP plot")
 
-        # Lazy import of umap
-        if umap is None:
-            try:
-                import umap
-                logging.info("Imported umap library")
-            except ImportError:
-                umap = None
-
         # Check if UMAP is available
-        if not umap:
+        if not _umap_available:
             QtWidgets.QMessageBox.warning(
-                self,
+                QtWidgets.QApplication.activeWindow(),
                 "UMAP Not Available",
                 "UMAP is not installed. Please install it using pip or conda."
             )
             return
 
-        # Check if any columns are selected for UMAP
-        if not self._cluster_columns:
-            # No columns selected, ask user if they want to use default (x, y, z) values
-            reply = QtWidgets.QMessageBox.question(
-                self,
+        do_umap = True
+        # Require at least two columns to be selected for UMAP/clustering
+        if not self._cluster_columns or len(self._cluster_columns) < 2:
+            do_umap = False
+            QtWidgets.QMessageBox.warning(
+                QtWidgets.QApplication.activeWindow(),
                 "Select Columns for UMAP",
-                "It is recommended to select specific columns for UMAP to get better results.\n\n"
-                "Would you like to select columns now?\n\n"
-                "If you click 'No', UMAP will use only the current X, Y, and Z axis values, "
-                "which may not provide optimal dimensionality reduction results.",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.Yes
+                "Please select at least two columns before creating a UMAP plot."
             )
-
-            if reply == QtWidgets.QMessageBox.Yes:
-                # Open column selection dialog
-                self.on_select_columns()
-
-                # If still no columns selected after dialog, return
-                if not self._cluster_columns:
-                    return
-            # If user clicked No, continue with UMAP using X, Y, Z values
+            logging.log(0, "At least two columns are required for UMAP/clustering")
 
         # Notify parent to create UMAP plot
-        if self.parent() is not None and hasattr(self.parent(), 'create_umap_plot'):
+        if self.parent() is not None and hasattr(self.parent(), 'create_umap_plot') and do_umap:
             # Prepare parameters for UMAP
             params = {
                 "n_neighbors": self._umap_n_neighbors,

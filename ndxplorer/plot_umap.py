@@ -51,15 +51,15 @@ def create_umap_plot(parent, columns: Set[str], params: Dict[str, Any],
     logging.log(0, f"Creating UMAP plot with params: {params}")
 
     # Lazy import of umap
-    if umap is None:
-        try:
-            import umap
-            logging.info("Imported umap library")
-        except ImportError:
-            umap = None
+    try:
+        import umap as _umap
+        logging.info("Imported umap library")
+        _umap_available = True
+    except ImportError:
+        _umap_available = False
 
     # Check if UMAP is available
-    if not umap:
+    if not _umap_available:
         QtWidgets.QMessageBox.warning(
             parent,
             "UMAP Not Available",
@@ -77,26 +77,33 @@ def create_umap_plot(parent, columns: Set[str], params: Dict[str, Any],
     parent.umap_windows = []
 
     # Get the data for UMAP based on selected columns
-    if columns:
-        # Use selected columns
-        df = data_source.data
-        selected_data = []
+    if not columns:
+        QtWidgets.QMessageBox.warning(
+            parent,
+            "Select Columns for UMAP",
+            "Please select at least one column before creating a UMAP plot."
+        )
+        return
 
-        for column in columns:
-            if column in df.columns:
-                # Convert to numeric and handle errors
-                values = pd.to_numeric(df[column], errors='coerce').values
-                selected_data.append(values)
+    # Use selected columns
+    df = data_source.data
+    selected_data = []
 
-        if not selected_data:  # If no valid columns were found
-            logging.warning("No valid columns selected for UMAP. Using x, y, z values.")
-            data = np.column_stack((x_values, y_values, z_values))
-        else:
-            data = np.column_stack(selected_data)
-    else:
-        # If no columns are selected, use x, y, z values
-        logging.info("No columns selected for UMAP. Using x, y, z values.")
-        data = np.column_stack((x_values, y_values, z_values))
+    for column in columns:
+        if column in df.columns:
+            # Convert to numeric and handle errors
+            values = pd.to_numeric(df[column], errors='coerce').values
+            selected_data.append(values)
+
+    if not selected_data:  # If no valid columns were found
+        QtWidgets.QMessageBox.warning(
+            parent,
+            "Invalid Columns for UMAP",
+            "The selected columns are not valid or contain no numeric data. Please choose different columns."
+        )
+        return
+
+    data = np.column_stack(selected_data)
 
     # Remove any rows with NaN or Inf values
     mask = ~np.any(np.isnan(data) | np.isinf(data), axis=1)
@@ -113,7 +120,7 @@ def create_umap_plot(parent, columns: Set[str], params: Dict[str, Any],
 
     try:
         # Create and fit the UMAP reducer
-        reducer = umap.UMAP(
+        reducer = _umap.UMAP(
             n_neighbors=params['n_neighbors'],
             min_dist=params['min_dist'],
             n_components=params['n_components'],

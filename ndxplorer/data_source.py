@@ -52,16 +52,19 @@ class CaseInsensitiveDict:
             for col in self.data.columns:
                 col_lower = str(col).lower()
                 if col_lower == k_lower:
-                    return self.data[col]
+                    val = self.data[col]
+                    return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
             # Try left-of-pipe equality first (more precise than startswith)
             for col in self.data.columns:
                 left = str(col).split('|', 1)[0].strip().lower()
                 if left == k_lower:
-                    return self.data[col]
+                    val = self.data[col]
+                    return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
             # Fallback: prefix match
             for col in self.data.columns:
                 if str(col).lower().startswith(k_lower):
-                    return self.data[col]
+                    val = self.data[col]
+                    return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
             # Let pandas raise if nothing matched
             return self.data[key]
         return self.data[key]
