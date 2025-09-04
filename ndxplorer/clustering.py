@@ -98,12 +98,7 @@ class ClusteringManager:
         if method is None:
             method = kwargs.get("method", "hdbscan")
 
-        if method == "hdbscan" and not hdbscan:
-            logging.error("HDBSCAN is not installed. Cannot perform clustering.")
-            return None, None
-        elif method == "kmeans" and not KMeans:
-            logging.error("scikit-learn is not installed. Cannot perform clustering.")
-            return None, None
+        # Library availability will be checked lazily below for each method
 
         # Get data from kwargs or data_source
         data = kwargs.get("data", None)
@@ -171,52 +166,54 @@ class ClusteringManager:
         # Apply UMAP dimensionality reduction if enhancement is enabled
         if use_umap_enhancement:
             # Lazy import of umap
-            if umap is None:
-                try:
-                    import umap
-                    logging.info("Imported umap library")
-                except ImportError:
-                    logging.error("UMAP is not installed. Cannot perform dimensionality reduction.")
-                    umap = None
+            try:
+                import umap as _umap
+                logging.info("Imported umap library")
+                _umap_available = True
+            except ImportError:
+                logging.error("UMAP is not installed. Cannot perform dimensionality reduction.")
+                _umap_available = False
 
-            if umap is not None:
+            if _umap_available:
                 logging.info("Applying UMAP dimensionality reduction before clustering")
 
-            # Get UMAP parameters
-            umap_n_neighbors = kwargs.get("umap_n_neighbors", 15)
-            umap_min_dist = kwargs.get("umap_min_dist", 0.1)
-            umap_n_components = kwargs.get("umap_n_components", 2)
+                # Get UMAP parameters
+                umap_n_neighbors = kwargs.get("umap_n_neighbors", 15)
+                umap_min_dist = kwargs.get("umap_min_dist", 0.1)
+                umap_n_components = kwargs.get("umap_n_components", 2)
 
-            # Check if we have enough data points for UMAP
-            if len(clean_data) < umap_n_neighbors:
-                logging.warning(f"Not enough data points for UMAP. Need at least {umap_n_neighbors} (n_neighbors parameter).")
-                return None, None
-
-            # Report progress: 35% - Starting UMAP
-            if worker:
-                worker.progress_updated.emit(35)
-                # Check if stop was requested
-                if worker._stop_requested:
-                    logging.info("Clustering cancelled before UMAP")
+                # Check if we have enough data points for UMAP
+                if len(clean_data) < umap_n_neighbors:
+                    logging.warning(f"Not enough data points for UMAP. Need at least {umap_n_neighbors} (n_neighbors parameter).")
                     return None, None
 
-            try:
-                # Create and fit the UMAP reducer
-                reducer = umap.UMAP(
-                    n_neighbors=umap_n_neighbors,
-                    min_dist=umap_min_dist,
-                    n_components=umap_n_components,
-                    random_state=42  # For reproducibility
-                )
+                # Report progress: 35% - Starting UMAP
+                if worker:
+                    worker.progress_updated.emit(35)
+                    # Check if stop was requested
+                    if worker._stop_requested:
+                        logging.info("Clustering cancelled before UMAP")
+                        return None, None
 
-                # Fit and transform the data
-                clean_data = reducer.fit_transform(clean_data)
-                logging.info(f"Data dimensionality reduced to {umap_n_components} using UMAP")
+                try:
+                    # Create and fit the UMAP reducer
+                    reducer = _umap.UMAP(
+                        n_neighbors=umap_n_neighbors,
+                        min_dist=umap_min_dist,
+                        n_components=umap_n_components,
+                        random_state=42  # For reproducibility
+                    )
 
-            except Exception as e:
-                logging.error(f"Error during UMAP dimensionality reduction: {str(e)}")
-                # Continue with original data if UMAP fails
-                logging.info("Continuing with original data")
+                    # Fit and transform the data
+                    clean_data = reducer.fit_transform(clean_data)
+                    logging.info(f"Data dimensionality reduced to {umap_n_components} using UMAP")
+
+                except Exception as e:
+                    logging.error(f"Error during UMAP dimensionality reduction: {str(e)}")
+                    # Continue with original data if UMAP fails
+                    logging.info("Continuing with original data")
+            else:
+                return None, None
 
         # Extract parameters for the selected method
         if method == "hdbscan":
@@ -246,17 +243,15 @@ class ClusteringManager:
 
             if method == "hdbscan":
                 # Lazy import of hdbscan
-                if hdbscan is None:
-                    try:
-                        import hdbscan
-                        logging.info("Imported hdbscan library")
-                    except ImportError:
-                        logging.error("HDBSCAN is not installed. Cannot perform clustering.")
-                        hdbscan = None
-                        return None, None
+                try:
+                    import hdbscan as _hdbscan
+                    logging.info("Imported hdbscan library")
+                except ImportError:
+                    logging.error("HDBSCAN is not installed. Cannot perform clustering.")
+                    return None, None
 
                 # Create and fit the HDBSCAN clusterer
-                clusterer = hdbscan.HDBSCAN(
+                clusterer = _hdbscan.HDBSCAN(
                     min_samples=min_samples,
                     min_cluster_size=min_cluster_size,
                     prediction_data=True
@@ -287,17 +282,15 @@ class ClusteringManager:
 
             elif method == "kmeans":
                 # Lazy import of KMeans
-                if KMeans is None:
-                    try:
-                        from sklearn.cluster import KMeans
-                        logging.info("Imported KMeans library")
-                    except ImportError:
-                        logging.error("scikit-learn is not installed. Cannot perform clustering.")
-                        KMeans = None
-                        return None, None
+                try:
+                    from sklearn.cluster import KMeans as _KMeans
+                    logging.info("Imported KMeans library")
+                except ImportError:
+                    logging.error("scikit-learn is not installed. Cannot perform clustering.")
+                    return None, None
 
                 # Create and fit the K-means clusterer
-                clusterer = KMeans(
+                clusterer = _KMeans(
                     n_clusters=n_clusters,
                     random_state=42  # For reproducibility
                 )

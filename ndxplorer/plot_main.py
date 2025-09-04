@@ -1380,6 +1380,17 @@ class NDXplorer(QtWidgets.QMainWindow):
             "n_components": self.clustering_dialog._umap_n_components
         }
 
+        # Ensure columns are selected for UMAP
+        if not self.clustering_dialog._cluster_columns:
+            self.on_select_columns()
+            if not self.clustering_dialog._cluster_columns:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Select Columns for UMAP",
+                    "Please select at least one column before creating a UMAP plot."
+                )
+                return
+
         # Create the UMAP plot
         self.create_umap_plot(
             self.clustering_dialog._cluster_columns,
