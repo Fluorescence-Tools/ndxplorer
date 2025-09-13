@@ -384,7 +384,18 @@ class NDXplorer(QtWidgets.QMainWindow):
     @property
     def ymax(self) -> float:
         logging.debug("Getting ymax")
-        result = max(self.y_values)
+        arr = np.asarray(self.y_values)
+        finite_mask = np.isfinite(arr)
+        v = arr[finite_mask]
+        logging.debug(f"Filtered out {len(arr) - len(v)} non-finite values")
+        if getattr(self.plot_control, 'scale_y', 'lin') == "log":
+            v_before = len(v)
+            v = v[v > 0]
+            logging.debug(f"Log scale: filtered out {v_before - len(v)} non-positive values")
+        if v.size == 0:
+            logging.debug("No valid values for ymax, returning 0")
+            return 0
+        result = float(np.max(v))
         logging.debug(f"ymax = {result}")
         return result
 
@@ -409,7 +420,18 @@ class NDXplorer(QtWidgets.QMainWindow):
     @property
     def zmax(self) -> float:
         logging.debug("Getting zmax")
-        result = max(self.z_values)
+        arr = np.asarray(self.z_values)
+        finite_mask = np.isfinite(arr)
+        v = arr[finite_mask]
+        logging.debug(f"Filtered out {len(arr) - len(v)} non-finite values")
+        if getattr(self.plot_control, 'scale_z', 'lin') == "log":
+            v_before = len(v)
+            v = v[v > 0]
+            logging.debug(f"Log scale: filtered out {v_before - len(v)} non-positive values")
+        if v.size == 0:
+            logging.debug("No valid values for zmax, returning 0")
+            return 0
+        result = float(np.max(v))
         logging.debug(f"zmax = {result}")
         return result
 
@@ -453,7 +475,18 @@ class NDXplorer(QtWidgets.QMainWindow):
     @property
     def xmax(self) -> float:
         logging.debug("Getting xmax")
-        result = max(self.x_values)
+        arr = np.asarray(self.x_values)
+        finite_mask = np.isfinite(arr)
+        v = arr[finite_mask]
+        logging.debug(f"Filtered out {len(arr) - len(v)} non-finite values")
+        if getattr(self.plot_control, 'scale_x', 'lin') == "log":
+            v_before = len(v)
+            v = v[v > 0]
+            logging.debug(f"Log scale: filtered out {v_before - len(v)} non-positive values")
+        if v.size == 0:
+            logging.debug("No valid values for xmax, returning 0")
+            return 0
+        result = float(np.max(v))
         logging.debug(f"xmax = {result}")
         return result
 
@@ -2630,7 +2663,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             # Use the filtered data for the 2D histogram
             # weights should already be checked for shape compatibility above
             with np.errstate(divide='ignore', invalid='ignore'):
-                H, x_edges, y_edges = np.histogram2d(x=d1, y=d2, bins=[x_bins_2d, y_bins_2d], weights=weights, density=True)
+                H, x_edges, y_edges = np.histogram2d(x=d1, y=d2, bins=[x_bins_2d, y_bins_2d], weights=weights, density=False)
             # Sanitize H to remove NaNs/Infs resulting from empty bins or zero area
             H = np.nan_to_num(H, nan=0.0, posinf=0.0, neginf=0.0)
             self._histogram["2d"] = H, x_edges, y_edges
