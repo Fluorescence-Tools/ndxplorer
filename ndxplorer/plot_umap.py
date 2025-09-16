@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Tuple, Set, Any
 import numpy as np
 import pandas as pd
 import logging
+import sys
+import io
 
 # Delay import of heavy libraries
 umap = None
@@ -118,31 +120,62 @@ def create_umap_plot(parent, columns: Set[str], params: Dict[str, Any],
         )
         return
 
-    try:
-        # Create and fit the UMAP reducer
-        reducer = _umap.UMAP(
-            n_neighbors=params['n_neighbors'],
-            min_dist=params['min_dist'],
-            n_components=params['n_components'],
-            random_state=42  # For reproducibility
-        )
+    # Import the progress dialog from plot_main
+    from .plot_main import UMAPProgressDialog
+    
+    # Create and show progress dialog
+    progress_dialog = UMAPProgressDialog(parent, "UMAP Plot Computation")
+    progress_dialog.show()
+    
+    # Prepare UMAP parameters
+    n_jobs = params.get('n_jobs', -1)  # Default to -1 (all cores) for better performance
+    
+    umap_params = {
+        'n_neighbors': params['n_neighbors'],
+        'min_dist': params['min_dist'],
+        'n_components': params['n_components'],
+        'n_jobs': n_jobs,
+        'verbose': True,  # Enable verbose output for progress
+        'tqdm_kwds': {'desc': 'UMAP Plot', 'unit': 'epoch'}  # Configure tqdm progress bar
+    }
+    
+    # Add additional parameters from the params dict
+    for param_name in ['metric', 'learning_rate', 'init', 'spread', 'low_memory', 
+                      'set_op_mix_ratio', 'local_connectivity', 'repulsion_strength',
+                      'negative_sample_rate', 'n_epochs']:
+        if param_name in params:
+            umap_params[param_name] = params[param_name]
+    
+    # Only set random_state for reproducibility when using single-threaded execution
+    # Setting random_state with n_jobs > 1 causes UMAP to override n_jobs to 1
+    if n_jobs == 1:
+        umap_params['random_state'] = 42
+        
+    logging.info(f"Creating UMAP reducer for plot with parameters: {umap_params}")
+    
+    # Start UMAP computation in worker thread
+    progress_dialog.run_umap_computation(clean_data, umap_params)
+    
+    # Show dialog and wait for completion
+    result = progress_dialog.exec_()
+    
+    # Check if computation was successful
+    embedding = progress_dialog.get_result()
+    error_message = progress_dialog.get_error()
+    
+    if error_message:
+        logging.error(f"Error during UMAP: {error_message}")
+        return
+        
+    if embedding is None:
+        logging.error("UMAP computation was cancelled or failed")
+        return
 
-        # Fit and transform the data
-        embedding = reducer.fit_transform(clean_data)
-
-        # Create the plot based on the number of components
-        if params['n_components'] == 2:
-            create_2d_umap_plot(parent, embedding, mask, cluster_labels)
-        elif params['n_components'] == 3:
-            create_3d_umap_plot(parent, embedding, mask, cluster_labels)
-
-    except Exception as e:
-        logging.error(f"Error during UMAP: {str(e)}")
-        QtWidgets.QMessageBox.critical(
-            parent,
-            "UMAP Error",
-            f"An error occurred during UMAP: {str(e)}"
-        )
+    # Create the plot based on the number of components
+    if params['n_components'] == 2:
+        create_2d_umap_plot(parent, embedding, mask, cluster_labels)
+    elif params['n_components'] == 3:
+        create_3d_umap_plot(parent, embedding, mask, cluster_labels)
 
 
 def create_2d_umap_plot(parent, embedding, mask, cluster_labels=None):
