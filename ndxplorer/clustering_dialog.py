@@ -58,7 +58,12 @@ class ClusteringDialog(QtWidgets.QDialog):
         self._umap_n_neighbors = 15
         self._umap_min_dist = 0.1
         self._umap_n_components = 2
-        self._use_umap_enhancement = False  # default to not using UMAP enhancement
+        self._umap_n_jobs = -1  # default to use all available cores
+        self._umap_metric = "euclidean"
+        self._umap_learning_rate = 1.0
+        self._umap_init = "spectral"
+        self._umap_spread = 1.0
+        self._umap_n_epochs = None  # Auto-determined by UMAP
 
         # Common clustering variables
         self._cluster_columns = set()
@@ -122,12 +127,12 @@ class ClusteringDialog(QtWidgets.QDialog):
 
         # Create widgets for HDBSCAN parameters
         self.spinBoxMinSamples = QtWidgets.QSpinBox()
-        self.spinBoxMinSamples.setRange(1, 100)
+        self.spinBoxMinSamples.setRange(1, 99999)
         self.spinBoxMinSamples.setValue(self._cluster_min_samples)
         self.spinBoxMinSamples.valueChanged.connect(self.on_min_samples_changed)
 
         self.spinBoxMinClusterSize = QtWidgets.QSpinBox()
-        self.spinBoxMinClusterSize.setRange(1, 100)
+        self.spinBoxMinClusterSize.setRange(1, 99999)
         self.spinBoxMinClusterSize.setValue(self._cluster_min_cluster_size)
         self.spinBoxMinClusterSize.valueChanged.connect(self.on_min_cluster_size_changed)
 
@@ -160,6 +165,49 @@ class ClusteringDialog(QtWidgets.QDialog):
         self.spinBoxUMAPComponents.setRange(2, 3)  # Limit to 2D or 3D for visualization
         self.spinBoxUMAPComponents.setValue(self._umap_n_components)
         self.spinBoxUMAPComponents.valueChanged.connect(self.on_umap_n_components_changed)
+
+        self.spinBoxUMAPNJobs = QtWidgets.QSpinBox()
+        self.spinBoxUMAPNJobs.setRange(-1, 16)  # -1 for all cores, 1-16 for specific number
+        self.spinBoxUMAPNJobs.setValue(self._umap_n_jobs)
+        self.spinBoxUMAPNJobs.setToolTip("Number of parallel jobs for UMAP computation. Use -1 for all available cores, 1 for single-threaded.")
+        self.spinBoxUMAPNJobs.valueChanged.connect(self.on_umap_n_jobs_changed)
+
+        # Additional UMAP parameters
+        self.comboBoxUMAPMetric = QtWidgets.QComboBox()
+        metrics = ["euclidean", "manhattan", "chebyshev", "minkowski", "canberra", "braycurtis", 
+                  "cosine", "correlation", "hamming", "jaccard"]
+        self.comboBoxUMAPMetric.addItems(metrics)
+        self.comboBoxUMAPMetric.setCurrentText(self._umap_metric)
+        self.comboBoxUMAPMetric.setToolTip("Distance metric to use in high dimensional space. Euclidean is most common.")
+        self.comboBoxUMAPMetric.currentTextChanged.connect(self.on_umap_metric_changed)
+
+        self.doubleSpinBoxUMAPLearningRate = QtWidgets.QDoubleSpinBox()
+        self.doubleSpinBoxUMAPLearningRate.setRange(0.1, 10.0)
+        self.doubleSpinBoxUMAPLearningRate.setSingleStep(0.1)
+        self.doubleSpinBoxUMAPLearningRate.setValue(self._umap_learning_rate)
+        self.doubleSpinBoxUMAPLearningRate.setToolTip("Initial learning rate for embedding optimization. Higher values may converge faster but less stable.")
+        self.doubleSpinBoxUMAPLearningRate.valueChanged.connect(self.on_umap_learning_rate_changed)
+
+        self.comboBoxUMAPInit = QtWidgets.QComboBox()
+        init_methods = ["spectral", "random", "pca"]
+        self.comboBoxUMAPInit.addItems(init_methods)
+        self.comboBoxUMAPInit.setCurrentText(self._umap_init)
+        self.comboBoxUMAPInit.setToolTip("Initialization method for low dimensional embedding. Spectral is usually best.")
+        self.comboBoxUMAPInit.currentTextChanged.connect(self.on_umap_init_changed)
+
+        self.doubleSpinBoxUMAPSpread = QtWidgets.QDoubleSpinBox()
+        self.doubleSpinBoxUMAPSpread.setRange(0.1, 5.0)
+        self.doubleSpinBoxUMAPSpread.setSingleStep(0.1)
+        self.doubleSpinBoxUMAPSpread.setValue(self._umap_spread)
+        self.doubleSpinBoxUMAPSpread.setToolTip("Effective scale of embedded points. Works with min_dist to control clustering/dispersion.")
+        self.doubleSpinBoxUMAPSpread.valueChanged.connect(self.on_umap_spread_changed)
+
+        self.spinBoxUMAPEpochs = QtWidgets.QSpinBox()
+        self.spinBoxUMAPEpochs.setRange(0, 2000)  # 0 means auto-determine
+        self.spinBoxUMAPEpochs.setValue(0 if self._umap_n_epochs is None else self._umap_n_epochs)
+        self.spinBoxUMAPEpochs.setSpecialValueText("Auto")
+        self.spinBoxUMAPEpochs.setToolTip("Number of training epochs. 0 (Auto) lets UMAP choose based on dataset size. More epochs = more accurate but slower.")
+        self.spinBoxUMAPEpochs.valueChanged.connect(self.on_umap_n_epochs_changed)
 
         # Create a parameters layout to hold the containers
         parameters_layout = QtWidgets.QVBoxLayout()
@@ -197,25 +245,42 @@ class ClusteringDialog(QtWidgets.QDialog):
         self.pushButtonSaveClustering.clicked.connect(self.on_save_clustering_data)
         self.pushButtonSaveClustering.setEnabled(False)  # Initially disabled until clustering is done
 
-        # Create UMAP plot button
-        self.pushButtonUMAPPlot = QtWidgets.QPushButton()
-        self.pushButtonUMAPPlot.setText("Create UMAP Plot")
-        self.pushButtonUMAPPlot.clicked.connect(self.on_create_umap_plot)
+        # Create a group box for UMAP settings and actions
+        self.groupBoxUMAP = QtWidgets.QGroupBox("UMAP")
+        umap_layout = QtWidgets.QVBoxLayout()
 
-        # Create a group box for UMAP settings
-        self.groupBoxUMAP = QtWidgets.QGroupBox("UMAP Settings")
-        umap_layout = QtWidgets.QFormLayout()
+        # Create a form layout for UMAP parameters
+        umap_params_layout = QtWidgets.QFormLayout()
+        
+        # Add tooltips to existing parameters
+        self.spinBoxUMAPNeighbors.setToolTip("Size of local neighborhood for manifold approximation. Larger values = more global view, smaller = more local preservation. Range: 2-100.")
+        self.doubleSpinBoxUMAPMinDist.setToolTip("Minimum distance between embedded points. Smaller values = more clustered, larger = more dispersed. Range: 0.0-1.0.")
+        self.spinBoxUMAPComponents.setToolTip("Dimension of embedding space. 2D for easy visualization, 3D for more complex structures.")
+        
+        # Add all UMAP parameters to the form layout
+        umap_params_layout.addRow("Number of Neighbors:", self.spinBoxUMAPNeighbors)
+        umap_params_layout.addRow("Minimum Distance:", self.doubleSpinBoxUMAPMinDist)
+        umap_params_layout.addRow("Number of Components:", self.spinBoxUMAPComponents)
+        umap_params_layout.addRow("Parallel Jobs (n_jobs):", self.spinBoxUMAPNJobs)
+        umap_params_layout.addRow("Distance Metric:", self.comboBoxUMAPMetric)
+        umap_params_layout.addRow("Learning Rate:", self.doubleSpinBoxUMAPLearningRate)
+        umap_params_layout.addRow("Initialization:", self.comboBoxUMAPInit)
+        umap_params_layout.addRow("Spread:", self.doubleSpinBoxUMAPSpread)
+        umap_params_layout.addRow("Training Epochs:", self.spinBoxUMAPEpochs)
 
-        # Add checkbox for UMAP enhancement
-        self.checkBoxUMAPEnhancement = QtWidgets.QCheckBox("Enhance clustering with UMAP")
-        self.checkBoxUMAPEnhancement.setToolTip("Use UMAP for dimensionality reduction before applying clustering algorithm")
-        self.checkBoxUMAPEnhancement.setChecked(self._use_umap_enhancement)
-        self.checkBoxUMAPEnhancement.stateChanged.connect(self.on_umap_enhancement_changed)
-        umap_layout.addRow(self.checkBoxUMAPEnhancement)
+        # Create UMAP action buttons
+        self.pushButtonComputeUMAP = QtWidgets.QPushButton()
+        self.pushButtonComputeUMAP.setText("Compute UMAP")
+        self.pushButtonComputeUMAP.clicked.connect(self.on_compute_umap)
+        
+        self.pushButtonPlotUMAP = QtWidgets.QPushButton()
+        self.pushButtonPlotUMAP.setText("Plot UMAP")
+        self.pushButtonPlotUMAP.clicked.connect(self.on_plot_umap)
 
-        umap_layout.addRow("Number of Neighbors:", self.spinBoxUMAPNeighbors)
-        umap_layout.addRow("Minimum Distance:", self.doubleSpinBoxUMAPMinDist)
-        umap_layout.addRow("Number of Components:", self.spinBoxUMAPComponents)
+        # Add everything to the UMAP layout
+        umap_layout.addLayout(umap_params_layout)
+        umap_layout.addWidget(self.pushButtonComputeUMAP)
+        umap_layout.addWidget(self.pushButtonPlotUMAP)
         self.groupBoxUMAP.setLayout(umap_layout)
 
         # Create progress bar (initially hidden)
@@ -230,7 +295,6 @@ class ClusteringDialog(QtWidgets.QDialog):
         main_layout.addWidget(self.pushButtonCancelClustering)
         main_layout.addWidget(self.pushButtonSaveClustering)
         main_layout.addWidget(self.groupBoxUMAP)
-        main_layout.addWidget(self.pushButtonUMAPPlot)
         main_layout.addWidget(self.progressBarClustering)
 
     def update_clustering_parameters_ui(self):
@@ -290,12 +354,47 @@ class ClusteringDialog(QtWidgets.QDialog):
         logging.log(0, f"Changing UMAP n_components to {value}")
         self._umap_n_components = value
 
-    def on_umap_enhancement_changed(self, state):
+    def on_umap_n_jobs_changed(self, value):
         """
-        Handle changes to the UMAP enhancement checkbox.
+        Handle changes to the UMAP n_jobs parameter.
         """
-        logging.log(0, f"Changing UMAP enhancement to {bool(state)}")
-        self._use_umap_enhancement = bool(state)
+        logging.log(0, f"Changing UMAP n_jobs to {value}")
+        self._umap_n_jobs = value
+
+    def on_umap_metric_changed(self, value):
+        """
+        Handle changes to the UMAP metric parameter.
+        """
+        logging.log(0, f"Changing UMAP metric to {value}")
+        self._umap_metric = value
+
+    def on_umap_learning_rate_changed(self, value):
+        """
+        Handle changes to the UMAP learning_rate parameter.
+        """
+        logging.log(0, f"Changing UMAP learning_rate to {value}")
+        self._umap_learning_rate = value
+
+    def on_umap_init_changed(self, value):
+        """
+        Handle changes to the UMAP init parameter.
+        """
+        logging.log(0, f"Changing UMAP init to {value}")
+        self._umap_init = value
+
+    def on_umap_spread_changed(self, value):
+        """
+        Handle changes to the UMAP spread parameter.
+        """
+        logging.log(0, f"Changing UMAP spread to {value}")
+        self._umap_spread = value
+
+    def on_umap_n_epochs_changed(self, value):
+        """
+        Handle changes to the UMAP n_epochs parameter.
+        """
+        logging.log(0, f"Changing UMAP n_epochs to {value}")
+        self._umap_n_epochs = None if value == 0 else value
 
     def on_clustering_method_changed(self, method):
         """
@@ -330,9 +429,9 @@ class ClusteringDialog(QtWidgets.QDialog):
                 # Update button text to show number of selected columns
                 num_selected = len(self._cluster_columns)
                 if num_selected > 0:
-                    self.pushButtonSelectColumns.setText(f"Select Columns (Recommended) ({num_selected})")
+                    self.pushButtonSelectColumns.setText(f"Select Columns ({num_selected})")
                 else:
-                    self.pushButtonSelectColumns.setText("Select Columns (Recommended)")
+                    self.pushButtonSelectColumns.setText("Select Columns (#selected)")
 
     def on_apply_clustering(self):
         """
@@ -414,12 +513,6 @@ class ClusteringDialog(QtWidgets.QDialog):
                     "n_clusters": self._cluster_n_clusters
                 }
 
-            # Add UMAP enhancement parameters if enabled
-            if self._use_umap_enhancement:
-                params["use_umap_enhancement"] = True
-                params["umap_n_neighbors"] = self._umap_n_neighbors
-                params["umap_min_dist"] = self._umap_min_dist
-                params["umap_n_components"] = self._umap_n_components
 
             self.parent().start_clustering_from_dialog(
                 self._cluster_method,
@@ -447,7 +540,63 @@ class ClusteringDialog(QtWidgets.QDialog):
         if self.parent() is not None and hasattr(self.parent(), 'onSaveClusteringData'):
             self.parent().onSaveClusteringData()
 
-    def on_create_umap_plot(self):
+    def on_compute_umap(self):
+        """
+        Compute UMAP columns and add them to the dataframe.
+        """
+        logging.log(0, "Computing UMAP columns")
+
+        # Check if UMAP is available
+        if not _umap_available:
+            QtWidgets.QMessageBox.warning(
+                QtWidgets.QApplication.activeWindow(),
+                "UMAP Not Available",
+                "UMAP is not installed. Please install it using pip or conda."
+            )
+            return
+
+        # Require at least two columns to be selected for UMAP
+        if not self._cluster_columns or len(self._cluster_columns) < 2:
+            QtWidgets.QMessageBox.warning(
+                QtWidgets.QApplication.activeWindow(),
+                "Select Columns for UMAP",
+                "Please select at least two columns before computing UMAP."
+            )
+            logging.log(0, "At least two columns are required for UMAP")
+            return
+
+        # Notify parent to compute UMAP columns
+        if self.parent() is not None and hasattr(self.parent(), 'add_umap_columns_to_dataframe'):
+            # Prepare parameters for UMAP
+            params = {
+                "n_neighbors": self._umap_n_neighbors,
+                "min_dist": self._umap_min_dist,
+                "n_components": self._umap_n_components,
+                "n_jobs": self._umap_n_jobs,
+                "metric": self._umap_metric,
+                "learning_rate": self._umap_learning_rate,
+                "init": self._umap_init,
+                "spread": self._umap_spread
+            }
+            
+            # Add n_epochs if not auto (None)
+            if self._umap_n_epochs is not None:
+                params["n_epochs"] = self._umap_n_epochs
+
+            success = self.parent().add_umap_columns_to_dataframe(
+                self._cluster_columns,
+                params
+            )
+            
+            if success:
+                QtWidgets.QMessageBox.information(
+                    QtWidgets.QApplication.activeWindow(),
+                    "UMAP Computed",
+                    f"UMAP columns (UMAP_1, UMAP_2, etc.) have been added to the dataframe.\n"
+                    f"You can now select them in the axis controls for visualization or clustering."
+                )
+
+    def on_plot_umap(self):
         """
         Create and display a UMAP plot in a separate window.
         """
@@ -462,25 +611,33 @@ class ClusteringDialog(QtWidgets.QDialog):
             )
             return
 
-        do_umap = True
-        # Require at least two columns to be selected for UMAP/clustering
+        # Require at least two columns to be selected for UMAP
         if not self._cluster_columns or len(self._cluster_columns) < 2:
-            do_umap = False
             QtWidgets.QMessageBox.warning(
                 QtWidgets.QApplication.activeWindow(),
                 "Select Columns for UMAP",
                 "Please select at least two columns before creating a UMAP plot."
             )
-            logging.log(0, "At least two columns are required for UMAP/clustering")
+            logging.log(0, "At least two columns are required for UMAP")
+            return
 
         # Notify parent to create UMAP plot
-        if self.parent() is not None and hasattr(self.parent(), 'create_umap_plot') and do_umap:
+        if self.parent() is not None and hasattr(self.parent(), 'create_umap_plot'):
             # Prepare parameters for UMAP
             params = {
                 "n_neighbors": self._umap_n_neighbors,
                 "min_dist": self._umap_min_dist,
-                "n_components": self._umap_n_components
+                "n_components": self._umap_n_components,
+                "n_jobs": self._umap_n_jobs,
+                "metric": self._umap_metric,
+                "learning_rate": self._umap_learning_rate,
+                "init": self._umap_init,
+                "spread": self._umap_spread
             }
+            
+            # Add n_epochs if not auto (None)
+            if self._umap_n_epochs is not None:
+                params["n_epochs"] = self._umap_n_epochs
 
             self.parent().create_umap_plot(
                 self._cluster_columns,
