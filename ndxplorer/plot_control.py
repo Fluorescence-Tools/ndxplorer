@@ -761,24 +761,62 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.parent.selection_z.set_range(m - 2 * sd, m + 2 * sd)
         logging.log(0, f"Auto selection range set to: {(m - 2 * sd, m + 2 * sd)}")
 
-    def update(self):
+    def update(self, update_comboboxes=True, update_plots=True, skip_clustering=True):
+        """
+        Update the plot control widget.
+        
+        Args:
+            update_comboboxes (bool): Whether to refresh the axis selection comboboxes
+            update_plots (bool): Whether to trigger plot updates
+            skip_clustering (bool): Whether to skip clustering when updating plots
+        """
         super(SurfacePlotWidget, self).update()
-        self.actionUpdatePlots.blockSignals(True)
-        self.actionUpdate_axis_scales.blockSignals(True)
-        pn = self.parent.data_source.parameter_names
-        self.comboBoxSelX.clear()
-        self.comboBoxSelY.clear()
-        self.comboBoxSelZ.clear()
-        self.comboBoxSelX.addItems(pn)
-        self.comboBoxSelY.addItems(pn)
-        self.comboBoxSelZ.addItems(pn)
-        self.actionUpdatePlots.blockSignals(False)
-        self.actionUpdate_axis_scales.blockSignals(False)
+        
+        if update_comboboxes:
+            self.actionUpdatePlots.blockSignals(True)
+            self.actionUpdate_axis_scales.blockSignals(True)
+            
+            # Save current selections before updating
+            current_x = self.comboBoxSelX.currentText()
+            current_y = self.comboBoxSelY.currentText()
+            current_z = self.comboBoxSelZ.currentText()
+            
+            # Block combobox signals to prevent triggering replots during updates
+            self.comboBoxSelX.blockSignals(True)
+            self.comboBoxSelY.blockSignals(True)
+            self.comboBoxSelZ.blockSignals(True)
+            
+            try:
+                pn = self.parent.data_source.parameter_names
+                self.comboBoxSelX.clear()
+                self.comboBoxSelY.clear()
+                self.comboBoxSelZ.clear()
+                self.comboBoxSelX.addItems(pn)
+                self.comboBoxSelY.addItems(pn)
+                self.comboBoxSelZ.addItems(pn)
+                
+                # Restore previous selections if they still exist in the updated list
+                if current_x in pn:
+                    self.comboBoxSelX.setCurrentText(current_x)
+                if current_y in pn:
+                    self.comboBoxSelY.setCurrentText(current_y)
+                if current_z in pn:
+                    self.comboBoxSelZ.setCurrentText(current_z)
+            finally:
+                # Always restore combobox signals, even if an error occurs
+                self.comboBoxSelX.blockSignals(False)
+                self.comboBoxSelY.blockSignals(False)
+                self.comboBoxSelZ.blockSignals(False)
+            
+            self.actionUpdatePlots.blockSignals(False)
+            self.actionUpdate_axis_scales.blockSignals(False)
+            logging.log(0, "Updated parameter selectors (preserved existing selections, no replot triggered)")
 
-        # Instead of triggering the action, call update_plots directly with skip_clustering=True
-        # This ensures clustering is not applied automatically after loading data
-        self.parent.update_plots(skip_clustering=True)
-        logging.log(0, "Updated parameter selectors and triggered plot update with clustering skipped")
+        if update_plots:
+            # Instead of triggering the action, call update_plots directly with skip_clustering
+            # This ensures clustering is not applied automatically after loading data
+            self.parent.update_plots(skip_clustering=skip_clustering)
+            logging.log(0, f"Triggered plot update with clustering {'skipped' if skip_clustering else 'enabled'}")
 
     def onClearSelection(self):
         logging.log(0, "onClearSelection")
