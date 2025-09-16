@@ -570,7 +570,7 @@ def _normalize_msvc_tokens(df: pd.DataFrame) -> pd.DataFrame:
             if _WIN_NINF_RE.match(x):
                 return -np.inf
         return x
-    return df.applymap(_norm_cell)
+    return df.map(_norm_cell)
 
 
 def _find_first_member(zf: zipfile.ZipFile, exts: Tuple[str, ...]) -> Optional[str]:
