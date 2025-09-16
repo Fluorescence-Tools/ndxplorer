@@ -9,11 +9,15 @@ import yaml
 import typing
 import pathlib
 import importlib.util
+import sys
+import io
+from contextlib import redirect_stdout, redirect_stderr
 
 # Import settings functions
 from .settings import get_settings_path, ensure_default_settings
 
 import numpy as np
+import pandas as pd
 
 # Delay imports of heavy libraries
 hdbscan = None  # For clustering
@@ -64,6 +68,220 @@ from qwt.plot import QwtPlot
 from qwt.plot_canvas import QwtPlotCanvas
 from .image_items import FixedImageItem
 
+
+class UMAPWorker(QtCore.QObject):
+    """
+    Worker class to run UMAP computation in a separate thread.
+    """
+    finished = QtCore.Signal(object)  # Signal emitted when UMAP is complete
+    error = QtCore.Signal(str)  # Signal emitted when an error occurs
+    progress = QtCore.Signal(str)  # Signal emitted for progress updates
+    
+    def __init__(self, clean_data, umap_params):
+        super().__init__()
+        self.clean_data = clean_data
+        self.umap_params = umap_params
+        
+    def run(self):
+        """Run UMAP computation in worker thread."""
+        try:
+            # Import UMAP here to avoid issues with threading
+            import umap as _umap
+            
+            # Redirect stdout to capture tqdm output
+            from io import StringIO
+            import sys
+            
+            output_buffer = StringIO()
+            original_stdout = sys.stdout
+            original_stderr = sys.stderr
+            
+            try:
+                sys.stdout = output_buffer
+                sys.stderr = output_buffer
+                
+                # Create and fit UMAP reducer
+                reducer = _umap.UMAP(**self.umap_params)
+                
+                # Emit progress updates by periodically checking buffer
+                import threading
+                import time
+                
+                def emit_progress():
+                    last_content = ""
+                    while not getattr(threading.current_thread(), "stop_flag", False):
+                        current_content = output_buffer.getvalue()
+                        if current_content != last_content:
+                            self.progress.emit(current_content)
+                            last_content = current_content
+                        time.sleep(0.1)
+                
+                # Start progress monitoring thread
+                progress_thread = threading.Thread(target=emit_progress, daemon=True)
+                progress_thread.start()
+                
+                # Perform UMAP computation
+                umap_embedding = reducer.fit_transform(self.clean_data)
+                
+                # Stop progress thread
+                progress_thread.stop_flag = True
+                
+                # Emit final progress and result
+                final_content = output_buffer.getvalue()
+                self.progress.emit(final_content)
+                self.finished.emit(umap_embedding)
+                
+            finally:
+                # Restore stdout/stderr
+                sys.stdout = original_stdout
+                sys.stderr = original_stderr
+                
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class UMAPProgressDialog(QtWidgets.QDialog):
+    """
+    A non-blocking progress dialog that displays UMAP computation progress.
+    """
+    
+    def __init__(self, parent=None, title="UMAP Progress"):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setWindowModality(QtCore.Qt.ApplicationModal)
+        self.setMinimumSize(600, 400)
+        self.resize(700, 500)
+        
+        # Create layout
+        layout = QtWidgets.QVBoxLayout(self)
+        
+        # Add title label
+        title_label = QtWidgets.QLabel("UMAP Computation Progress")
+        title_label.setStyleSheet("font-weight: bold; font-size: 14px; margin-bottom: 10px;")
+        layout.addWidget(title_label)
+        
+        # Create text area to display progress
+        self.text_area = QtWidgets.QTextEdit()
+        self.text_area.setReadOnly(True)
+        self.text_area.setFont(QtGui.QFont("Consolas", 10))  # Monospace font for progress bars
+        self.text_area.setStyleSheet("""
+            QTextEdit {
+                background-color: #2b2b2b;
+                color: #ffffff;
+                border: 1px solid #555555;
+                padding: 10px;
+            }
+        """)
+        layout.addWidget(self.text_area)
+        
+        # Add status label
+        self.status_label = QtWidgets.QLabel("Initializing UMAP computation...")
+        self.status_label.setStyleSheet("color: #666666; font-style: italic;")
+        layout.addWidget(self.status_label)
+        
+        # Create button box (initially hidden, only shown on error)
+        self.button_box = QtWidgets.QDialogButtonBox()
+        self.close_button = self.button_box.addButton("Close", QtWidgets.QDialogButtonBox.AcceptRole)
+        self.close_button.clicked.connect(self.accept)
+        self.button_box.setVisible(False)
+        layout.addWidget(self.button_box)
+        
+        # Worker thread setup
+        self.worker = None
+        self.thread = None
+        self.result = None
+        self.error_message = None
+        
+        # Auto-close timer for successful completion
+        self.auto_close_timer = QtCore.QTimer()
+        self.auto_close_timer.setSingleShot(True)
+        self.auto_close_timer.timeout.connect(self.accept)
+        
+    def run_umap_computation(self, clean_data, umap_params):
+        """Start UMAP computation in worker thread."""
+        # Create worker and thread
+        self.worker = UMAPWorker(clean_data, umap_params)
+        self.thread = QtCore.QThread()
+        
+        # Move worker to thread
+        self.worker.moveToThread(self.thread)
+        
+        # Connect signals
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.on_computation_finished)
+        self.worker.error.connect(self.on_computation_error)
+        self.worker.progress.connect(self.on_progress_update)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+        
+        # Start computation
+        self.status_label.setText("UMAP computation in progress...")
+        self.thread.start()
+        
+    def on_progress_update(self, content):
+        """Handle progress updates from worker."""
+        self.text_area.setPlainText(content)
+        # Auto-scroll to bottom
+        cursor = self.text_area.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+        self.text_area.setTextCursor(cursor)
+        
+    def on_computation_finished(self, result):
+        """Handle successful completion of UMAP computation."""
+        self.result = result
+        
+        # Add completion message to the progress text area
+        completion_message = f"\n\n{'='*60}\n✅ UMAP COMPUTATION COMPLETED SUCCESSFULLY!\n{'='*60}\n"
+        completion_message += f"• Embedding shape: {result.shape}\n"
+        completion_message += f"• Components: {result.shape[1]}\n"
+        completion_message += f"• Data points processed: {result.shape[0]}\n"
+        completion_message += "\nDialog will close automatically in 3 seconds...\n"
+        
+        current_content = self.text_area.toPlainText()
+        self.text_area.setPlainText(current_content + completion_message)
+        
+        # Auto-scroll to bottom to show completion message
+        cursor = self.text_area.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+        self.text_area.setTextCursor(cursor)
+        
+        # Update status label
+        self.status_label.setText("✅ UMAP computation completed successfully! Auto-closing in 3 seconds...")
+        self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+        
+        # Start auto-close timer (3 seconds)
+        self.auto_close_timer.start(3000)
+        
+    def on_computation_error(self, error_message):
+        """Handle error in UMAP computation."""
+        self.error_message = error_message
+        
+        # Add error message to the progress text area
+        error_msg = f"\n\n{'='*60}\n❌ UMAP COMPUTATION FAILED\n{'='*60}\n"
+        error_msg += f"Error: {error_message}\n"
+        error_msg += "\nPlease check your parameters and try again.\n"
+        
+        current_content = self.text_area.toPlainText()
+        self.text_area.setPlainText(current_content + error_msg)
+        
+        # Auto-scroll to bottom to show error message
+        cursor = self.text_area.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+        self.text_area.setTextCursor(cursor)
+        
+        # Update status label and show close button for errors
+        self.status_label.setText(f"❌ UMAP computation failed: {error_message}")
+        self.status_label.setStyleSheet("color: #F44336; font-weight: bold;")
+        self.button_box.setVisible(True)
+        
+    def get_result(self):
+        """Get the UMAP computation result."""
+        return self.result
+        
+    def get_error(self):
+        """Get the error message if computation failed."""
+        return self.error_message
 
 
 class NDXplorer(QtWidgets.QMainWindow):
@@ -2622,18 +2840,60 @@ class NDXplorer(QtWidgets.QMainWindow):
                 self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, weights=weights, density=self.plot_control.normed_hist_x)[::-1]
         except ValueError as e:
             logging.warning(f"Could not compute X histogram with weights: {str(e)}")
-            # Fallback to histogram without weights
-            with np.errstate(divide='ignore', invalid='ignore'):
-                self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, density=self.plot_control.normed_hist_x)[::-1]
+            try:
+                # Fallback to histogram without weights
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    self._histogram["x"] = np.histogram(d1, bins=x_bins_1d, density=self.plot_control.normed_hist_x)[::-1]
+            except ValueError as e2:
+                logging.warning(f"Could not compute X histogram without weights: {str(e2)}")
+                # Final fallback: generate valid bins automatically
+                try:
+                    if len(d1) > 0 and np.isfinite(d1).any():
+                        valid_data = d1[np.isfinite(d1)]
+                        if len(valid_data) > 1:
+                            auto_bins = np.linspace(np.min(valid_data), np.max(valid_data), self.plot_control.n_bins_1d + 1)
+                            self._histogram["x"] = np.histogram(valid_data, bins=auto_bins, density=self.plot_control.normed_hist_x)[::-1]
+                        else:
+                            # Single value or no valid data - create minimal histogram
+                            self._histogram["x"] = (np.array([1]), np.array([0, 1]))
+                    else:
+                        # No valid data - create empty histogram
+                        self._histogram["x"] = (np.array([0]), np.array([0, 1]))
+                    logging.info("X histogram computed with auto-generated bins")
+                except Exception as e3:
+                    logging.error(f"Failed to compute X histogram with fallback: {str(e3)}")
+                    # Ultimate fallback - empty histogram
+                    self._histogram["x"] = (np.array([0]), np.array([0, 1]))
 
         try:
             with np.errstate(divide='ignore', invalid='ignore'):
                 self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, weights=weights, density=self.plot_control.normed_hist_y)[::-1]
         except ValueError as e:
             logging.warning(f"Could not compute Y histogram with weights: {str(e)}")
-            # Fallback to histogram without weights
-            with np.errstate(divide='ignore', invalid='ignore'):
-                self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, density=self.plot_control.normed_hist_y)[::-1]
+            try:
+                # Fallback to histogram without weights
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    self._histogram["y"] = np.histogram(d2, bins=y_bins_1d, density=self.plot_control.normed_hist_y)[::-1]
+            except ValueError as e2:
+                logging.warning(f"Could not compute Y histogram without weights: {str(e2)}")
+                # Final fallback: generate valid bins automatically
+                try:
+                    if len(d2) > 0 and np.isfinite(d2).any():
+                        valid_data = d2[np.isfinite(d2)]
+                        if len(valid_data) > 1:
+                            auto_bins = np.linspace(np.min(valid_data), np.max(valid_data), self.plot_control.n_bins_1d + 1)
+                            self._histogram["y"] = np.histogram(valid_data, bins=auto_bins, density=self.plot_control.normed_hist_y)[::-1]
+                        else:
+                            # Single value or no valid data - create minimal histogram
+                            self._histogram["y"] = (np.array([1]), np.array([0, 1]))
+                    else:
+                        # No valid data - create empty histogram
+                        self._histogram["y"] = (np.array([0]), np.array([0, 1]))
+                    logging.info("Y histogram computed with auto-generated bins")
+                except Exception as e3:
+                    logging.error(f"Failed to compute Y histogram with fallback: {str(e3)}")
+                    # Ultimate fallback - empty histogram
+                    self._histogram["y"] = (np.array([0]), np.array([0, 1]))
 
         # Only compute z histogram if z-axis is enabled
         if z_enabled:
@@ -2652,10 +2912,31 @@ class NDXplorer(QtWidgets.QMainWindow):
                 with np.errstate(divide='ignore', invalid='ignore'):
                     self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, weights=z_weights, density=self.plot_control.normed_hist_z)[::-1]
             except ValueError as e:
-                logging.warning(f"Could not compute Z histogram: {str(e)}")
-                # Create a simple histogram without weights as fallback
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, density=self.plot_control.normed_hist_z)[::-1]
+                logging.warning(f"Could not compute Z histogram with weights: {str(e)}")
+                try:
+                    # Fallback to histogram without weights
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        self._histogram["z"] = np.histogram(d3, bins=z_bins_1d, density=self.plot_control.normed_hist_z)[::-1]
+                except ValueError as e2:
+                    logging.warning(f"Could not compute Z histogram without weights: {str(e2)}")
+                    # Final fallback: generate valid bins automatically
+                    try:
+                        if len(d3) > 0 and np.isfinite(d3).any():
+                            valid_data = d3[np.isfinite(d3)]
+                            if len(valid_data) > 1:
+                                auto_bins = np.linspace(np.min(valid_data), np.max(valid_data), self.plot_control.n_bins_1d + 1)
+                                self._histogram["z"] = np.histogram(valid_data, bins=auto_bins, density=self.plot_control.normed_hist_z)[::-1]
+                            else:
+                                # Single value or no valid data - create minimal histogram
+                                self._histogram["z"] = (np.array([1]), np.array([0, 1]))
+                        else:
+                            # No valid data - create empty histogram
+                            self._histogram["z"] = (np.array([0]), np.array([0, 1]))
+                        logging.info("Z histogram computed with auto-generated bins")
+                    except Exception as e3:
+                        logging.error(f"Failed to compute Z histogram with fallback: {str(e3)}")
+                        # Ultimate fallback - empty histogram
+                        self._histogram["z"] = (np.array([0]), np.array([0, 1]))
 
         # 2D Histogram
         ####################
@@ -3336,11 +3617,6 @@ class NDXplorer(QtWidgets.QMainWindow):
                     min_cluster_size: Minimum number of points for a cluster.
                 For K-means:
                     n_clusters: Number of clusters to form.
-                For UMAP enhancement:
-                    use_umap_enhancement: Whether to use UMAP for dimensionality reduction before clustering.
-                    umap_n_neighbors: Number of neighbors to consider for each point in UMAP.
-                    umap_min_dist: Minimum distance between points in the UMAP embedding.
-                    umap_n_components: Number of components (dimensions) for the UMAP embedding.
 
         Returns:
             Tuple containing:
@@ -3382,11 +3658,21 @@ class NDXplorer(QtWidgets.QMainWindow):
         if result[0] is not None and result[1] is not None:
             full_labels, full_probabilities = result
 
+            # Store the cluster labels and probabilities to prevent infinite loop
+            self._cluster_labels = full_labels
+            self._cluster_probabilities = full_probabilities
+            logging.info("Stored cluster labels and probabilities to prevent infinite loop")
+
             # Add cluster labels and probabilities to the data frame
             df = self._data_source.data
             df['Cluster Label'] = full_labels
             df['Cluster Probability'] = full_probabilities
             self._data_source.data = df  # Update the data frame to trigger parameter_names update
+
+            # Refresh the axis selection comboboxes to show the new cluster columns
+            # Use the enhanced update method to only refresh comboboxes without triggering plot updates
+            self.plot_control.update(update_comboboxes=True, update_plots=False)
+            logging.info("Refreshed axis selection comboboxes to show cluster columns")
 
             # Store the data shape used for clustering
             self._cluster_data_shape = self._clustering_manager._cluster_data_shape
@@ -3584,9 +3870,9 @@ class NDXplorer(QtWidgets.QMainWindow):
             # In case called early during construction
             pass
 
-    def create_umap_plot(self, columns, params):
+    def add_umap_columns_to_dataframe(self, columns, params):
         """
-        Create and display a UMAP plot in a separate window using PyQtGraph.
+        Add UMAP projection columns to the dataframe.
 
         Args:
             columns: Set of column names to use for UMAP
@@ -3594,8 +3880,174 @@ class NDXplorer(QtWidgets.QMainWindow):
                 n_neighbors: Number of neighbors to consider for each point
                 min_dist: Minimum distance between points in the embedding
                 n_components: Number of components (dimensions) for the embedding
+                n_jobs: Number of parallel jobs for UMAP computation
+
+        Returns:
+            bool: True if UMAP columns were successfully added, False otherwise
+        """
+        logging.info(f"Adding UMAP columns to dataframe using columns: {columns}")
+        
+        # Check if UMAP is available
+        try:
+            import umap as _umap
+            logging.info("Imported umap library")
+        except ImportError:
+            logging.error("UMAP is not installed. Cannot perform UMAP transformation.")
+            return False
+
+        if self._data_source is None or self._data_source.empty:
+            logging.error("No data available for UMAP transformation.")
+            return False
+
+        # Get the data for UMAP based on selected columns
+        df = self._data_source.data
+        selected_data = []
+
+        for column in columns:
+            if column in df.columns:
+                # Convert to numeric and handle errors
+                values = pd.to_numeric(df[column], errors='coerce').values
+                selected_data.append(values)
+
+        if not selected_data:
+            logging.error("No valid columns found for UMAP transformation.")
+            return False
+
+        # Stack the selected data
+        data = np.column_stack(selected_data)
+
+        # Remove any rows with NaN or Inf values
+        mask = ~np.any(np.isnan(data) | np.isinf(data), axis=1)
+        clean_data = data[mask]
+
+        # Get UMAP parameters
+        umap_n_neighbors = params.get("n_neighbors", 15)
+        umap_min_dist = params.get("min_dist", 0.1)
+        umap_n_components = params.get("n_components", 2)
+        umap_n_jobs = params.get("n_jobs", -1)
+
+        # Check if we have enough data points for UMAP
+        if len(clean_data) < umap_n_neighbors:
+            logging.warning(f"Not enough data points for UMAP. Need at least {umap_n_neighbors} (n_neighbors parameter).")
+            return False
+
+        # Create and show progress dialog
+        progress_dialog = UMAPProgressDialog(self, "UMAP Column Computation")
+        progress_dialog.show()
+        
+        # Prepare UMAP parameters
+        umap_params = {
+            'n_neighbors': umap_n_neighbors,
+            'min_dist': umap_min_dist,
+            'n_components': umap_n_components,
+            'n_jobs': umap_n_jobs,
+            'verbose': True,  # Enable verbose output for progress
+            'tqdm_kwds': {'desc': 'UMAP Embedding', 'unit': 'epoch'}  # Configure tqdm progress bar
+        }
+        
+        # Add additional parameters from the params dict
+        for param_name in ['metric', 'learning_rate', 'init', 'spread', 'low_memory', 
+                          'set_op_mix_ratio', 'local_connectivity', 'repulsion_strength',
+                          'negative_sample_rate', 'n_epochs']:
+            if param_name in params:
+                umap_params[param_name] = params[param_name]
+        
+        # Only set random_state for reproducibility when using single-threaded execution
+        # Setting random_state with n_jobs > 1 causes UMAP to override n_jobs to 1
+        if umap_n_jobs == 1:
+            umap_params['random_state'] = 42
+        
+        logging.info(f"Creating UMAP reducer with parameters: {umap_params}")
+        
+        # Start UMAP computation in worker thread
+        progress_dialog.run_umap_computation(clean_data, umap_params)
+        
+        # Show dialog and wait for completion
+        result = progress_dialog.exec_()
+        
+        # Check if computation was successful
+        umap_embedding = progress_dialog.get_result()
+        error_message = progress_dialog.get_error()
+        
+        if error_message:
+            logging.error(f"Error during UMAP transformation: {error_message}")
+            return False
+            
+        if umap_embedding is None:
+            logging.error("UMAP computation was cancelled or failed")
+            return False
+            
+        logging.info(f"UMAP transformation completed with {umap_n_components} components")
+
+        # Create full-sized arrays for the UMAP projections
+        full_umap_projections = []
+        for i in range(umap_n_components):
+            full_projection = np.full(len(data), np.nan)
+            full_projection[mask] = umap_embedding[:, i]
+            full_umap_projections.append(full_projection)
+
+        # Add UMAP columns to the dataframe
+        for i, projection in enumerate(full_umap_projections):
+            column_name = f"UMAP_{i+1}"
+            df[column_name] = projection
+            logging.info(f"Added column '{column_name}' to dataframe")
+
+        # Update the data source
+        self._data_source.data = df
+
+        # Refresh the axis selection comboboxes to show the new UMAP columns
+        # Save current selections before updating
+        current_x = self.plot_control.comboBoxSelX.currentText()
+        current_y = self.plot_control.comboBoxSelY.currentText()
+        current_z = self.plot_control.comboBoxSelZ.currentText()
+        
+        # Block signals to prevent triggering replots during combobox updates
+        self.plot_control.comboBoxSelX.blockSignals(True)
+        self.plot_control.comboBoxSelY.blockSignals(True)
+        self.plot_control.comboBoxSelZ.blockSignals(True)
+        
+        try:
+            pn = self._data_source.parameter_names
+            self.plot_control.comboBoxSelX.clear()
+            self.plot_control.comboBoxSelY.clear()
+            self.plot_control.comboBoxSelZ.clear()
+            self.plot_control.comboBoxSelX.addItems(pn)
+            self.plot_control.comboBoxSelY.addItems(pn)
+            self.plot_control.comboBoxSelZ.addItems(pn)
+            
+            # Restore previous selections if they still exist in the updated list
+            if current_x in pn:
+                self.plot_control.comboBoxSelX.setCurrentText(current_x)
+            if current_y in pn:
+                self.plot_control.comboBoxSelY.setCurrentText(current_y)
+            if current_z in pn:
+                self.plot_control.comboBoxSelZ.setCurrentText(current_z)
+        finally:
+            # Always restore signals, even if an error occurs
+            self.plot_control.comboBoxSelX.blockSignals(False)
+            self.plot_control.comboBoxSelY.blockSignals(False)
+            self.plot_control.comboBoxSelZ.blockSignals(False)
+            
+        logging.info("Refreshed axis selection comboboxes to show UMAP columns (preserved existing selections, no replot triggered)")
+
+        return True
+
+    def create_umap_plot(self, columns, params):
+        """
+        Create a UMAP plot in a separate window using existing data.
+        Note: This function does not add UMAP columns to the dataframe.
+        Use add_umap_columns_to_dataframe() first if needed.
+
+        Args:
+            columns: Set of column names to use for UMAP
+            params: Dictionary of parameters for UMAP
+                n_neighbors: Number of neighbors to consider for each point
+                min_dist: Minimum distance between points in the embedding
+                n_components: Number of components (dimensions) for the embedding
+                n_jobs: Number of parallel jobs for UMAP computation
         """
         logging.debug(f"create_umap_plot(columns={columns}, params={params})")
+
         # Get cluster labels if available
         cluster_labels = None
         if hasattr(self, '_cluster_labels') and self._cluster_labels is not None:
