@@ -26,6 +26,8 @@ from collections import OrderedDict
 import numpy as np
 import pandas as pd
 
+from .logging_config import logging
+
 try:
     import yaml  # optional
 except Exception:  # pragma: no cover
@@ -130,7 +132,7 @@ def compute_values(
         try:
             equations = _load_equations_file(equation_json_fn)
         except Exception as e:
-            print(f"[compute_values] Failed to load equations from {equation_json_fn}: {e}", file=sys.stderr)
+            logging.warning(f"compute_values: Failed to load equations from {equation_json_fn}: {e}")
             equations = []
 
     equations = equations or []
@@ -182,8 +184,8 @@ def compute_values(
                 elif lname in consts_lower:
                     out.append(f"c['{name}']")
                 else:
-                    # Leave literal intact if it's neither a known column/equation key nor a constant
-                    out.append(eq_str[s:e])
+                    # Treat unknown quoted names as data references to force failure if missing
+                    out.append(f"d['{name}']")
 
             i = e
 
@@ -203,7 +205,7 @@ def compute_values(
                     # Fallback to plain eval for maximum compatibility
                     d[out_key] = eval(pre, {}, {'d': d_ci, 'c': c})
             except Exception as e:
-                print(f"[compute_values] Could not compute '{out_key}': {e}", file=sys.stderr)
+                logging.warning(f"compute_values: Could not compute '{out_key}': {e}")
 
 
 # ---------------------------
