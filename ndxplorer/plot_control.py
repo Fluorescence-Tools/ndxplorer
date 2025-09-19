@@ -780,6 +780,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             current_x = self.comboBoxSelX.currentText()
             current_y = self.comboBoxSelY.currentText()
             current_z = self.comboBoxSelZ.currentText()
+            current_w = self.comboBoxWeight.currentText() if hasattr(self, 'comboBoxWeight') else ''
             
             # Block combobox signals to prevent triggering replots during updates
             self.comboBoxSelX.blockSignals(True)
@@ -787,29 +788,56 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             self.comboBoxSelZ.blockSignals(True)
             
             try:
-                pn = self.parent.data_source.parameter_names
+                # Only show columns that actually exist (computed successfully or present in the dataframe)
+                try:
+                    pn = [str(c) for c in list(self.parent.data_source.data.columns)]
+                except Exception:
+                    pn = []
                 self.comboBoxSelX.clear()
                 self.comboBoxSelY.clear()
                 self.comboBoxSelZ.clear()
+                if hasattr(self, 'comboBoxWeight'):
+                    self.comboBoxWeight.clear()
                 self.comboBoxSelX.addItems(pn)
                 self.comboBoxSelY.addItems(pn)
                 self.comboBoxSelZ.addItems(pn)
+                if hasattr(self, 'comboBoxWeight'):
+                    self.comboBoxWeight.addItems(pn)
                 
                 # Restore previous selections if they still exist in the updated list
                 if current_x in pn:
                     self.comboBoxSelX.setCurrentText(current_x)
+                else:
+                    if pn:
+                        self.comboBoxSelX.setCurrentIndex(0)
+                    logging.info(f"X selection '{current_x}' not available; keeping default")
                 if current_y in pn:
                     self.comboBoxSelY.setCurrentText(current_y)
+                else:
+                    if pn:
+                        self.comboBoxSelY.setCurrentIndex(0)
+                    logging.info(f"Y selection '{current_y}' not available; keeping default")
                 if current_z in pn:
                     self.comboBoxSelZ.setCurrentText(current_z)
+                else:
+                    if pn:
+                        self.comboBoxSelZ.setCurrentIndex(0)
+                    logging.info(f"Z selection '{current_z}' not available; keeping default")
+                # Restore weight selection
+                if hasattr(self, 'comboBoxWeight'):
+                    if current_w in pn:
+                        self.comboBoxWeight.setCurrentText(current_w)
+                    else:
+                        if pn:
+                            self.comboBoxWeight.setCurrentIndex(0)
+                        logging.info(f"Weight selection '{current_w}' not available; keeping default")
             finally:
-                # Always restore combobox signals, even if an error occurs
+                # Unblock combobox signals after updates
                 self.comboBoxSelX.blockSignals(False)
                 self.comboBoxSelY.blockSignals(False)
                 self.comboBoxSelZ.blockSignals(False)
-            
-            self.actionUpdatePlots.blockSignals(False)
-            self.actionUpdate_axis_scales.blockSignals(False)
+                self.actionUpdatePlots.blockSignals(False)
+                self.actionUpdate_axis_scales.blockSignals(False)
             logging.log(0, "Updated parameter selectors (preserved existing selections, no replot triggered)")
 
         if update_plots:
