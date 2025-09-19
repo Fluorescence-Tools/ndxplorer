@@ -16,6 +16,8 @@
     'Fg/Fr' / 'gG/gR'
 - FRET efficiency: >-
     (1.+ 'Fd/Fa' * 'PhiA' / 'PhiD')**(-1.0)
+- R_FRET: >-
+    'forster_radius' * (1. / 'FRET efficiency' - 1.)**(1./6.)
 - Sg(PIE): >-
     'S prompt green (kHz)'
 - Fg(PIE): >-
@@ -47,7 +49,7 @@
 - Tg-Tr(ms): >-
     'Duration (green) (ms)' - 'Duration (red) (ms)'
 - <tauD(A)>x: >-
-    (1 - 'FRET efficiency') * 'tauD0x'
+    (1 - 'FRET efficiency') * 'tauD0'
 - Var_tauD(A)): >-
     'Tau (green)' * '<tauD(A)>x' - '<tauD(A)>x'**(2.0)
 - Total count rate green + red: >-
@@ -101,3 +103,9 @@
 # ---- Convenience sums (ALEX) ----
 - Total count rate (ALEX): >-
     'Sg(ALEX)' + 'Sr(ALEX)'
+
+# ---- FRET factors ----
+- Rapp: >-
+    (3./2.) / ('kappa2') * 'RDA'
+- kFRET: >-
+    1/'tauD0'*3/2*'kappa2'*('forster_radius'/'RDA')**(6.0)

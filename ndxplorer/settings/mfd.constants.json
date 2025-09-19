@@ -6,7 +6,8 @@
   "PhiA": 0.32,
   "PhiD": 0.8,
   "alpha": 0.015,
-  "tauD0x": 4.0,
+  "tauD0": 4.0,
   "beta": 0.005,
-  "r": 1.0
+  "r": 1.0,
+  "forster_radius": 52.0
 }

@@ -53,6 +53,15 @@
   ranges:
     tauD0: [0, 10]
 
+- name: "kFRET vs RDA"
+  equation: "1/tauD0*(R0/x)**(6.0)"
+  parameters:
+    tauD0: 4.0
+    R0: 52.0
+  ranges:
+    tauD0: [0, 10]
+    R0: [1, 100]
+
 - name: "E vs tau (dynamic line)"
   equation: "1-(tauDA1*tauDA2/(tauD0*(tauDA1+tauDA2-x)))"
   parameters:
