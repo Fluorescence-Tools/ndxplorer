@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Tuple, Set, Callable, Any
 import numpy as np
 import re
 import os
+import csv
 import yaml
 import inspect
 import textwrap
@@ -337,6 +338,9 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         self.curves = []  # List to store curve widgets
         self.predefined_equations = []  # List to store predefined equations
         self.curve_items = []  # List to store curve items on the plot
+        self._last_x_edges = None  # Cache latest x edges used for computation
+        self._last_y_edges = None  # Cache latest y edges used for computation
+        self._last_plot_control = None  # Cache latest plot control for scale info
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(0)  # Reduce spacing between elements
@@ -364,6 +368,16 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         self.points_spinbox.valueChanged.connect(self.curvesChanged)
         points_layout.addWidget(self.points_spinbox)
         layout.addLayout(points_layout)
+
+        # Action buttons (e.g., Save CSV)
+        actions_layout = QtWidgets.QHBoxLayout()
+        actions_layout.setSpacing(0)
+        self.save_button = QtWidgets.QPushButton("Save CSV")
+        self.save_button.setToolTip("Save visible overlay curves as CSV (curve, x, y)")
+        self.save_button.clicked.connect(self._on_save_csv)
+        actions_layout.addWidget(self.save_button)
+        actions_layout.addStretch(1)
+        layout.addLayout(actions_layout)
 
         # Scroll area for curves
         self.scroll_area = QtWidgets.QScrollArea()
@@ -543,6 +557,11 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         except (ValueError, TypeError):
             return
 
+        # Cache latest edges and plot control for export
+        self._last_x_edges = x_edges
+        self._last_y_edges = y_edges
+        self._last_plot_control = plot_control
+
         # Get visible curves from the overlay widget
         visible_curves = self.get_visible_curves()
 
@@ -631,6 +650,122 @@ class CurveOverlayWidget(QtWidgets.QWidget):
 
         # Redraw the overlay plot to update the display
         overlay_plot.replot()
+
+    def _compute_curve_points(self, equation, parameters, num_points, x_edges, y_edges, plot_control, curve_evaluator):
+        """
+        Compute value-domain x,y points for a curve given current edges and scaling.
+        Filters points outside the y range.
+        Returns two numpy arrays (x_values_filtered, y_values_filtered).
+        """
+        # Determine x sampling based on axis scale
+        x_min = x_edges[0]
+        x_max = x_edges[-1]
+
+        if plot_control.scale_x == "log":
+            if x_min <= 0:
+                x_min = 1e-6
+            if x_max <= 0:
+                x_max = 1e-6
+            x_values = np.logspace(np.log10(x_min), np.log10(x_max), num_points)
+        else:
+            x_values = np.linspace(x_min, x_max, num_points)
+
+        # Evaluate equation or function
+        result = curve_evaluator.evaluate(equation, x_values, parameters)
+        if result is None:
+            return np.array([]), np.array([])
+
+        # Unpack parametric vs standard equation
+        if isinstance(result, tuple) and len(result) == 2:
+            x_eval, y_eval = result
+        else:
+            x_eval, y_eval = x_values, result
+
+        # For log y scale, clamp minimum positive
+        if plot_control.scale_y == "log":
+            y_eval = np.maximum(y_eval, 1e-6)
+
+        # Filter to y range
+        y_min, y_max = y_edges[0], y_edges[-1]
+        mask = (y_eval >= y_min) & (y_eval <= y_max)
+        return x_eval[mask], y_eval[mask]
+
+    def _on_save_csv(self):
+        """
+        Save currently visible overlay curves as a CSV file with columns: curve, x, y.
+        Uses the latest histogram edges and plot control cached during the last overlay update.
+        """
+        # Validate that we have context for computation
+        if self._last_x_edges is None or self._last_y_edges is None or self._last_plot_control is None:
+            QtWidgets.QMessageBox.warning(self, "Save Overlays", "No overlay data available yet. Create/update overlays first.")
+            return
+
+        # Gather visible curves
+        visible_curves_widgets = [c for c in self.curves if c.is_visible()]
+        if not visible_curves_widgets:
+            QtWidgets.QMessageBox.information(self, "Save Overlays", "No visible curves to save.")
+            return
+
+        # Ask user for file path
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save Overlay Curves", "overlays.csv", "CSV Files (*.csv)")
+        if not filename:
+            return
+
+        # Compute and write CSV
+        try:
+            num_points = self.get_num_points()
+
+            # Compute all curves first
+            curves_data = []  # list of (name, x_vals, y_vals)
+            max_len = 0
+            for curve in visible_curves_widgets:
+                name = str(curve.title())
+                equation_or_function = curve.get_equation()
+                parameters = curve.get_parameters()
+
+                x_vals, y_vals = self._compute_curve_points(
+                    equation_or_function,
+                    parameters,
+                    num_points,
+                    self._last_x_edges,
+                    self._last_y_edges,
+                    self._last_plot_control,
+                    curve.curve_evaluator  # evaluator from the curve widget ensures consistency
+                )
+
+                curves_data.append((name, x_vals, y_vals))
+                if len(x_vals) > max_len:
+                    max_len = len(x_vals)
+
+            # Write the CSV with two header lines and horizontal stacking
+            with open(filename, mode='w', newline='') as f:
+                writer = csv.writer(f)
+
+                # Header line 1: curve names repeated for x and y columns
+                header1 = []
+                for name, _, _ in curves_data:
+                    header1.extend([name, name])
+                writer.writerow(header1)
+
+                # Header line 2: x,y under each curve
+                header2 = []
+                for _ in curves_data:
+                    header2.extend(["x", "y"])
+                writer.writerow(header2)
+
+                # Data rows: pad with empty strings when a curve has fewer points
+                for i in range(max_len):
+                    row = []
+                    for _, x_vals, y_vals in curves_data:
+                        if i < len(x_vals):
+                            row.extend([x_vals[i], y_vals[i]])
+                        else:
+                            row.extend(["", ""])  # pad
+                    writer.writerow(row)
+
+            QtWidgets.QMessageBox.information(self, "Save Overlays", f"Saved overlay curves to:\n{filename}")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Save Overlays", f"Failed to save CSV:\n{e}")
 
 
 class CurveEvaluator:
