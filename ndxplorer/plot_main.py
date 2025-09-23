@@ -3005,16 +3005,33 @@ class NDXplorer(QtWidgets.QMainWindow):
         import io
         output = io.StringIO()
 
-        # Build header row with tabs and uniform formatting
-        header_cells = ["y/x"] + [f"{x:10.4f}" for x in x_centers]
+        # Helper for robust numeric formatting with high precision
+        def _fmt_num(v: float) -> str:
+            """Format numbers with high precision; use scientific for very small/large magnitudes.
+            Uses up to 15 significant digits, trims unnecessary zeros.
+            """
+            try:
+                # Keep integers as integers
+                if isinstance(v, (int, np.integer)):
+                    return f"{int(v)}"
+                # Treat near-integers as integers too (robustly via numpy.isclose)
+                if np.isfinite(v) and np.isclose(v, round(v), rtol=0.0, atol=1e-12):
+                    return f"{int(round(v))}"
+                # General format: 15 significant digits, auto scientific for small/large
+                return f"{float(v):.8g}"
+            except Exception:
+                return str(v)
+
+        # Build header row with tabs and precise formatting
+        header_cells = ["y/x"] + [_fmt_num(x) for x in x_centers]
         output.write("\t".join(header_cells) + "\n")
 
         # Build rows: each row starts with the y center, then the corresponding histogram counts.
         # Note: H is assumed to be shaped (len(x_centers), len(y_centers)).
         for j, y in enumerate(y_centers):
-            row_cells = [f"{y:10.4e}"]  # y center formatted uniformly
+            row_cells = [_fmt_num(y)]
             for i in range(len(x_centers)):
-                row_cells.append(f"{H[i, j]:10.4e}")
+                row_cells.append(_fmt_num(H[i, j]))
             output.write("\t".join(row_cells) + "\n")
 
         csv_text = output.getvalue()
