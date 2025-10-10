@@ -1814,7 +1814,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def onSaveBurstIDs(self, evt=None, folder=None):
         """
-        Save burst IDs to a folder and show dialog for microtime histogram.
+        Save burst IDs to a folder and show dialog for further processing options.
         
         Args:
             evt: Event that triggered this method (not used)
@@ -1838,19 +1838,24 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
         
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Process BIDs")
+        dialog.setWindowTitle("Process Burst IDs")
         
         # Create layout
         layout = QtWidgets.QVBoxLayout()
         
         # Add message
-        label = QtWidgets.QLabel("Process Burst IDs.")
+        label = QtWidgets.QLabel("Choose what to do with the saved Burst IDs:")
         layout.addWidget(label)
         
-        # Add checkbox (unchecked by default)
-        checkbox = QtWidgets.QCheckBox("Compute microtime histogram")
-        checkbox.setChecked(True)
-        layout.addWidget(checkbox)
+        # Option 1: Microtime histogram
+        cb_hist = QtWidgets.QCheckBox("Compute microtime histogram")
+        cb_hist.setChecked(True)
+        layout.addWidget(cb_hist)
+        
+        # Option 2: Correlate bursts via FCS Correlator Wizard
+        cb_correlate = QtWidgets.QCheckBox("Open FCS Correlator Wizard to correlate BST files")
+        cb_correlate.setChecked(False)
+        layout.addWidget(cb_correlate)
         
         # Add buttons
         button_box = QtWidgets.QDialogButtonBox(
@@ -1863,60 +1868,98 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Set layout and show dialog
         dialog.setLayout(layout)
         
-        # If dialog is accepted (OK clicked), proceed with export
+        # If dialog is accepted (OK clicked), proceed with selected actions
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
-            # Get checkbox state for auto_transfer parameter
-            export_chisurf = checkbox.isChecked()
-            if not export_chisurf:
-                logging.info("Skipping auto transfer to ChiSurf.")
-                return
-            else:
-                logging.info("Exporting burst IDs to ChiSurf...")
-            try:
-                # Try to find setup name from photon_selection_parameters.json
-                setup_name = None
-                bid_folder = Path(folder)
+            do_hist = cb_hist.isChecked()
+            do_corr = cb_correlate.isChecked()
 
-                # Look for photon_selection_parameters.json in the Info folder
-                # First check if there's an Info folder in the parent directory
+            # Try to find setup name from photon_selection_parameters.json (shared for both actions)
+            setup_name = None
+            try:
+                bid_folder = Path(folder)
                 logging.info(f"Looking for setup name in {bid_folder}...")
                 info_folder = bid_folder.parent / "Info"
                 if not info_folder.exists():
-                    # Try looking for Info folder in the grandparent directory
                     info_folder = bid_folder.parent.parent / "Info"
                     logging.info(f"Looking for setup name in {info_folder}...")
-                
                 if info_folder.exists():
                     params_file = info_folder / "photon_selection_parameters.json"
                     if params_file.exists():
-                        try:
-                            with open(params_file, 'r') as f:
-                                params = json.load(f)
-                                setup_name = params.get("selected_setup")
-                                if setup_name:
-                                    logging.info(f"Found setup name '{setup_name}' in photon_selection_parameters.json")
-                        except Exception as e:
-                            logging.error(f"Error reading photon_selection_parameters.json: {e}")
-                
-                # Check if we can import MicrotimeHistogram
-                from chisurf.plugins.microtime_histogram.wizard import MicrotimeHistogram
-                
-                # Get or create the MicrotimeHistogram instance
-                histogram = MicrotimeHistogram.get_instance()
-                histogram.show()
-                histogram.raise_()  # Bring window to front
-                
-                # Load the BID folder in the existing instance
-                histogram.load_bid_folder(folder, setup_name=setup_name)
-                                    
+                        with open(params_file, 'r') as f:
+                            params = json.load(f)
+                            setup_name = params.get("selected_setup")
+                            if setup_name:
+                                logging.info(f"Found setup name '{setup_name}' in photon_selection_parameters.json")
             except Exception as e:
-                logging.error(f"Failed to launch microtime histogram plugin: {str(e)}")
-                # Show error message to user
-                QtWidgets.QMessageBox.warning(
-                    self,
-                    "Export Error",
-                    f"Failed to export to ChiSurf: {str(e)}"
-                )
+                logging.error(f"Error reading setup information: {e}")
+
+            if do_hist:
+                try:
+                    from chisurf.plugins.microtime_histogram.wizard import MicrotimeHistogram
+                    histogram = MicrotimeHistogram.get_instance()
+                    histogram.show()
+                    histogram.raise_()
+                    histogram.load_bid_folder(folder, setup_name=setup_name)
+                except Exception as e:
+                    logging.error(f"Failed to launch microtime histogram plugin: {str(e)}")
+                    QtWidgets.QMessageBox.warning(
+                        self,
+                        "Export Error",
+                        f"Failed to open Microtime Histogram: {str(e)}"
+                    )
+
+            if do_corr:
+                try:
+                    # Collect .bst files saved in the selected folder (and common subfolders)
+                    root = Path(folder)
+                    bst_files = set()
+                    # Typical direct save location
+                    bst_files.update(str(p.resolve()) for p in root.glob('*.bst'))
+                    # Common nested layouts (e.g., BID/ALL)
+                    for sub in [root / 'BID', root / 'BID' / 'ALL', root / 'ALL']:
+                        if sub.exists() and sub.is_dir():
+                            bst_files.update(str(p.resolve()) for p in sub.glob('*.bst'))
+                    # Fallback: recursive search (may be slower on large trees)
+                    if not bst_files:
+                        bst_files.update(str(p.resolve()) for p in root.rglob('*.bst'))
+
+                    bst_files = sorted(bst_files)
+                    if not bst_files:
+                        QtWidgets.QMessageBox.information(
+                            self,
+                            "No BST Files Found",
+                            "No .bst files were found in the selected folder."
+                        )
+                        return
+
+                    # Launch FCS Correlator Wizard preloaded with the BST files
+                    from chisurf.plugins.fcs_correlator.wizard import ChisurfFCSWizard
+                    # Parent the wizard to this window and keep a persistent reference to prevent GC
+                    wiz = ChisurfFCSWizard(self)
+                    self._fcs_correlator_wizard = wiz
+                    try:
+                        wiz.file_page.file_list.add_files(bst_files)
+                        # Ensure step availability reflects presence of BST files
+                        try:
+                            wiz.file_page._files_or_checks_changed()
+                        except Exception:
+                            pass
+                        # Optionally set working path in wizard
+                        try:
+                            wiz.lineEditWorkingPath.setText(str(root))
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        logging.debug(f"Preloading BST files into wizard failed: {e}")
+                    wiz.show()
+                    wiz.raise_()
+                except Exception as e:
+                    logging.error(f"Failed to launch FCS Correlator Wizard: {str(e)}")
+                    QtWidgets.QMessageBox.warning(
+                        self,
+                        "Launch Error",
+                        f"Failed to open FCS Correlator Wizard: {str(e)}"
+                    )
 
     def onSaveClusteringData(self, evt=None, folder=None):
         """
