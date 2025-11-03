@@ -40,8 +40,18 @@ def dict2pt(target, origin):
             iscolor = re.search(r'^#(?:[0-9a-fA-F]{3}){1,2}$', str(value))
             if iscolor:
                 type = 'color'
-            if type in ['float', 'int']:
-                d['dec'] = True  # adjust step size to parameter value
+            if type == 'float':
+                # Use adaptive stepping for floats; pyqtgraph SpinBox supports 'dec' and 'minStep'
+                d['dec'] = True  # enable decade-based adaptive step size
+                import math
+                av = abs(float(value))
+                # Choose a reasonable minimum step relative to current magnitude
+                min_step = 10 ** (math.floor(math.log10(av)) - 4)
+                d['minStep'] = min_step
+            elif type == 'int':
+                # Ensure integer stepping for integers
+                d['int'] = True
+                d['step'] = 1
             d['type'] = type
             d['value'] = value
             d['expanded'] = False

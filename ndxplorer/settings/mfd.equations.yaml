@@ -40,6 +40,14 @@
     'Sr(PIE)' / ('Sr(PIE)' + 'Sg(PIE)')
 - FRET efficiency(PIE): >-
     (1.+ 'Fd/Fa(PIE)' * 'PhiA' / 'PhiD')**(-1.0)
+- R_FRET(PIE): >-
+    'forster_radius' * (1. / 'FRET efficiency' - 1.)**(1./6.)
+- ratioA(PIE): >-
+    'Fr(PIE)'/ 'Fy(PIE)'
+- FRET efficiency_AA(PIE): >-
+    'ratioA(PIE)' / 'r'
+- R_FRET,AA(PIE): >-
+    'forster_radius' * (1. / 'FRET efficiency_AA(PIE)' - 1.)**(1./6.)
 - Sapp(PIE,S): >-
     ('Sr(PIE)' + 'Sg(PIE)') / ('Sr(PIE)' + 'Sy(PIE)' + 'Sg(PIE)')
 - Sapp(PIE,F): >-
@@ -56,6 +64,7 @@
     'Green Count Rate (KHz)' + 'Red Count Rate (KHz)'
 - 1/Sensitivity: >-
     1./(1. - 'FRET efficiency' * (1. - ('gG/gR' * 'PhiD' / 'PhiA')))
+
 # ---- ALEX-identified rates from counts (+ duration) ----
 - Sg(ALEX): >-
     'F_Dexc_Dem' / 'Tau' / 1.0e3
@@ -63,8 +72,6 @@
     'F_Dexc_Aem' / 'Tau' / 1.0e3
 - Sy(ALEX): >-
     'F_Aexc_Aem' / 'Tau' / 1.0e3  # acceptor-excitation acceptor-emission
-
-# (optional, available in your CSV; not used below but handy)
 - Sx(ALEX): >-
     'F_Aexc_Dem' / 'Tau' / 1.0e3  # acceptor-excitation donor-emission (usually leakage)
 
