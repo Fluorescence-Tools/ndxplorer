@@ -1484,7 +1484,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         global napari
         if napari is None:
             try:
-                import napari
+                import napari  # binds to the global due to the 'global napari' statement
                 logging.debug("Imported napari library")
                 return True
             except ImportError:
@@ -1492,6 +1492,96 @@ class NDXplorer(QtWidgets.QMainWindow):
                 logging.debug("napari library not available")
                 return False
         return True
+
+    def prompt_install_napari(self) -> bool:
+        """
+        Prompt the user to install napari into the current ChiSurf conda environment.
+        
+        Shows a warning explaining that napari is not shipped with ChiSurf and what napari is,
+        and that installing it may modify the environment and could require reinstalling ChiSurf
+        if conflicts occur.
+        
+        Returns:
+            bool: True if the user opted to install and installation succeeded, False otherwise.
+        """
+        # Describe napari and the risks
+        title = "Install napari (optional)"
+        text = (
+            "Napari is not shipped with ChiSurf.\n\n"
+            "napari is an open-source, multi-dimensional image viewer "
+            "commonly used for scientific image analysis.\n\n"
+            "You can install napari into the current ChiSurf conda environment using conda.\n\n"
+            "Warning: Installing additional packages can change the ChiSurf environment. "
+            "This may break your ChiSurf installation and could require reinstalling ChiSurf.\n\n"
+            "Do you want to install napari now via conda?"
+        )
+        msg = QtWidgets.QMessageBox(self)
+        msg.setIcon(QtWidgets.QMessageBox.Warning)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        install_btn = msg.addButton("Install via conda", QtWidgets.QMessageBox.AcceptRole)
+        cancel_btn = msg.addButton(QtWidgets.QMessageBox.Cancel)
+        msg.exec_()
+        if msg.clickedButton() is not install_btn:
+            return False
+
+        # Run installation
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            ok, err = self.install_napari_via_conda()
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        if ok:
+            QtWidgets.QMessageBox.information(
+                self,
+                "napari installed",
+                "napari was installed via conda.\n\n"
+                "If napari does not load immediately, please restart ChiSurf and try again."
+            )
+            return True
+        else:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Installation failed",
+                f"Could not install napari via conda.\n\nDetails:\n{err or 'Unknown error'}"
+            )
+            return False
+
+    def install_napari_via_conda(self) -> Tuple[bool, Optional[str]]:
+        """
+        Install napari into the current ChiSurf conda environment using conda.
+        
+        Returns:
+            (ok, error_message)
+        """
+        try:
+            # Import here to avoid hard dependency at import time
+            from chisurf.plugins.updater.updater import ChiSurfUpdater
+        except Exception as e:
+            logging.error(f"Could not import ChiSurfUpdater: {e}")
+            return False, f"Updater not available: {e}"
+
+        updater = ChiSurfUpdater()
+        conda_exe = updater._get_conda_executable()
+
+        # Prepare command: conda install -y --update-deps --prefix <env> napari -c conda-forge -c defaults
+        env_path = sys.prefix
+        channels = ["conda-forge", "defaults"]
+        cmd: List[str] = [
+            conda_exe, "install", "-y", "--update-deps", "--prefix", env_path, "napari"
+        ]
+        for ch in channels:
+            cmd.extend(["-c", ch])
+
+        # Run with elevation if needed (e.g., environment in Program Files)
+        needs_elev = updater._needs_elevation()
+        if needs_elev:
+            ok, err = updater._run_with_elevation(cmd)
+        else:
+            ok, err = updater._run_command(cmd)
+
+        return ok, err
         
     def send_to_napari(self):
         """
@@ -1512,12 +1602,20 @@ class NDXplorer(QtWidgets.QMainWindow):
         logging.debug(f"send_to_napari")
         # Check if napari is available
         if not self.is_napari_available():
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Napari Not Available",
-                "Napari is not installed. Please install it using pip or conda."
-            )
-            return
+            # Offer to install via conda using the ChiSurf updater mechanisms
+            installed = self.prompt_install_napari()
+            if not installed:
+                return
+            # Try to import again after installation
+            global napari
+            napari = None
+            if not self.is_napari_available():
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Napari Not Available",
+                    "napari could not be loaded even after installation. Please restart ChiSurf and try again."
+                )
+                return
             
         # Get the 2D histogram data
         if not hasattr(self, '_histogram') or '2d' not in self._histogram:
@@ -2794,8 +2892,77 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
         return bins
 
+    def is_data_ready(self) -> bool:
+        """Return True if data and axes are ready for histogram computation."""
+        try:
+            # Data source must not be empty and should have at least 3 parameter rows
+            if self._data_source is None or self._data_source.empty:
+                return False
+            values = self._data_source.values
+            if values is None or not hasattr(values, 'shape'):
+                return False
+            if values.shape[0] < 3:
+                return False
+            # Axis indices must be valid
+            p1 = getattr(self.plot_control, 'p1', (0, ''))[0]
+            p2 = getattr(self.plot_control, 'p2', (1, ''))[0]
+            p3 = getattr(self.plot_control, 'p3', (2, ''))[0]
+            nrows = values.shape[0]
+            if not (0 <= p1 < nrows and 0 <= p2 < nrows and 0 <= p3 < nrows):
+                return False
+            # Try accessing filtered values properties to ensure caches/filters are OK
+            _ = self.x_values
+            _ = self.y_values
+            _ = self.z_values
+            return True
+        except Exception:
+            return False
+
+    def are_bins_valid(self, bins) -> bool:
+        try:
+            if bins is None:
+                return False
+            b = np.asarray(bins)
+            if b.ndim != 1 or b.size < 2:
+                return False
+            # strictly increasing
+            return np.all(np.diff(b) > 0)
+        except Exception:
+            return False
+
+    def sanitize_bins(self, bins, data: np.ndarray, default_count: int = 50) -> np.ndarray:
+        """Ensure bins are a strictly increasing 1D array with at least 2 edges.
+        If not, rebuild from data extents or use [0, 1]."""
+        try:
+            if self.are_bins_valid(bins):
+                return np.asarray(bins)
+            # Build from data
+            if data is not None and len(data) > 0 and np.isfinite(data).any():
+                fd = data[np.isfinite(data)]
+                if fd.size == 0:
+                    return np.array([0.0, 1.0])
+                vmin = np.min(fd)
+                vmax = np.max(fd)
+                if not np.isfinite(vmin) or not np.isfinite(vmax):
+                    return np.array([0.0, 1.0])
+                if vmax == vmin:
+                    # Expand by small epsilon around single value
+                    eps = 1e-9 if vmin == 0 else abs(vmin) * 1e-9
+                    vmin -= eps
+                    vmax += eps
+                n = int(default_count) if default_count and default_count > 0 else 50
+                return np.linspace(vmin, vmax, n + 1)
+            # Fallback
+            return np.array([0.0, 1.0])
+        except Exception:
+            return np.array([0.0, 1.0])
+
     def update_histograms(self):
         logging.debug(f"update_histograms")
+        # Guard: skip if data/axes not ready
+        if not self.is_data_ready():
+            logging.info("Skipping update_histograms: data/axes not ready")
+            return
         # Check if we need to recompute histograms
         # We can skip recomputation if the data, bins, and weights haven't changed
         recompute_needed = True
@@ -2849,6 +3016,13 @@ class NDXplorer(QtWidgets.QMainWindow):
         y_bins_1d, y_bins_2d = self.get_y_bins()
         z_bins_1d, _ = self.get_z_bins()
 
+        # Sanitize bins to ensure they are strictly increasing
+        x_bins_1d = self.sanitize_bins(x_bins_1d, d1, default_count=getattr(self.plot_control, 'n_xhist_1d', 50))
+        y_bins_1d = self.sanitize_bins(y_bins_1d, d2, default_count=getattr(self.plot_control, 'n_yhist_1d', 50))
+        z_bins_1d = self.sanitize_bins(z_bins_1d, d3, default_count=getattr(self.plot_control, 'n_zhist_1d', 50))
+        x_bins_2d = self.sanitize_bins(x_bins_2d, d1, default_count=getattr(self.plot_control, 'n_xhist_2d', 50))
+        y_bins_2d = self.sanitize_bins(y_bins_2d, d2, default_count=getattr(self.plot_control, 'n_yhist_2d', 50))
+
         # Check if we should weight histograms by selected parameter
         weights = None
         if use_weights:
@@ -2894,7 +3068,9 @@ class NDXplorer(QtWidgets.QMainWindow):
                     if len(d1) > 0 and np.isfinite(d1).any():
                         valid_data = d1[np.isfinite(d1)]
                         if len(valid_data) > 1:
-                            auto_bins = np.linspace(np.min(valid_data), np.max(valid_data), self.plot_control.n_bins_1d + 1)
+                            # Derive a reasonable number of bins from current settings or defaults
+                            n = (len(x_bins_1d) - 1) if self.are_bins_valid(x_bins_1d) else int(getattr(self.plot_control, 'n_xhist_1d', 50))
+                            auto_bins = np.linspace(np.min(valid_data), np.max(valid_data), int(max(2, n)) + 1)
                             self._histogram["x"] = np.histogram(valid_data, bins=auto_bins, density=self.plot_control.normed_hist_x)[::-1]
                         else:
                             # Single value or no valid data - create minimal histogram
@@ -2924,7 +3100,8 @@ class NDXplorer(QtWidgets.QMainWindow):
                     if len(d2) > 0 and np.isfinite(d2).any():
                         valid_data = d2[np.isfinite(d2)]
                         if len(valid_data) > 1:
-                            auto_bins = np.linspace(np.min(valid_data), np.max(valid_data), self.plot_control.n_bins_1d + 1)
+                            n = (len(y_bins_1d) - 1) if self.are_bins_valid(y_bins_1d) else int(getattr(self.plot_control, 'n_yhist_1d', 50))
+                            auto_bins = np.linspace(np.min(valid_data), np.max(valid_data), int(max(2, n)) + 1)
                             self._histogram["y"] = np.histogram(valid_data, bins=auto_bins, density=self.plot_control.normed_hist_y)[::-1]
                         else:
                             # Single value or no valid data - create minimal histogram
@@ -2967,7 +3144,8 @@ class NDXplorer(QtWidgets.QMainWindow):
                         if len(d3) > 0 and np.isfinite(d3).any():
                             valid_data = d3[np.isfinite(d3)]
                             if len(valid_data) > 1:
-                                auto_bins = np.linspace(np.min(valid_data), np.max(valid_data), self.plot_control.n_bins_1d + 1)
+                                n = (len(z_bins_1d) - 1) if self.are_bins_valid(z_bins_1d) else int(getattr(self.plot_control, 'n_zhist_1d', 50))
+                                auto_bins = np.linspace(np.min(valid_data), np.max(valid_data), int(max(2, n)) + 1)
                                 self._histogram["z"] = np.histogram(valid_data, bins=auto_bins, density=self.plot_control.normed_hist_z)[::-1]
                             else:
                                 # Single value or no valid data - create minimal histogram
@@ -3167,7 +3345,13 @@ class NDXplorer(QtWidgets.QMainWindow):
                 # Return early to avoid updating the plots until clustering is done
                 return
 
-        # Update histograms
+        # Update histograms only if ready
+        if not self.is_data_ready():
+            logging.info("update_plots: data/axes not ready, skipping histogram update")
+            # Ensure background image state is consistent
+            if hasattr(self, 'bg_image_item') and self.bg_image_item is not None:
+                self.bg_image_item.setVisible(True)
+            return
         self.update_histograms()
         
         # Hide the background image when data is loaded
