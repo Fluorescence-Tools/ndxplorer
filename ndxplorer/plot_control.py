@@ -3,6 +3,7 @@ from typing import List, Dict
 import json
 import os
 import pathlib
+import math
 
 from qtpy import QtGui, uic, QtCore, QtWidgets
 from pyqtgraph.widgets.SpinBox import SpinBox
@@ -491,6 +492,33 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.horizontalLayout_3.addWidget(self.spinBoxZmin)
         self.horizontalLayout_3.addWidget(self.spinBoxZmax)
 
+        # Allow inline editing of selection numeric bounds in the table with single-click
+        # Keep double-click deletion as defined in the .ui (cellDoubleClicked -> actionSelectionTableClicked)
+        # React to edits in the selection table
+        try:
+            self.tableWidget.itemChanged.disconnect()
+        except Exception:
+            pass
+        self.tableWidget.itemChanged.connect(self.onSelectionItemChanged)
+        # Guard flag to prevent recursive updates during programmatic edits
+        self._block_selection_item_changed = False
+
+        # Use our own single-click edit behavior and preserve double-click for delete
+        self.tableWidget.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self._single_click_edit_timer = QtCore.QTimer(self)
+        self._single_click_edit_timer.setSingleShot(True)
+        self._single_click_edit_timer.timeout.connect(self._perform_pending_single_click_edit)
+        self._pending_edit_index = None
+        self.tableWidget.cellClicked.connect(self.onSelectionCellClicked)
+        self.tableWidget.cellDoubleClicked.connect(self.onSelectionCellDoubleClicked)
+
+        # Delete key removes selected selection rows
+        try:
+            shortcut_delete = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Delete), self.tableWidget)
+            shortcut_delete.activated.connect(self.onDeleteSelectionRows)
+        except Exception:
+            pass
+
         # Auto complete for selectors
         self.comboBoxSelX.completer().setCompletionMode(QtWidgets.QCompleter.PopupCompletion)
         self.comboBoxSelX.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
@@ -940,14 +968,14 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         table.setRowCount(row + 1)
 
         tmp = QtWidgets.QTableWidgetItem("%s" % name)
-        tmp.setFlags(QtCore.Qt.ItemIsEnabled)
+        tmp.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsEditable)
         tmp.setData(1, idx)
         table.setItem(row, 0, tmp)
 
         tmp = QtWidgets.QTableWidgetItem()
         tmp.setText(str(xmin))
-        tmp.setData(0, xmin)
-        tmp.setFlags(QtCore.Qt.ItemIsEnabled)
+        tmp.setData(0, float(xmin))
+        tmp.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsEditable)
         tmp.setForeground(QtGui.QBrush(QtGui.QColor(0, 0, 0)))
         tmp.setBackground(QtGui.QBrush(QtGui.QColor(255, 255, 255)))
         font = QtGui.QFont()
@@ -958,8 +986,8 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
         tmp = QtWidgets.QTableWidgetItem()
         tmp.setText(str(xmax))
-        tmp.setData(0, xmax)
-        tmp.setFlags(QtCore.Qt.ItemIsEnabled)
+        tmp.setData(0, float(xmax))
+        tmp.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsEditable)
         tmp.setForeground(QtGui.QBrush(QtGui.QColor(0, 0, 0)))
         tmp.setBackground(QtGui.QBrush(QtGui.QColor(255, 255, 255)))
         font = QtGui.QFont()
@@ -1117,3 +1145,184 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             )
         logging.log(0, f"get_selections: Retrieved {len(selections)} selections")
         return selections
+
+    def onSelectionItemChanged(self, item: QtWidgets.QTableWidgetItem):
+        """Allow inline editing of rectangular selection bounds and names.
+        - Column 0: name (editable)
+        - Column 1: lower bound (editable for rectangular selections)
+        - Column 2: upper bound (editable for rectangular selections)
+        Changing values triggers plot updates.
+        """
+        if getattr(self, "_block_selection_item_changed", False):
+            return
+        table = self.tableWidget
+        row = item.row()
+        col = item.column()
+        # If this row encodes a Gaussian2D selection, ignore bound edits (placeholders)
+        item0 = table.item(row, 0)
+        meta = None
+        try:
+            meta_raw = item0.data(32)
+            if meta_raw:
+                meta = json.loads(meta_raw)
+        except Exception:
+            meta = None
+        is_g2d = isinstance(meta, dict) and meta.get("type") == "G2D"
+
+        # Name edits: trigger update only
+        if col == 0:
+            self.parent.update_plots()
+            return
+
+        # Only columns 1 and 2 are numeric bounds for rectangular selections
+        if col not in (1, 2):
+            return
+        if is_g2d:
+            # Revert to stored numeric (keep placeholders) if accidentally made editable
+            try:
+                self._block_selection_item_changed = True
+                val = float(item.data(0) or 0.0)
+                item.setText(str(val))
+            finally:
+                self._block_selection_item_changed = False
+            return
+
+        # Parse the edited text as float
+        txt = item.text().strip()
+        try:
+            val = float(txt)
+        except Exception:
+            # Revert to previous value stored in data role 0
+            try:
+                self._block_selection_item_changed = True
+                prev = float(item.data(0)) if item.data(0) is not None else 0.0
+                item.setText(str(prev))
+            finally:
+                self._block_selection_item_changed = False
+            return
+
+        # Commit the numeric value
+        try:
+            self._block_selection_item_changed = True
+            item.setData(0, float(val))
+            # Enforce ordering lower <= upper by adjusting the sibling cell
+            lower_item = table.item(row, 1)
+            upper_item = table.item(row, 2)
+            try:
+                lower = float(lower_item.data(0)) if lower_item is not None else float("nan")
+            except Exception:
+                lower = float("nan")
+            try:
+                upper = float(upper_item.data(0)) if upper_item is not None else float("nan")
+            except Exception:
+                upper = float("nan")
+
+            if col == 1 and not math.isnan(upper) and val > upper:
+                upper_item.setData(0, float(val))
+                upper_item.setText(str(float(val)))
+            elif col == 2 and not math.isnan(lower) and val < lower:
+                lower_item.setData(0, float(val))
+                lower_item.setText(str(float(val)))
+        finally:
+            self._block_selection_item_changed = False
+
+        # Trigger plot update (only when data is ready)
+        if hasattr(self.parent, 'is_data_ready') and not self.parent.is_data_ready():
+            # If data isn't ready, revert numeric edits and skip replot
+            if col in (1, 2):
+                try:
+                    self._block_selection_item_changed = True
+                    prev = float(item.data(0)) if item.data(0) is not None else 0.0
+                    item.setText(str(prev))
+                finally:
+                    self._block_selection_item_changed = False
+                logging.info("Selection edit ignored: load data before editing selections.")
+            # For name edits (col 0), accept but skip replot
+            return
+        self.parent.update_plots()
+
+    def onDeleteSelectionRows(self):
+        """Delete selected selection rows using the Delete key."""
+        table = self.tableWidget
+        sel_model = table.selectionModel()
+        if sel_model is None:
+            return
+        rows = sorted({idx.row() for idx in sel_model.selectedIndexes()}, reverse=True)
+        if not rows:
+            return
+        for r in rows:
+            if 0 <= r < table.rowCount():
+                table.removeRow(r)
+        self.parent.update_plots()
+
+    def onSelectionCellClicked(self, row: int, col: int):
+        """Handle single-click on a cell to start inline editing after the
+        double-click interval has elapsed (so double-click can still delete).
+        """
+        # Store pending index for single-click editing
+        try:
+            model = self.tableWidget.model()
+            if model is None:
+                return
+            self._pending_edit_index = model.index(row, col)
+            # Start a timer equal to the system double-click interval
+            app = QtWidgets.QApplication.instance()
+            dci = app.doubleClickInterval() if app is not None else 250
+            self._single_click_edit_timer.start(int(dci))
+        except Exception:
+            # Fallback: start soon
+            self._single_click_edit_timer.start(200)
+
+    def onSelectionCellDoubleClicked(self, row: int, col: int):
+        """Cancel pending single-click edit when a double-click occurs.
+        The actual deletion is handled by the .ui connection to
+        actionSelectionTableClicked.
+        """
+        try:
+            if self._single_click_edit_timer.isActive():
+                self._single_click_edit_timer.stop()
+        except Exception:
+            pass
+        self._pending_edit_index = None
+
+    def _perform_pending_single_click_edit(self):
+        """If there is a pending single-click index, start editing it.
+        Only allow editing of rectangular selection fields:
+        - Column 0 (name) editable
+        - Columns 1 and 2 (lower/upper) editable
+        - For Gaussian2D rows, columns 1 and 2 are not editable.
+        """
+        index = getattr(self, "_pending_edit_index", None)
+        self._pending_edit_index = None
+        if index is None or not index.isValid():
+            return
+        row = index.row()
+        col = index.column()
+
+        # Determine if this row is G2D
+        item0 = self.tableWidget.item(row, 0)
+        meta = None
+        try:
+            meta_raw = item0.data(32)
+            if meta_raw:
+                meta = json.loads(meta_raw)
+        except Exception:
+            meta = None
+        is_g2d = isinstance(meta, dict) and meta.get("type") == "G2D"
+
+        # Permissions: name (col 0) always allowed for rectangular; G2D name not editable per flags
+        if col == 0:
+            # Try to edit if the item is editable by flags
+            it = self.tableWidget.item(row, col)
+            if it is not None and (it.flags() & QtCore.Qt.ItemIsEditable):
+                self.tableWidget.edit(index)
+            return
+
+        # Bounds columns 1 and 2: only for rectangular selections
+        if col in (1, 2) and not is_g2d:
+            it = self.tableWidget.item(row, col)
+            if it is not None and (it.flags() & QtCore.Qt.ItemIsEditable):
+                self.tableWidget.edit(index)
+            return
+        # Otherwise, do nothing (non-editable)
+        return

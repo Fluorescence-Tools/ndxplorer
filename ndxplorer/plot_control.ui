@@ -695,7 +695,7 @@
       </size>
      </property>
      <property name="title">
-      <string>Selection (Double click removes item)</string>
+      <string>Selection (Edit values; Delete key removes item)</string>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout">
       <property name="spacing">
