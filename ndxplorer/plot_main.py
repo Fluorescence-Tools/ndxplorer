@@ -1280,6 +1280,12 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.dockWidget_Equations.setVisible(False)
         self.update()
 
+        # Initialize UI enabled state based on current dataset
+        try:
+            self.update_ui_enabled_state()
+        except Exception:
+            pass
+
     def show_dataframe_editor(self):
         """
         Show the data in the data source using DataFrameEditor.
@@ -1484,102 +1490,88 @@ class NDXplorer(QtWidgets.QMainWindow):
         global napari
         if napari is None:
             try:
-                import napari  # binds to the global due to the 'global napari' statement
-                logging.debug("Imported napari library")
-                return True
+                import napari as _napari  # binds to the global due to the 'global napari' statement
+                napari = _napari
+                ver = getattr(napari, '__version__', 'unknown')
+                loc = getattr(napari, '__file__', 'unknown')
+                logging.debug(f"Imported napari library, version={ver}, path={loc}")
             except ImportError:
                 napari = None
-                logging.debug("napari library not available")
+                logging.debug("napari library not available (ImportError)")
                 return False
+            except Exception as e:
+                napari = None
+                logging.debug(f"napari import failed: {e}")
+                return False
+        # Validate that this looks like real napari we can use
+        if not hasattr(napari, 'Viewer'):
+            ver = getattr(napari, '__version__', 'unknown')
+            loc = getattr(napari, '__file__', 'unknown')
+            logging.debug(f"napari module imported but no Viewer attribute found (version={ver}, path={loc}). Treating as not available.")
+            napari = None
+            return False
         return True
 
     def prompt_install_napari(self) -> bool:
         """
-        Prompt the user to install napari into the current ChiSurf conda environment.
+        Prompt the user to install napari into the current ChiSurf environment (self-contained).
+        Uses ndxplorer.deps_installer to perform installation via conda or pip.
         
-        Shows a warning explaining that napari is not shipped with ChiSurf and what napari is,
-        and that installing it may modify the environment and could require reinstalling ChiSurf
-        if conflicts occur.
-        
-        Returns:
-            bool: True if the user opted to install and installation succeeded, False otherwise.
+        Returns True if napari is importable after the install.
         """
-        # Describe napari and the risks
-        title = "Install napari (optional)"
-        text = (
-            "Napari is not shipped with ChiSurf.\n\n"
-            "napari is an open-source, multi-dimensional image viewer "
-            "commonly used for scientific image analysis.\n\n"
-            "You can install napari into the current ChiSurf conda environment using conda.\n\n"
-            "Warning: Installing additional packages can change the ChiSurf environment. "
-            "This may break your ChiSurf installation and could require reinstalling ChiSurf.\n\n"
-            "Do you want to install napari now via conda?"
-        )
-        msg = QtWidgets.QMessageBox(self)
-        msg.setIcon(QtWidgets.QMessageBox.Warning)
-        msg.setWindowTitle(title)
-        msg.setText(text)
-        install_btn = msg.addButton("Install via conda", QtWidgets.QMessageBox.AcceptRole)
-        cancel_btn = msg.addButton(QtWidgets.QMessageBox.Cancel)
-        msg.exec_()
-        if msg.clickedButton() is not install_btn:
-            return False
-
-        # Run installation
-        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        logging.debug("prompt_install_napari")
+        # Import lazily to avoid hard dependency if module missing
         try:
-            ok, err = self.install_napari_via_conda()
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
-
-        if ok:
-            QtWidgets.QMessageBox.information(
-                self,
-                "napari installed",
-                "napari was installed via conda.\n\n"
-                "If napari does not load immediately, please restart ChiSurf and try again."
-            )
-            return True
-        else:
-            QtWidgets.QMessageBox.critical(
-                self,
-                "Installation failed",
-                f"Could not install napari via conda.\n\nDetails:\n{err or 'Unknown error'}"
-            )
+            from .deps_installer import ensure_package_gui
+        except Exception as e:
+            logging.error(f"deps_installer unavailable: {e}")
             return False
+
+        description = (
+            "Napari is not shipped with ChiSurf.\n\n"
+            "napari is an open-source, multi-dimensional image viewer commonly used for scientific image analysis."
+        )
+        ok = ensure_package_gui(
+            parent=self,
+            package='napari',
+            import_name='napari',
+            description=description,
+            allow_pip=True,
+            channels=['conda-forge', 'defaults']
+        )
+        return ok
 
     def install_napari_via_conda(self) -> Tuple[bool, Optional[str]]:
         """
-        Install napari into the current ChiSurf conda environment using conda.
-        
-        Returns:
-            (ok, error_message)
+        Install napari into the current ChiSurf environment using the self-contained
+        deps_installer (no ChiSurfUpdater dependency). Kept for backward compatibility
+        with existing code paths.
+
+        Returns: (ok, error_message)
         """
+        logging.info("Starting napari installation via deps_installer (conda)")
         try:
-            # Import here to avoid hard dependency at import time
-            from chisurf.plugins.updater.updater import ChiSurfUpdater
+            from .deps_installer import conda_install, try_import, find_conda_executable
         except Exception as e:
-            logging.error(f"Could not import ChiSurfUpdater: {e}")
-            return False, f"Updater not available: {e}"
+            logging.error(f"deps_installer not available: {e}")
+            return False, str(e)
 
-        updater = ChiSurfUpdater()
-        conda_exe = updater._get_conda_executable()
+        logging.info(f"Python: {sys.executable}")
+        logging.info(f"sys.prefix (target env): {sys.prefix}")
+        logging.info(f"CONDA_PREFIX: {os.environ.get('CONDA_PREFIX', '')}")
+        logging.info(f"Detected conda executable: {find_conda_executable()}")
 
-        # Prepare command: conda install -y --update-deps --prefix <env> napari -c conda-forge -c defaults
-        env_path = sys.prefix
-        channels = ["conda-forge", "defaults"]
-        cmd: List[str] = [
-            conda_exe, "install", "-y", "--update-deps", "--prefix", env_path, "napari"
-        ]
-        for ch in channels:
-            cmd.extend(["-c", ch])
+        ok, err = conda_install(['napari'], channels=['conda-forge', 'defaults'], update_deps=True)
 
-        # Run with elevation if needed (e.g., environment in Program Files)
-        needs_elev = updater._needs_elevation()
-        if needs_elev:
-            ok, err = updater._run_with_elevation(cmd)
-        else:
-            ok, err = updater._run_command(cmd)
+        # Post-install diagnostics
+        try:
+            _ok_imp, _err_imp = try_import('napari')
+            if _ok_imp:
+                logging.info("napari import test succeeded after installation")
+            else:
+                logging.warning(f"napari import test failed after installation: {_err_imp}")
+        except Exception as diag_e:
+            logging.warning(f"Post-install diagnostics encountered an error: {diag_e}")
 
         return ok, err
         
@@ -1602,7 +1594,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         logging.debug(f"send_to_napari")
         # Check if napari is available
         if not self.is_napari_available():
-            # Offer to install via conda using the ChiSurf updater mechanisms
+            # Offer to install via conda/pip using the self-contained installer
             installed = self.prompt_install_napari()
             if not installed:
                 return
@@ -1630,11 +1622,42 @@ class NDXplorer(QtWidgets.QMainWindow):
         y_label = self.plot_control.y_label if hasattr(self.plot_control, 'y_label') else "Y"
         weight_label = self.plot_control.weight_parameter
         
-        # Create a napari viewer if one doesn't exist
-        viewer = napari.current_viewer()
+        # Create or obtain a napari viewer (compatible across napari versions)
+        try:
+            ver = getattr(napari, '__version__', 'unknown')
+            logging.info(f"Using napari version: {ver}")
+        except Exception:
+            pass
+
+        viewer = None
+        try:
+            current_viewer_fn = getattr(napari, 'current_viewer', None)
+            if callable(current_viewer_fn):
+                viewer = current_viewer_fn()
+        except Exception as e:
+            logging.debug(f"napari.current_viewer() not usable: {e}")
+
         if viewer is None:
-            viewer = napari.Viewer()
-            
+            # Fallback: create a new viewer
+            if not hasattr(napari, 'Viewer'):
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Napari Viewer Unavailable",
+                    "The installed napari does not expose a Viewer API compatible with this feature.\n"
+                    "Please update napari (e.g., via conda-forge) and try again."
+                )
+                return
+            try:
+                viewer = napari.Viewer()
+            except Exception as e:
+                logging.warning(f"Failed to create napari.Viewer(): {e}")
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Could not open Napari",
+                    f"Napari is installed, but the viewer could not be created.\n\nDetails:\n{e}"
+                )
+                return
+
         # Add the image as a new layer
         viewer.add_image(
             hist_data,
@@ -2692,6 +2715,87 @@ class NDXplorer(QtWidgets.QMainWindow):
         )
         self.lineEditCountTotal.setText(str(self.data_source.size))
         self.plot_control.update()  # plot_control.update() - also updates plots
+        # Keep UI enabled/disabled state in sync if someone calls update() directly
+        try:
+            self.update_ui_enabled_state()
+        except Exception:
+            pass
+
+    def update_ui_enabled_state(self) -> None:
+        """
+        Enable/disable most of the UI when there is no dataset loaded.
+        Only data-loading actions remain enabled in the disabled state.
+        Rules:
+        - When no dataset: disable docks, plots, analysis actions and tool buttons.
+          Keep only file-open actions (CSV, ChiSurf sampling, MFD HDF5, Paris dataset)
+          and working path selection enabled so the user can load data.
+        - When dataset present: enable everything.
+        """
+        try:
+            has_data = bool(getattr(self, "_data_source", None) is not None and not self._data_source.empty)
+        except Exception:
+            has_data = False
+
+        # Whitelist of actions that are allowed even when no data is loaded
+        allowed_when_empty = {
+            "actionSelect_working_path",
+            "actionOpenCsv",
+            "actionOpenChiSurfSampling",
+            "actionOpenMfdHdf5",
+            "actionOpenParisDataset",
+        }
+
+        # Toggle all QAction members
+        for name in dir(self):
+            if not name.startswith("action"):
+                continue
+            try:
+                act = getattr(self, name)
+                # QAction has setEnabled; use duck typing
+                if hasattr(act, "setEnabled"):
+                    enable = has_data or (name in allowed_when_empty)
+                    act.setEnabled(bool(enable))
+            except Exception:
+                pass
+
+        # Toggle key dock widgets (disable content interactions when no data)
+        for dock_name in [
+            "dockWidget_PlotControl",
+            "dockWidget_Parameters",
+            "dockWidget_Overlays",
+            "dockWidget_Fit",
+            "dockWidget_Equations",
+        ]:
+            try:
+                dock = getattr(self, dock_name, None)
+                if dock is not None and hasattr(dock, "setEnabled"):
+                    dock.setEnabled(bool(has_data))
+            except Exception:
+                pass
+
+        # Toggle commonly used tool buttons and widgets
+        for w_name in [
+            "toolButton_screenshot",
+            "toolButton_AutoContrast",
+            "toolButton_3",  # DataFrame editor
+            "toolButton_parameter_save",
+            "comboBoxWeight",
+            "checkBoxWeight",
+            "checkBoxEnableZ",
+        ]:
+            try:
+                w = getattr(self, w_name, None)
+                if w is not None and hasattr(w, "setEnabled"):
+                    w.setEnabled(bool(has_data))
+            except Exception:
+                pass
+
+        # Keep the file/working-path widgets usable without data
+        try:
+            if hasattr(self, "lineEditWorkingPath") and self.lineEditWorkingPath is not None:
+                self.lineEditWorkingPath.setEnabled(True)
+        except Exception:
+            pass
 
     def apply_fonts(self):
         """
@@ -3644,35 +3748,47 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Check if the required library is available
         if cluster_method == "hdbscan":
-            # Lazy import of hdbscan
-            global hdbscan
-            if hdbscan is None:
+            # Try lazy import first
+            from .lazy_imports import get_hdbscan
+            if get_hdbscan() is None:
+                # Offer to install hdbscan
                 try:
-                    import hdbscan
-                    logging.debug("Imported hdbscan library")
-                except ImportError:
-                    hdbscan = None
+                    from .deps_installer import ensure_package_gui
+                    desc = (
+                        "HDBSCAN is a density-based clustering algorithm useful for finding clusters "
+                        "of varying densities and shapes."
+                    )
+                    installed = ensure_package_gui(
+                        parent=self,
+                        package='hdbscan',
+                        import_name='hdbscan',
+                        description=desc,
+                        allow_pip=True,
+                        channels=['conda-forge', 'defaults']
+                    )
+                except Exception as _e:
+                    installed = False
+                    logging.warning(f"Could not run installer for hdbscan: {_e}")
 
-            if not hdbscan:
-                QtWidgets.QMessageBox.warning(
-                    self,
-                    "HDBSCAN Not Available",
-                    "HDBSCAN is not installed. Please install it using pip or conda."
-                )
-                if self.clustering_dialog is not None:
-                    self.clustering_dialog.checkBoxClustering.setChecked(False)
-                return
-        elif cluster_method == "kmeans":
-            # Lazy import of KMeans
-            global KMeans
-            if KMeans is None:
-                try:
-                    from sklearn.cluster import KMeans
-                    logging.debug("Imported KMeans library")
-                except ImportError:
-                    KMeans = None
-
-            if not KMeans:
+                if not installed:
+                    if self.clustering_dialog is not None:
+                        self.clustering_dialog.checkBoxClustering.setChecked(False)
+                    return
+                # Retry import
+                if get_hdbscan() is None:
+                    QtWidgets.QMessageBox.information(
+                        self,
+                        "HDBSCAN Installed",
+                        "HDBSCAN was installed but could not be imported immediately.\n"
+                        "Please restart ChiSurf and try again."
+                    )
+                    if self.clustering_dialog is not None:
+                        self.clustering_dialog.checkBoxClustering.setChecked(False)
+                    return
+        elif cluster_method == "kmeans": 
+            # Lazy import via centralized getter
+            from .lazy_imports import get_kmeans
+            if get_kmeans() is None:
                 QtWidgets.QMessageBox.warning(
                     self,
                     "scikit-learn Not Available",
@@ -4131,11 +4247,9 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         logging.info(f"Adding UMAP columns to dataframe using columns: {columns}")
         
-        # Check if UMAP is available
-        try:
-            import umap as _umap
-            logging.info("Imported umap library")
-        except ImportError:
+        # Check if UMAP is available lazily
+        from .lazy_imports import get_umap
+        if get_umap() is None:
             logging.error("UMAP is not installed. Cannot perform UMAP transformation.")
             return False
 
