@@ -3,16 +3,8 @@ import numpy as np
 import pandas as pd
 import logging
 
-# Delay imports of heavy libraries
-hdbscan = None
-umap = None
-
-try:
-    from sklearn.cluster import KMeans as _KMeans
-    logging.info("Imported KMeans library")
-except ImportError:
-    logging.error("scikit-learn is not installed. Cannot perform clustering.")
-
+# Delay imports via centralized getters
+from .lazy_imports import get_kmeans, get_hdbscan
 
 from qtpy.QtCore import QThread, Signal
 
@@ -189,11 +181,9 @@ class ClusteringManager:
                     return None, None
 
             if method == "hdbscan":
-                # Lazy import of hdbscan
-                try:
-                    import hdbscan as _hdbscan
-                    logging.info("Imported hdbscan library")
-                except ImportError:
+                # Lazy import of hdbscan via getter
+                _hdbscan = get_hdbscan()
+                if _hdbscan is None:
                     logging.error("HDBSCAN is not installed. Cannot perform clustering.")
                     return None, None
 
@@ -228,8 +218,13 @@ class ClusteringManager:
                 full_probabilities[mask] = probabilities
 
             elif method == "kmeans":
+                # Lazy import KMeans class
+                KMeansCls = get_kmeans()
+                if KMeansCls is None:
+                    logging.error("scikit-learn KMeans not available. Install with: pip install scikit-learn")
+                    return None, None
                 # Create and fit the K-means clusterer
-                clusterer = _KMeans(
+                clusterer = KMeansCls(
                     n_clusters=n_clusters,
                     random_state=42  # For reproducibility
                 )

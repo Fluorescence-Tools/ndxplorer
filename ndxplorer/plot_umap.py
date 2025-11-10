@@ -52,22 +52,37 @@ def create_umap_plot(parent, columns: Set[str], params: Dict[str, Any],
     """
     logging.log(0, f"Creating UMAP plot with params: {params}")
 
-    # Lazy import of umap
-    try:
-        import umap as _umap
-        logging.info("Imported umap library")
-        _umap_available = True
-    except ImportError:
-        _umap_available = False
-
-    # Check if UMAP is available
-    if not _umap_available:
-        QtWidgets.QMessageBox.warning(
-            parent,
-            "UMAP Not Available",
-            "UMAP is not installed. Please install it using pip or conda."
-        )
-        return
+    # Lazy import of umap via centralized getter; offer installation if missing
+    from .lazy_imports import get_umap
+    if get_umap() is None:
+        try:
+            from .deps_installer import ensure_package_gui
+            desc = (
+                "UMAP (Uniform Manifold Approximation and Projection) is a dimensionality "
+                "reduction technique used to project high-dimensional data into 2D/3D for visualization."
+            )
+            installed = ensure_package_gui(
+                parent=parent,
+                package='umap-learn',
+                import_name='umap',
+                description=desc,
+                allow_pip=True,
+                channels=['conda-forge', 'defaults']
+            )
+        except Exception as _e:
+            installed = False
+            logging.warning(f"Could not run installer for umap-learn: {_e}")
+        if not installed:
+            return
+        # Retry import after installation
+        if get_umap() is None:
+            QtWidgets.QMessageBox.information(
+                parent,
+                "UMAP Installed",
+                "UMAP (umap-learn) was installed but could not be imported immediately.\n"
+                "Please restart ChiSurf and try again."
+            )
+            return
 
     # Store the UMAP windows as instance variables to prevent garbage collection
     if not hasattr(parent, 'umap_windows'):

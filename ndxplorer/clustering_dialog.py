@@ -5,10 +5,8 @@ Supports keyboard navigation:
 """
 from qtpy.QtCore import Signal
 
-# Delay imports of heavy libraries
-hdbscan = None
-KMeans = None
-umap = None
+# Lazy-import helpers for heavy libraries
+from .lazy_imports import get_umap, get_kmeans, get_hdbscan
 
 from .logging_config import logging
 
@@ -19,13 +17,6 @@ except ImportError:
     from qtpy import QtGui, QtWidgets
 
 from .column_selection_dialog import ColumnSelectionDialog
-
-_umap_available = True
-try:
-    import umap as _umap
-    logging.info("Imported umap library")
-except ImportError:
-    _umap_available = False
 
 
 class ClusteringDialog(QtWidgets.QDialog):
@@ -440,31 +431,44 @@ class ClusteringDialog(QtWidgets.QDialog):
         logging.log(0, f"Applying clustering with method: {self._cluster_method}, columns: {self._cluster_columns}")
         # Check if the required library is available
         if self._cluster_method == "hdbscan":
-            # Lazy import of hdbscan
-            import hdbscan
-
-            if not hdbscan:
+            # Ensure hdbscan is available; offer to install if missing
+            if get_hdbscan() is None:
+                try:
+                    from .deps_installer import ensure_package_gui
+                    desc = (
+                        "HDBSCAN is a density-based clustering algorithm useful for finding clusters "
+                        "of varying densities and shapes."
+                    )
+                    installed = ensure_package_gui(
+                        parent=QtWidgets.QApplication.activeWindow(),
+                        package='hdbscan',
+                        import_name='hdbscan',
+                        description=desc,
+                        allow_pip=True,
+                        channels=['conda-forge', 'defaults']
+                    )
+                except Exception as _e:
+                    installed = False
+                    logging.warning(f"Could not run installer for hdbscan: {_e}")
+                if not installed:
+                    return
+                # Retry import after installation
+                if get_hdbscan() is None:
+                    QtWidgets.QMessageBox.information(
+                        QtWidgets.QApplication.activeWindow(),
+                        "HDBSCAN Installed",
+                        "HDBSCAN was installed but could not be imported immediately.\n"
+                        "Please restart ChiSurf and try again."
+                    )
+                    return
+        elif self._cluster_method == "kmeans":
+            # Lazy import via centralized getter
+            if get_kmeans() is None:
                 QtWidgets.QMessageBox.warning(
                     QtWidgets.QApplication.activeWindow(),
-                    "HDBSCAN Not Available",
-                    "HDBSCAN is not installed. Please install it using pip or conda."
+                    "scikit-learn Not Available",
+                    "scikit-learn is not installed. Please install it using pip or conda."
                 )
-                return
-        elif self._cluster_method == "kmeans":
-            # Lazy import of KMeans
-            try:
-                from sklearn.cluster import KMeans as _KMeans
-                logging.info("Imported KMeans library")
-                _kmeans_available = True
-            except ImportError:
-                _kmeans_available = False
-
-            if not _kmeans_available:
-                QtWidgets.QMessageBox.warning(
-                QtWidgets.QApplication.activeWindow(),
-                "scikit-learn Not Available",
-                "scikit-learn is not installed. Please install it using pip or conda."
-            )
                 return
 
         # Check if any columns are selected for clustering
@@ -545,15 +549,37 @@ class ClusteringDialog(QtWidgets.QDialog):
         Compute UMAP columns and add them to the dataframe.
         """
         logging.log(0, "Computing UMAP columns")
-
-        # Check if UMAP is available
-        if not _umap_available:
-            QtWidgets.QMessageBox.warning(
-                QtWidgets.QApplication.activeWindow(),
-                "UMAP Not Available",
-                "UMAP is not installed. Please install it using pip or conda."
-            )
-            return
+        
+        # Check if UMAP is available lazily
+        if get_umap() is None:
+            try:
+                from .deps_installer import ensure_package_gui
+                desc = (
+                    "UMAP (Uniform Manifold Approximation and Projection) is a dimensionality "
+                    "reduction technique used to project high-dimensional data into 2D/3D for visualization."
+                )
+                installed = ensure_package_gui(
+                    parent=QtWidgets.QApplication.activeWindow(),
+                    package='umap-learn',
+                    import_name='umap',
+                    description=desc,
+                    allow_pip=True,
+                    channels=['conda-forge', 'defaults']
+                )
+            except Exception as _e:
+                installed = False
+                logging.warning(f"Could not run installer for umap-learn: {_e}")
+            if not installed:
+                return
+            # Retry import after installation
+            if get_umap() is None:
+                QtWidgets.QMessageBox.information(
+                    QtWidgets.QApplication.activeWindow(),
+                    "UMAP Installed",
+                    "UMAP (umap-learn) was installed but could not be imported immediately.\n"
+                    "Please restart ChiSurf and try again."
+                )
+                return
 
         # Require at least two columns to be selected for UMAP
         if not self._cluster_columns or len(self._cluster_columns) < 2:
@@ -602,12 +628,12 @@ class ClusteringDialog(QtWidgets.QDialog):
         """
         logging.log(0, "Creating UMAP plot")
 
-        # Check if UMAP is available
-        if not _umap_available:
+        # Check if UMAP is available lazily
+        if get_umap() is None:
             QtWidgets.QMessageBox.warning(
                 QtWidgets.QApplication.activeWindow(),
                 "UMAP Not Available",
-                "UMAP is not installed. Please install it using pip or conda."
+                "UMAP is not installed. Please install it using pip or conda (package: umap-learn)."
             )
             return
 
