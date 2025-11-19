@@ -704,149 +704,32 @@ def install_with_progress(parent, packages: List[str], channels: Optional[List[s
     return ok, err
 
 
-def ensure_package_gui(parent, package: str, import_name: Optional[str], description: str,
-                       allow_pip: bool = True, channels: Optional[List[str]] = None) -> bool:
+def handle_import_error(package_name: str, parent=None) -> None:
     """
-    Ensure a package is available by prompting the user to install it.
-
-    - Adds a persistent counter for how many times "pip" was used.
-    - After the counter reaches a threshold, the Pip option is shown but disabled (grayed out).
-      This helps avoid mixing pip/conda too often in the same environment.
-
-    You can control behavior via environment variables:
-      - NDXPL_PIP_DISABLE_THRESHOLD: integer number of pip uses after which pip is disabled (default: 2)
-      - NDXPL_RESET_PIP_COUNT=1: resets the counter at next prompt
-
-    Returns True if the package appears importable afterwards, False otherwise.
+    General handler for ImportError exceptions on conda-installable packages.
+    Shows a dialog directing the user to ChiSurf's Package Manager.
+    
+    This can be called from except ImportError blocks throughout ChiSurf code
+    to provide consistent user guidance for missing optional packages.
+    
+    Args:
+        package_name: Name of the package that failed to import
+        parent: Parent widget for the dialog (optional)
     """
-    if import_name is None:
-        import_name = package
-
     if QtWidgets is None or QtCore is None:
-        logging.warning("Qt not available; cannot prompt user for installation.")
-        return False
-
-    # QSettings for persistent pip usage counter
-    try:
-        settings = QtCore.QSettings("ChiSurf", "NDXplorer")
-    except Exception:
-        settings = None
-
-    # Handle optional reset
-    try:
-        if os.environ.get("NDXPL_RESET_PIP_COUNT", "0") in ("1", "true", "True") and settings is not None:
-            settings.remove("deps_installer/pip_usage_count")
-            settings.sync()
-            logging.debug("deps_installer: pip usage counter reset via NDXPL_RESET_PIP_COUNT")
-    except Exception:
-        pass
-
-    # Read current count and threshold
-    pip_count = 0
-    if settings is not None:
-        try:
-            pip_count = int(settings.value("deps_installer/pip_usage_count", 0))
-        except Exception:
-            pip_count = 0
-    try:
-        pip_threshold = int(os.environ.get("NDXPL_PIP_DISABLE_THRESHOLD", "2"))
-    except Exception:
-        pip_threshold = 2
-
-    # Detect preferred solver for label text
-    solver_exe, solver_name = choose_solver()
-
-    # Compose message text, possibly with pip-disabled note
-    title = f"Install {package} (optional)"
+        logging.warning(f"Package '{package_name}' not available. Please use ChiSurf's Package Manager to install it.")
+        return
+    
+    title = f"Package {package_name} not available"
     text = (
-        f"{description}\n\n"
-        f"{RISK_NOTE}\n\n"
-        f"Do you want to install {package} now?"
+        f"The package '{package_name}' is required but not installed.\n\n"
+        f"Please use ChiSurf's Package Manager (available in Help > Updates and Packages > Package Manager) "
+        f"to install the '{package_name}' package."
     )
-
-    pip_disabled = allow_pip and (pip_count >= pip_threshold)
-    if pip_disabled:
-        text += (
-            "\n\nNote: The 'pip' option is disabled because it was used multiple times "
-            f"({pip_count} ≥ {pip_threshold}). This is to reduce the risk of breaking the conda environment. "
-            "You can re-enable it by increasing the threshold via 'NDXPL_PIP_DISABLE_THRESHOLD' or reset the counter "
-            "with 'NDXPL_RESET_PIP_COUNT=1'."
-        )
-
+    
     msg = QtWidgets.QMessageBox(parent)
-    msg.setIcon(QtWidgets.QMessageBox.Warning)
+    msg.setIcon(QtWidgets.QMessageBox.Information)
     msg.setWindowTitle(title)
     msg.setText(text)
-    conda_label = f"Install via {solver_name}"
-    conda_btn = msg.addButton(conda_label, QtWidgets.QMessageBox.AcceptRole)
-
-    pip_btn = None
-    if allow_pip:
-        pip_btn = msg.addButton("Install via pip", QtWidgets.QMessageBox.AcceptRole)
-        if pip_disabled and pip_btn is not None:
-            try:
-                pip_btn.setEnabled(False)
-                pip_btn.setToolTip(
-                    f"Disabled after {pip_count} pip installs (threshold {pip_threshold}).\n"
-                    "Set NDXPL_PIP_DISABLE_THRESHOLD to a higher value or NDXPL_RESET_PIP_COUNT=1 to reset."
-                )
-            except Exception:
-                pass
-
-    cancel_btn = msg.addButton(QtWidgets.QMessageBox.Cancel)
-
-    logging.debug(
-        f"deps_installer: pip_count={pip_count}, pip_threshold={pip_threshold}, pip_disabled={pip_disabled}, solver={solver_name} ({solver_exe})"
-    )
-
+    msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
     msg.exec_()
-
-    clicked = msg.clickedButton()
-    if clicked is None or clicked is cancel_btn:
-        logging.info(f"User cancelled installation of {package}")
-        return False
-
-    # Perform selected install with live progress dialog
-    if clicked is conda_btn or (pip_btn is not None and not pip_btn.isEnabled() and clicked is pip_btn):
-        # If user somehow clicked the disabled pip button, treat as cancel/conda safeguard
-        if clicked is pip_btn and pip_btn is not None and not pip_btn.isEnabled():
-            QtWidgets.QMessageBox.information(
-                parent,
-                "Pip disabled",
-                "The 'pip' option is currently disabled to protect the environment."
-            )
-            return False
-        logging.info(f"User chose {solver_name} install for {package}")
-        ok, err = install_with_progress(parent, packages=[package], channels=channels, use_pip=False)
-    else:
-        # Pip chosen: increment counter before running
-        try:
-            if settings is not None:
-                new_count = pip_count + 1
-                settings.setValue("deps_installer/pip_usage_count", new_count)
-                settings.sync()
-                logging.debug(f"deps_installer: pip usage counter incremented -> {new_count}")
-        except Exception:
-            pass
-        logging.info(f"User chose pip install for {package}")
-        ok, err = install_with_progress(parent, packages=[package], channels=channels, use_pip=True)
-
-    if not ok:
-        QtWidgets.QMessageBox.critical(
-            parent,
-            "Installation failed",
-            f"Could not install {package}.\n\nDetails:\n{err or 'Unknown error'}"
-        )
-        return False
-
-    # Try import test
-    ok_imp, err_imp = try_import(import_name)
-    if not ok_imp:
-        QtWidgets.QMessageBox.information(
-            parent,
-            f"{package} installed",
-            f"{package} was installed but could not be imported immediately.\n"
-            f"Please restart ChiSurf and try again.\n\nDetails: {err_imp}"
-        )
-        return False
-    return True
