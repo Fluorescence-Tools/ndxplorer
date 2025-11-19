@@ -28,7 +28,7 @@ def get_umap():
         logging.debug("lazy_imports: umap imported on demand")
     except Exception:
         __umap = None
-        logging.info("UMAP not available. Install with: pip install umap-learn")
+        logging.debug("UMAP not available")
     return __umap
 
 
@@ -42,7 +42,7 @@ def get_kmeans():
         logging.debug("lazy_imports: sklearn KMeans imported on demand")
     except Exception:
         __kmeans_cls = None
-        logging.info("scikit-learn not available. Install with: pip install scikit-learn")
+        logging.debug("scikit-learn not available")
     return __kmeans_cls
 
 
@@ -56,7 +56,7 @@ def get_gmm():
         logging.debug("lazy_imports: sklearn GaussianMixture imported on demand")
     except Exception:
         __gmm_cls = None
-        logging.info("scikit-learn not available. Install with: pip install scikit-learn")
+        logging.debug("scikit-learn not available")
     return __gmm_cls
 
 
@@ -70,7 +70,7 @@ def get_hdbscan():
         logging.debug("lazy_imports: hdbscan imported on demand")
     except Exception:
         __hdbscan = None
-        logging.info("HDBSCAN not available. Install with: pip install hdbscan")
+        logging.debug("HDBSCAN not available")
     return __hdbscan
 
 
@@ -84,5 +84,5 @@ def get_napari():
         logging.debug("lazy_imports: napari imported on demand")
     except Exception:
         __napari = None
-        logging.info("napari not available. Install with: pip install napari")
+        logging.debug("napari not available")
     return __napari

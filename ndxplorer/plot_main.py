@@ -1529,7 +1529,8 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         description = (
             "Napari is not shipped with ChiSurf.\n\n"
-            "napari is an open-source, multi-dimensional image viewer commonly used for scientific image analysis."
+            "napari is an open-source, multi-dimensional image viewer commonly used for scientific image analysis.\n\n"
+            "Please use the Package Manager to install napari."
         )
         ok = ensure_package_gui(
             parent=self,
