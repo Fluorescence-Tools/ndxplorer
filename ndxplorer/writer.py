@@ -5,8 +5,8 @@ from .logging_config import logging
 import numpy as np
 import json
 import pandas as pd
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel, QApplication
-from PyQt5.QtCore import Qt, QCoreApplication
+from qtpy.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel, QApplication
+from qtpy.QtCore import Qt, QCoreApplication
 from .data_source import DataSource, DataSelection
 
 

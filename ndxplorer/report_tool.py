@@ -9,8 +9,8 @@ import shutil
 import stat
 import time
 
-from PyQt5 import QtWidgets, QtCore
-from PyQt5.QtGui import QIcon, QPixmap, QColor, QBrush
+from qtpy import QtWidgets, QtCore
+from qtpy.QtGui import QIcon, QPixmap, QColor, QBrush
 
 from . import reader
 from .plot_main import NDXplorer
