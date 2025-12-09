@@ -499,7 +499,7 @@ class DataSource:
         # Lazy import to avoid hard dependency on Qt in headless environments
         def _warn(title: str, msg: str) -> None:
             try:
-                from PyQt5.QtWidgets import QMessageBox  # type: ignore
+                from qtpy.QtWidgets import QMessageBox  # type: ignore
                 QMessageBox.warning(None, title, msg)
             except Exception:
                 print(f"[merge:{title}] {msg}", file=sys.stderr)

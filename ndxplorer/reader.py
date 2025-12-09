@@ -9,6 +9,7 @@ import zipfile
 import io
 import shutil
 import re
+import json
 
 import numpy as np
 import pandas as pd
@@ -20,9 +21,10 @@ except Exception:  # pragma: no cover
     import logging  # type: ignore
 
 from .data_source import DataSource
+from .settings import get_settings_path, ensure_default_settings
 
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel, QApplication, QMessageBox
-from PyQt5.QtCore import Qt, QCoreApplication
+from qtpy.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel, QApplication, QMessageBox
+from qtpy.QtCore import Qt, QCoreApplication
 
 
 """
@@ -49,6 +51,8 @@ _WIN_NINF_RE = re.compile(r'^\s*-(?:\d*\.)?#INF\d*(?:e[+-]?\d+)?\s*$', re.IGNORE
 
 _TEXT_EXTS = (".bur", ".csv", ".txt", ".dat")
 _HDF5_EXTS = (".h5", ".hdf5")
+
+_DEFAULT_BURST_EXTRA_ENDINGS: List[str] = ["bg4", "br4", "by4", "bv4", "td4"]
 
 # ----------------------------- utils -----------------------------------------
 
@@ -78,6 +82,53 @@ class ProgressWindow(QDialog):
         self.progress_bar.setValue(value)
 
 
+def _get_burst_additional_endings() -> List[str]:
+    """Return extra burst-result endings from settings, with a safe default.
+
+    Reads ``burst_additional_endings`` from ``mfd.settings.json`` in the
+    ndxplorer settings folder. Falls back to ``_DEFAULT_BURST_EXTRA_ENDINGS``
+    on any error or if the key is missing/invalid.
+    """
+
+    endings: Optional[List[str]] = None
+
+    try:
+        # Ensure default settings exist and resolve the settings path
+        try:
+            ensure_default_settings()
+        except Exception:
+            pass
+
+        settings_path = None
+        try:
+            settings_path = get_settings_path()
+        except Exception:
+            settings_path = None
+
+        if settings_path is not None:
+            cfg_path = settings_path / "mfd.settings.json"
+            if cfg_path.is_file():
+                with cfg_path.open("r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                raw = cfg.get("burst_additional_endings")
+                if isinstance(raw, list):
+                    cleaned: List[str] = []
+                    for item in raw:
+                        s = str(item).strip().lower()
+                        if not s:
+                            continue
+                        cleaned.append(s)
+                    if cleaned:
+                        endings = cleaned
+    except Exception as e:  # pragma: no cover - robust against config issues
+        try:
+            logging.debug("Failed to load burst_additional_endings from settings: %s", e)
+        except Exception:
+            pass
+
+    return endings or list(_DEFAULT_BURST_EXTRA_ENDINGS)
+
+
 # ----------------------------- core API --------------------------------------
 
 def read_burst_analysis(
@@ -90,7 +141,7 @@ def read_burst_analysis(
     Read burst analysis from folder or zip.
 
     Supports:
-      1) Regular dirs with bi4_bur / bur (+ extras in bg4/br4/by4/bv4).
+      1) Regular dirs with bi4_bur / bur (+ extras in bg4/br4/by4/bv4/td4).
       2) Zipped MFD folders with the standard directory structure.
       3) "Selector zip" with loose .bur files (will be normalized to temp/bi4_bur).
 
@@ -101,7 +152,8 @@ def read_burst_analysis(
     app = QApplication.instance() or QApplication([])
 
     base_path = pathlib.Path(base_path)
-    additional_endings = additional_endings or ["bg4", "br4", "by4", "bv4"]
+    if additional_endings is None:
+        additional_endings = _get_burst_additional_endings()
 
     if base_path.is_file() and base_path.suffix.lower() == ".zip":
         # Try "selector zip" path first (loose .bur files)
@@ -182,7 +234,7 @@ def _process_burst_analysis_dir(
     """
     Process a burst analysis directory. Prefer HDF5 (hdf5/*.h5|*.hdf5), else read BUR files.
     """
-    additional_endings = additional_endings or ["bg4", "br4", "by4", "bv4"]
+    additional_endings = additional_endings or ["bg4", "br4", "by4", "bv4", "td4"]
 
     # Prefer HDF5
     hdf5_dir = base_path / "hdf5"
