@@ -9,5 +9,9 @@
   "tauD0": 4.0,
   "beta": 0.005,
   "r": 1.0,
-  "forster_radius": 52.0
+  "forster_radius": 52.0,
+  "omega_r_um": 0.35,
+  "T_K": 293.15,
+  "eta_Pa_s": 0.001,
+  "KB": 1.380649e-23
 }

@@ -4,6 +4,7 @@
   "axis": "mfd.axis.json",
   "axis_labels": "axis_labels.yaml",
   "colormap": "gist_earth",
+  "burst_additional_endings": ["bg4", "br4", "by4", "bv4", "td4"],
   "default_axes": {
     "x": "Tau (green)",
     "y": "Proximity ratio",
