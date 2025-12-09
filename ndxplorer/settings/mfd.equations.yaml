@@ -116,3 +116,22 @@
     (3./2.) / ('kappa2') * 'RDA'
 - kFRET: >-
     1/'tauD0'*3/2*'kappa2'*('forster_radius'/'RDA')**(6.0)
+
+# ---- Diffusion from td4 diffusion times (weak-matched columns) ----
+# Uses D = w_r^2 / (4 * tau_D); here w_r in µm, tau_D in ms, so
+# D(µm²/s) = 250 * w_r(µm)^2 / tau_D(ms).
+#
+# The base td4 columns are written as 'td_mean' / 'td_peak' (and
+# per-pair variants like 'td_mean__GG'). The alias 'td_' below always
+# refers to the mean diffusion time, with weak matching taking care of
+# optional suffixes.
+- td_: >-
+    'td_mean'
+- D_um2_s_from_td: >-
+    250.0 * 'omega_r_um'**2 / 'td_'
+
+# Hydrodynamic radius from D using Stokes–Einstein:
+#   r_h = k_B T / (6 π η D)
+# with D in µm²/s and the result expressed in nm.
+- Rh_nm_from_D: >-
+    ('KB' * 'T_K' * 1.0e21) / (18.84955592153876 * 'eta_Pa_s' * 'D_um2_s_from_td')
