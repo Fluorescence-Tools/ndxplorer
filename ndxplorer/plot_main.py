@@ -41,7 +41,7 @@ from .axis_control_dialog import AxisControlDialog
 from guiqwt.colormap import get_colormap_list
 
 try:
-    from chisurf.gui.tools.code_editor import CodeEditor
+    from chisurf.plugins.misc.code_editor import CodeEditor
 except ImportError:
     from ndxplorer.widgets.code_editor import CodeEditor
 
