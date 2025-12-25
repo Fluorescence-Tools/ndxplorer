@@ -1,2 +1,5 @@
 #!/usr/bin/env bash
-$PYTHON setup.py install --single-version-externally-managed --record=record.txt
+set -euxo pipefail
+
+# Install ndxplorer using pyproject.toml (entry points defined there)
+"$PYTHON" -m pip install . --no-deps -vv --prefix="$PREFIX"
