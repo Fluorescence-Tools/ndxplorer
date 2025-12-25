@@ -1,13 +1,13 @@
 from __future__ import print_function
 from typing import List, Dict, Optional, Set
 from pathlib import Path
-from .logging_config import logging
+from ..logging_config import logging
 import numpy as np
 import json
 import pandas as pd
 from qtpy.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel, QApplication
 from qtpy.QtCore import Qt, QCoreApplication
-from .data_source import DataSource, DataSelection
+from ..core.data_source import DataSource, DataSelection
 
 
 class ProgressWindow(QDialog):

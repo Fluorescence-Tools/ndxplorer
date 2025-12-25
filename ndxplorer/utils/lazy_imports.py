@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional, Any
 
-from .logging_config import logging
+from ..logging_config import logging
 
 # Caches
 __umap: Optional[Any] = None

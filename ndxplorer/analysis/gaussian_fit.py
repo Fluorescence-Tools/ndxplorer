@@ -6,6 +6,7 @@ attaches them to the main NDXplorer window, keeping plot_main.py cleaner.
 It wires all Gaussian-related signal handlers here and implements the logic
 (fitting, overlays, table I/O, marginals, and Delete-key row removal).
 """
+from ..logging_config import logging
 from typing import Iterator, Optional, Tuple, List
 
 import json

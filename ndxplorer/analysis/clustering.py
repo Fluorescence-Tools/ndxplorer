@@ -1,10 +1,10 @@
+from ..logging_config import logging
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
-import logging
 
 # Delay imports via centralized getters
-from .lazy_imports import get_kmeans, get_hdbscan
+from ..utils.lazy_imports import get_kmeans, get_hdbscan
 
 from qtpy.QtCore import QThread, Signal
 

@@ -1,4 +1,6 @@
+from ..logging_config import logging
 from typing import Dict, List, Optional, Tuple, Set, Callable, Any
+from pathlib import Path
 import numpy as np
 import re
 import os
@@ -9,7 +11,7 @@ import textwrap
 
 from qtpy import QtCore, QtWidgets, QtGui
 from qtpy.QtCore import Qt
-from .widgets import ParameterSlider
+from ..widgets import ParameterSlider
 
 
 class CurveWidget(QtWidgets.QGroupBox):
@@ -159,7 +161,7 @@ class CurveWidget(QtWidgets.QGroupBox):
 
                 # If sliders are disabled, use ScientificSpinBox directly
                 if not self.use_sliders:
-                    from .widgets import ScientificSpinBox
+                    from ..widgets import ScientificSpinBox
                     param_widget = QtWidgets.QWidget()
                     row_layout = QtWidgets.QHBoxLayout(param_widget)
                     row_layout.setContentsMargins(0, 0, 0, 0)
@@ -416,20 +418,40 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         """
         Load predefined equations from the YAML file.
         """
+        candidates: List[Path] = []
+        module_dir = Path(__file__).resolve().parent
+        candidates.append(module_dir / "settings" / "curve_equations.yaml")
+        candidates.append(Path(__file__).resolve().parents[1] / "settings" / "curve_equations.yaml")
+
         try:
-            # Get the path to the curve_equations.yaml file
-            file_path = os.path.join(os.path.dirname(__file__), "settings", "curve_equations.yaml")
+            from ..settings import get_settings_path  # type: ignore
+        except Exception:
+            get_settings_path = None
 
-            # Load the YAML file
-            with open(file_path, 'r') as f:
-                self.predefined_equations = yaml.safe_load(f)
+        if callable(get_settings_path):
+            try:
+                candidates.append(get_settings_path() / "curve_equations.yaml")
+            except Exception:
+                pass
 
-            # Populate the dropdown with equation names
+        file_path = next((path for path in candidates if path.exists()), None)
+
+        if not file_path:
+            logging.warning(
+                "Curve overlay predefined equations not found. Tried: %s",
+                ", ".join(str(path) for path in candidates),
+            )
+            return
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                self.predefined_equations = yaml.safe_load(f) or []
+
             for equation in self.predefined_equations:
-                self.predefined_combo.addItem(equation['name'])
-
+                if isinstance(equation, dict) and "name" in equation:
+                    self.predefined_combo.addItem(equation["name"])
         except Exception as e:
-            print(f"Error loading predefined equations: {e}")
+            logging.error("Error loading predefined equations from %s: %s", file_path, e)
 
     def add_predefined_curve(self):
         """

@@ -16,12 +16,12 @@ import pandas as pd
 from pandas.errors import EmptyDataError
 
 try:
-    from chisurf import logging
+    from ..logging_config import logging
 except Exception:  # pragma: no cover
     import logging  # type: ignore
 
-from .data_source import DataSource
-from .settings import get_settings_path, ensure_default_settings
+from ..core.data_source import DataSource
+from ..settings import get_settings_path, ensure_default_settings
 
 from qtpy.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel, QApplication, QMessageBox
 from qtpy.QtCore import Qt, QCoreApplication
@@ -605,7 +605,7 @@ def _read_text_table_auto(path: pathlib.Path) -> pd.DataFrame:
     df = _normalize_msvc_tokens(df)
     # don't force numeric or fill here; leave types as read (burst pipeline often mixes ints/floats)
     # but we can still best-effort numeric:
-    df = df.apply(pd.to_numeric, errors="ignore")
+    df = _best_effort_numeric(df)
     return df
 
 
@@ -623,6 +623,36 @@ def _normalize_msvc_tokens(df: pd.DataFrame) -> pd.DataFrame:
                 return -np.inf
         return x
     return df.map(_norm_cell)
+
+
+def _best_effort_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert columns to numeric only when every non-null entry parses successfully.
+
+    This emulates the previous `errors="ignore"` behaviour from `pd.to_numeric`
+    without relying on the deprecated option.
+    """
+    if df.empty:
+        return df
+
+    out = df.copy()
+    for col in out.columns:
+        series = out[col]
+        if pd.api.types.is_numeric_dtype(series):
+            continue
+
+        try:
+            converted = pd.to_numeric(series, errors="coerce")
+        except Exception:
+            continue
+
+        non_missing = series.notna()
+        if non_missing.any() and converted.loc[non_missing].isna().any():
+            continue
+
+        out[col] = converted
+
+    return out
 
 
 def _find_first_member(zf: zipfile.ZipFile, exts: Tuple[str, ...]) -> Optional[str]:

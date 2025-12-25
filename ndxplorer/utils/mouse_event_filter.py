@@ -2,6 +2,7 @@
 Mouse event filter for handling region selection in 2D plots.
 """
 
+from ..logging_config import logging
 from qtpy import QtCore, QtWidgets
 
 class MouseEventFilter(QtCore.QObject):

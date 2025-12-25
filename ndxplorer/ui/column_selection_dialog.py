@@ -1,7 +1,7 @@
 """
 Dialog for selecting columns from a list.
 """
-from .logging_config import logging
+from ..logging_config import logging
 
 try:
     from chisurf.gui import QtGui, QtCore, QtWidgets
@@ -21,7 +21,8 @@ class ColumnSelectionDialog(QtWidgets.QDialog):
         logging.log(0, f"Initializing ColumnSelectionDialog with {len(column_names) if column_names else 0} columns")
         super(ColumnSelectionDialog, self).__init__(parent)
         self.setWindowTitle("Select Columns for Clustering")
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(380)
+        self.setSizeGripEnabled(True)
 
         # Store column names and selected columns
         self.column_names = column_names or []
@@ -33,21 +34,30 @@ class ColumnSelectionDialog(QtWidgets.QDialog):
 
         # Create layout
         layout = QtWidgets.QVBoxLayout()
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
 
         # Add label
         label = QtWidgets.QLabel("Select columns to use for clustering:")
+        label.setAccessibleDescription("Instruction text describing what the dialog controls.")
+        label.setWordWrap(True)
         layout.addWidget(label)
 
         # Add help text for keyboard navigation
-        help_label = QtWidgets.QLabel("Navigation: Use Up/Down keys to move, Ctrl+Space to toggle selection")
+        help_label = QtWidgets.QLabel("Navigation: Use Up/Down keys to move, Ctrl+Space to toggle selection. "
+                                      "PageUp/PageDown jump by 10 rows; Home/End go to extremes.")
         help_label.setStyleSheet("color: #666666; font-size: 10pt;")
+        help_label.setAccessibleDescription("Explains available keyboard shortcuts for column navigation.")
         layout.addWidget(help_label)
 
         # Add filter line edit
         filter_layout = QtWidgets.QHBoxLayout()
         filter_label = QtWidgets.QLabel("Filter:")
+        filter_label.setBuddy(self.filter_line_edit if hasattr(self, "filter_line_edit") else None)
         self.filter_line_edit = QtWidgets.QLineEdit()
         self.filter_line_edit.setPlaceholderText("Enter text to filter columns")
+        self.filter_line_edit.setAccessibleName("Column filter")
+        self.filter_line_edit.setAccessibleDescription("Type to narrow down the column list by name.")
         self.filter_line_edit.textChanged.connect(self.filter_columns)
         filter_layout.addWidget(filter_label)
         filter_layout.addWidget(self.filter_line_edit)
@@ -61,11 +71,18 @@ class ColumnSelectionDialog(QtWidgets.QDialog):
         # Set alignment to top
         self.scroll_layout.setAlignment(QtCore.Qt.AlignTop)
 
+        self.scroll_area.setAccessibleName("Column list")
+        self.scroll_area.setAccessibleDescription(
+            "Scrollable list of available columns with checkboxes to include them in clustering."
+        )
+
         # Add checkboxes for each column
         self.checkboxes = {}
         for column in self.column_names:
             checkbox = QtWidgets.QCheckBox(column)
             checkbox.setChecked(column in self.selected_columns)
+            checkbox.setAccessibleName(f"Column {column}")
+            checkbox.setAccessibleDescription("Toggle to include or exclude this column from clustering.")
             self.checkboxes[column] = checkbox
             self.scroll_layout.addWidget(checkbox)
             self.visible_checkboxes.append(checkbox)
@@ -78,8 +95,10 @@ class ColumnSelectionDialog(QtWidgets.QDialog):
         # Add select all / deselect all buttons
         buttons_layout = QtWidgets.QHBoxLayout()
         select_all_button = QtWidgets.QPushButton("Select All")
+        select_all_button.setAccessibleDescription("Selects every column in the list.")
         select_all_button.clicked.connect(self.select_all)
         deselect_all_button = QtWidgets.QPushButton("Deselect All")
+        deselect_all_button.setAccessibleDescription("Clears every selected column.")
         deselect_all_button.clicked.connect(self.deselect_all)
         buttons_layout.addWidget(select_all_button)
         buttons_layout.addWidget(deselect_all_button)
@@ -168,6 +187,26 @@ class ColumnSelectionDialog(QtWidgets.QDialog):
             # Move focus down
             if self.visible_checkboxes and self.current_focus_index < len(self.visible_checkboxes) - 1:
                 self.current_focus_index += 1
+                self.update_focus()
+            event.accept()
+        elif key == QtCore.Qt.Key_PageUp:
+            if self.visible_checkboxes:
+                self.current_focus_index = max(self.current_focus_index - 10, 0)
+                self.update_focus()
+            event.accept()
+        elif key == QtCore.Qt.Key_PageDown:
+            if self.visible_checkboxes:
+                self.current_focus_index = min(self.current_focus_index + 10, len(self.visible_checkboxes) - 1)
+                self.update_focus()
+            event.accept()
+        elif key == QtCore.Qt.Key_Home:
+            if self.visible_checkboxes:
+                self.current_focus_index = 0
+                self.update_focus()
+            event.accept()
+        elif key == QtCore.Qt.Key_End:
+            if self.visible_checkboxes:
+                self.current_focus_index = len(self.visible_checkboxes) - 1
                 self.update_focus()
             event.accept()
         elif key == QtCore.Qt.Key_Space and modifiers == QtCore.Qt.ControlModifier:
