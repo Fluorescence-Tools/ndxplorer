@@ -54,7 +54,7 @@ conda install -c tpeulen ndxplorer
 To install from source:
 
 ```bash
-git clone https://gitlab.peulen.xyz/tpeulen/ndxplorer.git
+git clone https://github.com/fluorescence-tools/ndxplorer.git
 cd ndxplorer
 pip install -e .
 ```
