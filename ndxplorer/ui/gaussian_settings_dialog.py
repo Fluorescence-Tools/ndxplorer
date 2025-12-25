@@ -6,12 +6,14 @@ and persist them in the ndxplorer user settings folder.
 from typing import Optional, Dict, Any
 
 try:
-    from chisurf.gui import QtWidgets
+    from chisurf.gui import QtWidgets, QtCore
 except ImportError:
-    from qtpy import QtWidgets
+    from qtpy import QtWidgets, QtCore
 
 import json
-from .settings import get_settings_path, ensure_default_settings
+from ..logging_config import logging
+from ..settings import get_settings_path, ensure_default_settings
+from .feedback import FriendlyErrorPresenter
 
 _DEFAULTS: Dict[str, Any] = {
     "tol": 1e-3,                         # float > 0
@@ -65,17 +67,24 @@ def save_gmm_settings(cfg: Dict[str, Any]) -> None:
         pass
 
 
-class GMMSettingsDialog(QtWidgets.QDialog):
+class GaussianSettingsDialog(QtWidgets.QDialog):
     """Qt dialog exposing built-in GMM (EM) configuration parameters."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("GMM Settings")
+        self.setSizeGripEnabled(True)
+        self.setMinimumWidth(420)
         self._cfg = load_gmm_settings()
+        self._dialogs = FriendlyErrorPresenter(self)
         self._build_ui()
         self._load_to_widgets()
 
     def _build_ui(self):
         layout = QtWidgets.QFormLayout(self)
+        layout.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        layout.setLabelAlignment(QtCore.Qt.AlignRight)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         # tol
         self.spin_tol = QtWidgets.QDoubleSpinBox(self)
@@ -164,12 +173,13 @@ class GMMSettingsDialog(QtWidgets.QDialog):
     def on_save_clicked(self):
         cfg = self.get_settings()
         save_gmm_settings(cfg)
-        try:
-            QtWidgets.QMessageBox.information(self, "GMM Settings", "Settings saved to user folder.")
-        except Exception:
-            pass
+        self._dialogs.info("GMM Settings", "Settings saved to your NDxplorer user folder.")
 
     def accept(self):
         cfg = self.get_settings()
         save_gmm_settings(cfg)
         super().accept()
+
+
+# Backward compatibility for older imports
+GMMSettingsDialog = GaussianSettingsDialog

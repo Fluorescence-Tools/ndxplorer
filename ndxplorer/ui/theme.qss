@@ -701,3 +701,25 @@ QToolButton {
     border: 1px solid #000000;
     border-radius: 3px;
 }
+
+#NDXProgressPane {
+    border: 1px solid #3e3e3e;
+    border-radius: 6px;
+    background-color: #2c2f33;
+}
+
+#NDXProgressPane QLabel[status="info"] {
+    color: #b3d4ff;
+}
+
+#NDXProgressPane QLabel[status="success"] {
+    color: #8fd694;
+}
+
+#NDXProgressPane QLabel[status="warning"] {
+    color: #ffcc80;
+}
+
+#NDXProgressPane QLabel[status="error"] {
+    color: #ff8a80;
+}

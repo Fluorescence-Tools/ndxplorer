@@ -30,6 +30,8 @@ try:
 except ImportError:
     gl = None
 
+from ..utils.lazy_imports import get_umap
+
 
 def create_umap_plot(parent, columns: Set[str], params: Dict[str, Any], 
                      data_source, x_values, y_values, z_values, 
@@ -135,8 +137,7 @@ def create_umap_plot(parent, columns: Set[str], params: Dict[str, Any],
         )
         return
 
-    # Import the progress dialog from plot_main
-    from .plot_main import UMAPProgressDialog
+    from .umap_progress import UMAPProgressDialog
     
     # Create and show progress dialog
     progress_dialog = UMAPProgressDialog(parent, "UMAP Plot Computation")

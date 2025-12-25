@@ -10,12 +10,13 @@ import yaml
 import pathlib
 from qtpy import QtCore, QtGui, QtWidgets
 
-from .logging_config import logging
+from ..logging_config import logging
 
 from qwt.plot import QwtPlot
 
 # Import settings functions
-from .settings import get_settings_path
+from ..settings import get_settings_path
+from .feedback import FriendlyErrorPresenter
 
 
 class AxisControlDialog(QtWidgets.QDialog):
@@ -37,23 +38,61 @@ class AxisControlDialog(QtWidgets.QDialog):
         super(AxisControlDialog, self).__init__(parent)
         self.parent = parent
         self.setWindowTitle("Axis Control")
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(420)
+        self.setSizeGripEnabled(True)
+        self.setModal(False)
+        self.error_presenter = FriendlyErrorPresenter(self)
         self.setup_ui()
         self.load_current_state()
+
+    @staticmethod
+    def _set_accessibility(widget, *, name=None, description=None):
+        """Utility to apply accessible metadata to widgets."""
+        if name:
+            widget.setAccessibleName(name)
+        if description:
+            widget.setAccessibleDescription(description)
         
     def setup_ui(self):
         """Set up the user interface for the axis control dialog."""
         # Main layout
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        hint_label = QtWidgets.QLabel(
+            "Tip: You can resize this dialog on smaller screens. "
+            "Use the mouse wheel or PgUp/PgDn keys to scroll through controls."
+        )
+        hint_label.setWordWrap(True)
+        hint_label.setStyleSheet("color: #bbbbbb; font-size: 10pt;")
+        self._set_accessibility(
+            hint_label,
+            name="Axis control hint",
+            description="Explains how to resize the dialog and scroll through the axis toggles."
+        )
+        layout.addWidget(hint_label)
         
         # Create a scroll area to handle many checkboxes
         scroll_area = QtWidgets.QScrollArea()
         scroll_area.setWidgetResizable(True)
+        scroll_area.setMinimumHeight(280)
+        self._set_accessibility(
+            scroll_area,
+            name="Axis toggles",
+            description="Scrollable region containing toggle checkboxes for each plot axis."
+        )
         scroll_content = QtWidgets.QWidget()
         scroll_layout = QtWidgets.QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(4, 4, 4, 4)
         
         # X Plot group
         x_plot_group = QtWidgets.QGroupBox("X Plot")
+        self._set_accessibility(
+            x_plot_group,
+            name="X plot axes",
+            description="Options for showing or hiding the X plot axes."
+        )
         x_plot_layout = QtWidgets.QVBoxLayout()
         self.x_plot_bottom = QtWidgets.QCheckBox("Bottom Axis")
         self.x_plot_top = QtWidgets.QCheckBox("Top Axis")
@@ -65,15 +104,28 @@ class AxisControlDialog(QtWidgets.QDialog):
         self.x_plot_left.setToolTip("Show/hide the left axis of the X plot")
         self.x_plot_right.setToolTip("Show/hide the right axis of the X plot")
         
-        x_plot_layout.addWidget(self.x_plot_bottom)
-        x_plot_layout.addWidget(self.x_plot_top)
-        x_plot_layout.addWidget(self.x_plot_left)
-        x_plot_layout.addWidget(self.x_plot_right)
+        for checkbox, label in (
+            (self.x_plot_bottom, "Bottom axis of the X plot"),
+            (self.x_plot_top, "Top axis of the X plot"),
+            (self.x_plot_left, "Left axis frame of the X plot"),
+            (self.x_plot_right, "Right axis frame of the X plot"),
+        ):
+            self._set_accessibility(
+                checkbox,
+                name=label,
+                description=f"Toggle visibility for the {label.lower()}."
+            )
+            x_plot_layout.addWidget(checkbox)
         x_plot_group.setLayout(x_plot_layout)
         scroll_layout.addWidget(x_plot_group)
         
         # Y Plot group
         y_plot_group = QtWidgets.QGroupBox("Y Plot")
+        self._set_accessibility(
+            y_plot_group,
+            name="Y plot axes",
+            description="Options for showing or hiding the Y plot axes."
+        )
         y_plot_layout = QtWidgets.QVBoxLayout()
         self.y_plot_bottom = QtWidgets.QCheckBox("Bottom Axis")
         self.y_plot_top = QtWidgets.QCheckBox("Top Axis")
@@ -85,15 +137,28 @@ class AxisControlDialog(QtWidgets.QDialog):
         self.y_plot_left.setToolTip("Show/hide the left axis of the Y plot")
         self.y_plot_right.setToolTip("Show/hide the right axis of the Y plot")
         
-        y_plot_layout.addWidget(self.y_plot_bottom)
-        y_plot_layout.addWidget(self.y_plot_top)
-        y_plot_layout.addWidget(self.y_plot_left)
-        y_plot_layout.addWidget(self.y_plot_right)
+        for checkbox, label in (
+            (self.y_plot_bottom, "Bottom axis of the Y plot"),
+            (self.y_plot_top, "Top axis of the Y plot"),
+            (self.y_plot_left, "Left axis frame of the Y plot"),
+            (self.y_plot_right, "Right axis frame of the Y plot"),
+        ):
+            self._set_accessibility(
+                checkbox,
+                name=label,
+                description=f"Toggle visibility for the {label.lower()}."
+            )
+            y_plot_layout.addWidget(checkbox)
         y_plot_group.setLayout(y_plot_layout)
         scroll_layout.addWidget(y_plot_group)
         
         # Z Plot group
         z_plot_group = QtWidgets.QGroupBox("Z Plot")
+        self._set_accessibility(
+            z_plot_group,
+            name="Z plot axes",
+            description="Options for enabling or disabling the Z plot and its axes."
+        )
         z_plot_layout = QtWidgets.QVBoxLayout()
         self.z_plot_enable = QtWidgets.QCheckBox("Enable Z Plot")
         self.z_plot_bottom = QtWidgets.QCheckBox("Bottom Axis")
@@ -103,14 +168,27 @@ class AxisControlDialog(QtWidgets.QDialog):
         self.z_plot_bottom.setToolTip("Show/hide the bottom axis of the Z plot")
         self.z_plot_left.setToolTip("Show/hide the left axis of the Z plot")
         
-        z_plot_layout.addWidget(self.z_plot_enable)
-        z_plot_layout.addWidget(self.z_plot_bottom)
-        z_plot_layout.addWidget(self.z_plot_left)
+        for checkbox, label in (
+            (self.z_plot_enable, "Enable Z plot"),
+            (self.z_plot_bottom, "Bottom axis of the Z plot"),
+            (self.z_plot_left, "Left axis of the Z plot"),
+        ):
+            self._set_accessibility(
+                checkbox,
+                name=label,
+                description=f"{label} toggle."
+            )
+            z_plot_layout.addWidget(checkbox)
         z_plot_group.setLayout(z_plot_layout)
         scroll_layout.addWidget(z_plot_group)
         
         # 2D Plot group
         plot_2d_group = QtWidgets.QGroupBox("2D Plot")
+        self._set_accessibility(
+            plot_2d_group,
+            name="2D plot axes",
+            description="Options for showing or hiding axes on the 2D projection."
+        )
         plot_2d_layout = QtWidgets.QVBoxLayout()
         self.plot_2d_bottom = QtWidgets.QCheckBox("Bottom Axis")
         self.plot_2d_top = QtWidgets.QCheckBox("Top Axis")
@@ -122,15 +200,28 @@ class AxisControlDialog(QtWidgets.QDialog):
         self.plot_2d_left.setToolTip("Show/hide the left axis of the 2D plot")
         self.plot_2d_right.setToolTip("Show/hide the right axis of the 2D plot")
         
-        plot_2d_layout.addWidget(self.plot_2d_bottom)
-        plot_2d_layout.addWidget(self.plot_2d_top)
-        plot_2d_layout.addWidget(self.plot_2d_left)
-        plot_2d_layout.addWidget(self.plot_2d_right)
+        for checkbox, label in (
+            (self.plot_2d_bottom, "Bottom axis of the 2D plot"),
+            (self.plot_2d_top, "Top axis of the 2D plot"),
+            (self.plot_2d_left, "Left axis of the 2D plot"),
+            (self.plot_2d_right, "Right axis of the 2D plot"),
+        ):
+            self._set_accessibility(
+                checkbox,
+                name=label,
+                description=f"Toggle visibility for the {label.lower()}."
+            )
+            plot_2d_layout.addWidget(checkbox)
         plot_2d_group.setLayout(plot_2d_layout)
         scroll_layout.addWidget(plot_2d_group)
         
         # Overlay Plot group
         overlay_plot_group = QtWidgets.QGroupBox("Overlay Plot")
+        self._set_accessibility(
+            overlay_plot_group,
+            name="Overlay plot axes",
+            description="Options for showing or hiding axes on the overlay plot."
+        )
         overlay_plot_layout = QtWidgets.QVBoxLayout()
         self.overlay_plot_bottom = QtWidgets.QCheckBox("Bottom Axis")
         self.overlay_plot_top = QtWidgets.QCheckBox("Top Axis")
@@ -142,20 +233,38 @@ class AxisControlDialog(QtWidgets.QDialog):
         self.overlay_plot_left.setToolTip("Show/hide the left axis of the overlay plot")
         self.overlay_plot_right.setToolTip("Show/hide the right axis of the overlay plot")
         
-        overlay_plot_layout.addWidget(self.overlay_plot_bottom)
-        overlay_plot_layout.addWidget(self.overlay_plot_top)
-        overlay_plot_layout.addWidget(self.overlay_plot_left)
-        overlay_plot_layout.addWidget(self.overlay_plot_right)
+        for checkbox, label in (
+            (self.overlay_plot_bottom, "Bottom axis of the overlay plot"),
+            (self.overlay_plot_top, "Top axis of the overlay plot"),
+            (self.overlay_plot_left, "Left axis of the overlay plot"),
+            (self.overlay_plot_right, "Right axis of the overlay plot"),
+        ):
+            self._set_accessibility(
+                checkbox,
+                name=label,
+                description=f"Toggle visibility for the {label.lower()}."
+            )
+            overlay_plot_layout.addWidget(checkbox)
         overlay_plot_group.setLayout(overlay_plot_layout)
         scroll_layout.addWidget(overlay_plot_group)
         
         # Axis Label Settings group
         label_settings_group = QtWidgets.QGroupBox("Axis Label Settings")
+        self._set_accessibility(
+            label_settings_group,
+            name="Axis label settings",
+            description="Controls for showing labels and configuring fonts."
+        )
         label_settings_layout = QtWidgets.QVBoxLayout()
         
         # Global enable/disable checkbox
         self.enable_all_labels = QtWidgets.QCheckBox("Enable All Labels")
         self.enable_all_labels.setToolTip("Enable or disable all axis labels")
+        self._set_accessibility(
+            self.enable_all_labels,
+            name="Enable all labels",
+            description="Toggle to show or hide every axis label at once."
+        )
         label_settings_layout.addWidget(self.enable_all_labels)
         
         # Y Plot Labels group
@@ -270,114 +379,104 @@ class AxisControlDialog(QtWidgets.QDialog):
         """
         if not self.parent:
             return
-            
-        # X Plot
-        self.x_plot_bottom.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.xBottom))
-        self.x_plot_top.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.xTop))
-        self.x_plot_left.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.yLeft))
-        self.x_plot_right.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.yRight))
-        
-        # Y Plot
-        self.y_plot_bottom.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.xBottom))
-        self.y_plot_top.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.xTop))
-        self.y_plot_left.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.yLeft))
-        self.y_plot_right.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.yRight))
-        
-        # Z Plot
-        if hasattr(self.parent, 'checkBoxEnableZ'):
-            self.z_plot_enable.setChecked(self.parent.checkBoxEnableZ.isChecked())
-        
-        if hasattr(self.parent, 'g_zplot'):
-            self.z_plot_bottom.setChecked(self.parent.g_zplot.axisEnabled(QwtPlot.xBottom))
-            self.z_plot_left.setChecked(self.parent.g_zplot.axisEnabled(QwtPlot.yLeft))
-            
-            # Enable/disable Z plot axis checkboxes based on Z plot visibility
-            self.z_plot_bottom.setEnabled(self.z_plot_enable.isChecked())
-            self.z_plot_left.setEnabled(self.z_plot_enable.isChecked())
-        
-        # 2D Plot
-        self.plot_2d_bottom.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.xBottom))
-        self.plot_2d_top.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.xTop))
-        self.plot_2d_left.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.yLeft))
-        self.plot_2d_right.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.yRight))
-        
-        # Overlay Plot
-        if hasattr(self.parent, 'overlay_plot'):
-            self.overlay_plot_bottom.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.xBottom))
-            self.overlay_plot_top.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.xTop))
-            self.overlay_plot_left.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.yLeft))
-            self.overlay_plot_right.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.yRight))
-            
-        # Load axis label settings
-        if hasattr(self.parent, 'axis_label_settings'):
-            # Get the settings
-            settings = self.parent.axis_label_settings
-            
-            # Global enable/disable setting
-            enable_all_labels = settings.get('enable_all_labels', True)
-            self.enable_all_labels.setChecked(enable_all_labels)
-            
-            # Individual axis label settings
-            axis_labels = settings.get('axis_labels', {})
-            
-            # Y Plot Labels
-            y_plot_settings = axis_labels.get('y_plot', {})
-            self.y_plot_label_top.setChecked(y_plot_settings.get('top', True))
-            self.y_plot_label_right.setChecked(y_plot_settings.get('right', True))
-            
-            # X Plot Labels
-            x_plot_settings = axis_labels.get('x_plot', {})
-            self.x_plot_label_top.setChecked(x_plot_settings.get('top', True))
-            
-            # Z Plot Labels
-            z_plot_settings = axis_labels.get('z_plot', {})
-            self.z_plot_label_bottom.setChecked(z_plot_settings.get('bottom', True))
-            self.z_plot_label_left.setChecked(z_plot_settings.get('left', True))
-            
-            # Update enabled state of individual checkboxes based on global setting
-            self.on_enable_all_labels_changed(enable_all_labels)
 
-            # Load font settings
-            try:
-                fonts = settings.get('fonts', {})
-                # Prefer parent's current font_settings if available
-                if hasattr(self.parent, 'font_settings') and self.parent.font_settings:
-                    fonts = {**fonts, **self.parent.font_settings}
-                self.font_tick_size.setValue(int(fonts.get('tick_size_pt', 8)))
-                self.font_title_size.setValue(int(fonts.get('title_size_pt', 10)))
-                title_weight = int(fonts.get('title_weight', 700))
-                self.font_title_bold.setChecked(title_weight >= 600)
-                self._font_title_color = str(fonts.get('color', '#000000'))
-                # update button preview
+        try:
+            # X Plot
+            self.x_plot_bottom.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.xBottom))
+            self.x_plot_top.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.xTop))
+            self.x_plot_left.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.yLeft))
+            self.x_plot_right.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.yRight))
+
+            # Y Plot
+            self.y_plot_bottom.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.xBottom))
+            self.y_plot_top.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.xTop))
+            self.y_plot_left.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.yLeft))
+            self.y_plot_right.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.yRight))
+
+            # Z Plot
+            if hasattr(self.parent, 'checkBoxEnableZ'):
+                self.z_plot_enable.setChecked(self.parent.checkBoxEnableZ.isChecked())
+
+            if hasattr(self.parent, 'g_zplot'):
+                self.z_plot_bottom.setChecked(self.parent.g_zplot.axisEnabled(QwtPlot.xBottom))
+                self.z_plot_left.setChecked(self.parent.g_zplot.axisEnabled(QwtPlot.yLeft))
+
+                # Enable/disable Z plot axis checkboxes based on Z plot visibility
+                self.z_plot_bottom.setEnabled(self.z_plot_enable.isChecked())
+                self.z_plot_left.setEnabled(self.z_plot_enable.isChecked())
+
+            # 2D Plot
+            self.plot_2d_bottom.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.xBottom))
+            self.plot_2d_top.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.xTop))
+            self.plot_2d_left.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.yLeft))
+            self.plot_2d_right.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.yRight))
+
+            # Overlay Plot
+            if hasattr(self.parent, 'overlay_plot'):
+                self.overlay_plot_bottom.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.xBottom))
+                self.overlay_plot_top.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.xTop))
+                self.overlay_plot_left.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.yLeft))
+                self.overlay_plot_right.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.yRight))
+
+            # Load axis label settings
+            if hasattr(self.parent, 'axis_label_settings'):
+                settings = self.parent.axis_label_settings
+                enable_all_labels = settings.get('enable_all_labels', True)
+                self.enable_all_labels.setChecked(enable_all_labels)
+
+                axis_labels = settings.get('axis_labels', {})
+
+                y_plot_settings = axis_labels.get('y_plot', {})
+                self.y_plot_label_top.setChecked(y_plot_settings.get('top', True))
+                self.y_plot_label_right.setChecked(y_plot_settings.get('right', True))
+
+                x_plot_settings = axis_labels.get('x_plot', {})
+                self.x_plot_label_top.setChecked(x_plot_settings.get('top', True))
+
+                z_plot_settings = axis_labels.get('z_plot', {})
+                self.z_plot_label_bottom.setChecked(z_plot_settings.get('bottom', True))
+                self.z_plot_label_left.setChecked(z_plot_settings.get('left', True))
+
+                self.on_enable_all_labels_changed(enable_all_labels)
+
                 try:
-                    self.font_title_color_btn.setStyleSheet(f"background-color: {self._font_title_color}; color: white")
+                    fonts = settings.get('fonts', {})
+                    if hasattr(self.parent, 'font_settings') and self.parent.font_settings:
+                        fonts = {**fonts, **self.parent.font_settings}
+                    self.font_tick_size.setValue(int(fonts.get('tick_size_pt', 8)))
+                    self.font_title_size.setValue(int(fonts.get('title_size_pt', 10)))
+                    title_weight = int(fonts.get('title_weight', 700))
+                    self.font_title_bold.setChecked(title_weight >= 600)
+                    self._font_title_color = str(fonts.get('color', '#000000'))
+                    self.font_title_color_btn.setStyleSheet(
+                        f"background-color: {self._font_title_color}; color: white"
+                    )
                     self.font_title_color_btn.setText(self._font_title_color)
                 except Exception:
                     pass
-            except Exception:
-                pass
-        else:
-            # No axis label settings available, use defaults
-            self.enable_all_labels.setChecked(True)
-            self.y_plot_label_top.setChecked(True)
-            self.y_plot_label_right.setChecked(True)
-            self.x_plot_label_top.setChecked(True)
-            self.z_plot_label_bottom.setChecked(True)
-            self.z_plot_label_left.setChecked(True)
-            
-            # Update enabled state of individual checkboxes
-            self.on_enable_all_labels_changed(True)
-            
-            # Default font controls
-            try:
-                self.font_tick_size.setValue(8)
-                self.font_title_size.setValue(10)
-                self.font_title_bold.setChecked(True)
-                self._font_title_color = '#000000'
-                self.font_title_color_btn.setStyleSheet("background-color: #000000; color: white")
-                self.font_title_color_btn.setText('#000000')
-            except Exception:
-                pass
+            else:
+                self.enable_all_labels.setChecked(True)
+                self.y_plot_label_top.setChecked(True)
+                self.y_plot_label_right.setChecked(True)
+                self.x_plot_label_top.setChecked(True)
+                self.z_plot_label_bottom.setChecked(True)
+                self.z_plot_label_left.setChecked(True)
+                self.on_enable_all_labels_changed(True)
+                try:
+                    self.font_tick_size.setValue(8)
+                    self.font_title_size.setValue(10)
+                    self.font_title_bold.setChecked(True)
+                    self._font_title_color = '#000000'
+                    self.font_title_color_btn.setStyleSheet("background-color: #000000; color: white")
+                    self.font_title_color_btn.setText('#000000')
+                except Exception:
+                    pass
+        except Exception as exc:
+            logging.exception("Failed to load axis control state")
+            self.error_presenter.error(
+                "Axis Control",
+                f"Unable to load current axis settings.\nDetails: {exc}"
+            )
     
     def on_z_plot_enable_changed(self, state):
         """
@@ -419,101 +518,87 @@ class AxisControlDialog(QtWidgets.QDialog):
         """
         if not self.parent:
             return
-            
-        # X Plot
-        self.parent.g_xplot.enableAxis(QwtPlot.xBottom, self.x_plot_bottom.isChecked())
-        self.parent.g_xplot.enableAxis(QwtPlot.xTop, self.x_plot_top.isChecked())
-        self.parent.g_xplot.enableAxis(QwtPlot.yLeft, self.x_plot_left.isChecked())
-        self.parent.g_xplot.enableAxis(QwtPlot.yRight, self.x_plot_right.isChecked())
-        
-        # Y Plot
-        self.parent.g_yplot.enableAxis(QwtPlot.xBottom, self.y_plot_bottom.isChecked())
-        self.parent.g_yplot.enableAxis(QwtPlot.xTop, self.y_plot_top.isChecked())
-        self.parent.g_yplot.enableAxis(QwtPlot.yLeft, self.y_plot_left.isChecked())
-        self.parent.g_yplot.enableAxis(QwtPlot.yRight, self.y_plot_right.isChecked())
-        
-        # Z Plot
-        if hasattr(self.parent, 'checkBoxEnableZ'):
-            self.parent.checkBoxEnableZ.setChecked(self.z_plot_enable.isChecked())
-        
-        if hasattr(self.parent, 'g_zplot'):
-            self.parent.g_zplot.enableAxis(QwtPlot.xBottom, self.z_plot_bottom.isChecked())
-            self.parent.g_zplot.enableAxis(QwtPlot.yLeft, self.z_plot_left.isChecked())
-        
-        # 2D Plot
-        self.parent.g_2dplot.enableAxis(QwtPlot.xBottom, self.plot_2d_bottom.isChecked())
-        self.parent.g_2dplot.enableAxis(QwtPlot.xTop, self.plot_2d_top.isChecked())
-        self.parent.g_2dplot.enableAxis(QwtPlot.yLeft, self.plot_2d_left.isChecked())
-        self.parent.g_2dplot.enableAxis(QwtPlot.yRight, self.plot_2d_right.isChecked())
-        
-        # Overlay Plot
-        if hasattr(self.parent, 'overlay_plot'):
-            self.parent.overlay_plot.enableAxis(QwtPlot.xBottom, self.overlay_plot_bottom.isChecked())
-            self.parent.overlay_plot.enableAxis(QwtPlot.xTop, self.overlay_plot_top.isChecked())
-            self.parent.overlay_plot.enableAxis(QwtPlot.yLeft, self.overlay_plot_left.isChecked())
-            self.parent.overlay_plot.enableAxis(QwtPlot.yRight, self.overlay_plot_right.isChecked())
-        
-        # Apply axis label settings
-        if hasattr(self.parent, 'axis_label_settings'):
-            # Gather current settings from checkboxes
-            settings = {
-                # Global setting to enable/disable all axis labels
-                "enable_all_labels": self.enable_all_labels.isChecked(),
-                # Individual settings for each plot type and axis
-                "axis_labels": {
-                    # Y-plot axis labels (top and right axes)
-                    "y_plot": {
-                        "top": self.y_plot_label_top.isChecked(),
-                        "right": self.y_plot_label_right.isChecked()
+
+        try:
+            self.parent.g_xplot.enableAxis(QwtPlot.xBottom, self.x_plot_bottom.isChecked())
+            self.parent.g_xplot.enableAxis(QwtPlot.xTop, self.x_plot_top.isChecked())
+            self.parent.g_xplot.enableAxis(QwtPlot.yLeft, self.x_plot_left.isChecked())
+            self.parent.g_xplot.enableAxis(QwtPlot.yRight, self.x_plot_right.isChecked())
+
+            self.parent.g_yplot.enableAxis(QwtPlot.xBottom, self.y_plot_bottom.isChecked())
+            self.parent.g_yplot.enableAxis(QwtPlot.xTop, self.y_plot_top.isChecked())
+            self.parent.g_yplot.enableAxis(QwtPlot.yLeft, self.y_plot_left.isChecked())
+            self.parent.g_yplot.enableAxis(QwtPlot.yRight, self.y_plot_right.isChecked())
+
+            if hasattr(self.parent, 'checkBoxEnableZ'):
+                self.parent.checkBoxEnableZ.setChecked(self.z_plot_enable.isChecked())
+
+            if hasattr(self.parent, 'g_zplot'):
+                self.parent.g_zplot.enableAxis(QwtPlot.xBottom, self.z_plot_bottom.isChecked())
+                self.parent.g_zplot.enableAxis(QwtPlot.yLeft, self.z_plot_left.isChecked())
+
+            self.parent.g_2dplot.enableAxis(QwtPlot.xBottom, self.plot_2d_bottom.isChecked())
+            self.parent.g_2dplot.enableAxis(QwtPlot.xTop, self.plot_2d_top.isChecked())
+            self.parent.g_2dplot.enableAxis(QwtPlot.yLeft, self.plot_2d_left.isChecked())
+            self.parent.g_2dplot.enableAxis(QwtPlot.yRight, self.plot_2d_right.isChecked())
+
+            if hasattr(self.parent, 'overlay_plot'):
+                self.parent.overlay_plot.enableAxis(QwtPlot.xBottom, self.overlay_plot_bottom.isChecked())
+                self.parent.overlay_plot.enableAxis(QwtPlot.xTop, self.overlay_plot_top.isChecked())
+                self.parent.overlay_plot.enableAxis(QwtPlot.yLeft, self.overlay_plot_left.isChecked())
+                self.parent.overlay_plot.enableAxis(QwtPlot.yRight, self.overlay_plot_right.isChecked())
+
+            if hasattr(self.parent, 'axis_label_settings'):
+                settings = {
+                    "enable_all_labels": self.enable_all_labels.isChecked(),
+                    "axis_labels": {
+                        "y_plot": {
+                            "top": self.y_plot_label_top.isChecked(),
+                            "right": self.y_plot_label_right.isChecked()
+                        },
+                        "x_plot": {
+                            "top": self.x_plot_label_top.isChecked()
+                        },
+                        "z_plot": {
+                            "bottom": self.z_plot_label_bottom.isChecked(),
+                            "left": self.z_plot_label_left.isChecked()
+                        }
                     },
-                    # X-plot axis labels (top axis)
-                    "x_plot": {
-                        "top": self.x_plot_label_top.isChecked()
-                    },
-                    # Z-plot axis labels (bottom and left axes)
-                    "z_plot": {
-                        "bottom": self.z_plot_label_bottom.isChecked(),
-                        "left": self.z_plot_label_left.isChecked()
+                    "fonts": {
+                        "tick_size_pt": int(self.font_tick_size.value()),
+                        "title_size_pt": int(self.font_title_size.value()),
+                        "title_weight": 700 if self.font_title_bold.isChecked() else 400,
+                        "color": str(self._font_title_color)
                     }
-                },
-                # Font settings
-                "fonts": {
-                    "tick_size_pt": int(self.font_tick_size.value()),
-                    "title_size_pt": int(self.font_title_size.value()),
-                    "title_weight": 700 if self.font_title_bold.isChecked() else 400,
-                    "color": str(self._font_title_color)
                 }
-            }
-            
-            # Update parent's axis_label_settings
-            self.parent.axis_label_settings.update(settings)
-            
-            # Update parent's font settings
-            try:
-                if hasattr(self.parent, 'font_settings'):
-                    self.parent.font_settings.update(settings.get('fonts', {}))
-                else:
-                    self.parent.font_settings = settings.get('fonts', {})
-                # Apply fonts immediately
-                if hasattr(self.parent, 'apply_fonts'):
-                    self.parent.apply_fonts()
-            except Exception:
-                pass
-            
-            # Apply the changes by calling update_parameter_names
-            if hasattr(self.parent, 'update_parameter_names'):
-                self.parent.update_parameter_names()
-        
-        # Replot all plots to update the display
-        self.parent.g_xplot.replot()
-        self.parent.g_yplot.replot()
-        if hasattr(self.parent, 'g_zplot'):
-            self.parent.g_zplot.replot()
-        self.parent.g_2dplot.replot()
-        if hasattr(self.parent, 'overlay_plot'):
-            self.parent.overlay_plot.replot()
-        
-        logging.log(0, "Applied axis visibility and label settings changes")
+                self.parent.axis_label_settings.update(settings)
+                try:
+                    if hasattr(self.parent, 'font_settings'):
+                        self.parent.font_settings.update(settings.get('fonts', {}))
+                    else:
+                        self.parent.font_settings = settings.get('fonts', {})
+                    if hasattr(self.parent, 'apply_fonts'):
+                        self.parent.apply_fonts()
+                except Exception:
+                    pass
+                if hasattr(self.parent, 'update_parameter_names'):
+                    self.parent.update_parameter_names()
+
+            self.parent.g_xplot.replot()
+            self.parent.g_yplot.replot()
+            if hasattr(self.parent, 'g_zplot'):
+                self.parent.g_zplot.replot()
+            self.parent.g_2dplot.replot()
+            if hasattr(self.parent, 'overlay_plot'):
+                self.parent.overlay_plot.replot()
+
+            logging.log(0, "Applied axis visibility and label settings changes")
+        except Exception as exc:
+            logging.exception("Failed to apply axis settings")
+            self.error_presenter.error(
+                "Axis Control",
+                f"Unable to apply axis or label changes.\nDetails: {exc}"
+            )
     
     def save_axis_label_settings(self):
         """
@@ -525,30 +610,28 @@ class AxisControlDialog(QtWidgets.QDialog):
         """
         if not self.parent:
             logging.warning("Cannot save axis label settings: parent is None")
+            self.error_presenter.warn(
+                "Axis Control",
+                "Cannot save axis label settings because the plot parent is unavailable."
+            )
             return
-            
+
         # Gather current settings from checkboxes
         settings = {
-            # Global setting to enable/disable all axis labels
             "enable_all_labels": self.enable_all_labels.isChecked(),
-            # Individual settings for each plot type and axis
             "axis_labels": {
-                # Y-plot axis labels (top and right axes)
                 "y_plot": {
                     "top": self.y_plot_label_top.isChecked(),
                     "right": self.y_plot_label_right.isChecked()
                 },
-                # X-plot axis labels (top axis)
                 "x_plot": {
                     "top": self.x_plot_label_top.isChecked()
                 },
-                # Z-plot axis labels (bottom and left axes)
                 "z_plot": {
                     "bottom": self.z_plot_label_bottom.isChecked(),
                     "left": self.z_plot_label_left.isChecked()
                 }
             },
-            # Font settings
             "fonts": {
                 "tick_size_pt": int(self.font_tick_size.value()),
                 "title_size_pt": int(self.font_title_size.value()),
@@ -556,35 +639,24 @@ class AxisControlDialog(QtWidgets.QDialog):
                 "color": str(self._font_title_color)
             }
         }
-        
+
         try:
-            # Get the settings directory using get_settings_path
             settings_dir = get_settings_path()
-            
+
             if hasattr(self.parent, 'settings') and "axis_labels" in self.parent.settings:
-                # Use the filename from parent's settings
                 fn_axis_labels = settings_dir / self.parent.settings["axis_labels"]
             else:
-                # Fall back to default filename
                 fn_axis_labels = settings_dir / "axis_labels.yaml"
-            
-            # The directory should already exist (created by get_settings_path)
-            # but we'll ensure it just to be safe
+
             settings_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Save settings to file
+
             with open(str(fn_axis_labels), "w") as fp:
-                # Add a header comment
                 fp.write("# Configuration for axis labels and fonts in ndxplorer\n")
                 fp.write("# axis_labels: visibility of labels; fonts: family and sizes\n\n")
-                
-                # Dump the settings as YAML
                 yaml.dump(settings, fp, default_flow_style=False, sort_keys=False)
-            
-            # Update parent's axis_label_settings if it exists
+
             if hasattr(self.parent, 'axis_label_settings'):
                 self.parent.axis_label_settings.update(settings)
-            # Update parent's font_settings too and apply immediately
             try:
                 if hasattr(self.parent, 'font_settings'):
                     self.parent.font_settings.update(settings.get('fonts', {}))
@@ -595,54 +667,32 @@ class AxisControlDialog(QtWidgets.QDialog):
             except Exception:
                 pass
 
-            # Apply the changes by calling update_parameter_names
             try:
                 if hasattr(self.parent, 'update_parameter_names'):
                     self.parent.update_parameter_names()
             except Exception:
                 pass
 
-            # Replot all plots to update the display
-            try:
-                self.parent.g_xplot.replot()
-            except Exception:
-                pass
-            try:
-                self.parent.g_yplot.replot()
-            except Exception:
-                pass
-            try:
-                if hasattr(self.parent, 'g_zplot'):
-                    self.parent.g_zplot.replot()
-            except Exception:
-                pass
-            try:
-                self.parent.g_2dplot.replot()
-            except Exception:
-                pass
-            try:
-                if hasattr(self.parent, 'overlay_plot'):
-                    self.parent.overlay_plot.replot()
-            except Exception:
-                pass
+            for plot_attr in ("g_xplot", "g_yplot", "g_zplot", "g_2dplot", "overlay_plot"):
+                try:
+                    plot = getattr(self.parent, plot_attr, None)
+                    if plot:
+                        plot.replot()
+                except Exception:
+                    pass
 
             logging.log(0, "Axis label and font settings saved and applied successfully")
-            
-            # Show a success message
-            QtWidgets.QMessageBox.information(
-                self,
-                "Settings Saved",
-                f"Axis label and font settings saved and applied successfully"
+
+            self.error_presenter.info(
+                "Axis Control",
+                "Axis label and font settings saved and applied successfully."
             )
             
-        except Exception as e:
-            logging.error(f"Error saving axis label settings: {e}")
-            
-            # Show an error message
-            QtWidgets.QMessageBox.critical(
-                self,
-                "Error",
-                f"Error saving axis label settings: {e}"
+        except Exception as exc:
+            logging.exception("Error saving axis label settings")
+            self.error_presenter.error(
+                "Axis Control",
+                f"Error saving axis label settings.\nDetails: {exc}"
             )
     
     def accept(self):

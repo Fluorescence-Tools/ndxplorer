@@ -6,9 +6,9 @@ Supports keyboard navigation:
 from qtpy.QtCore import Signal
 
 # Lazy-import helpers for heavy libraries
-from .lazy_imports import get_umap, get_kmeans, get_hdbscan
+from ..utils.lazy_imports import get_umap, get_kmeans, get_hdbscan
 
-from .logging_config import logging
+from ..logging_config import logging
 
 try:
     from chisurf.gui import QtGui, QtCore, QtWidgets
@@ -16,7 +16,8 @@ except ImportError:
     from qtpy import QtCore
     from qtpy import QtGui, QtWidgets
 
-from .column_selection_dialog import ColumnSelectionDialog
+from ..ui.column_selection_dialog import ColumnSelectionDialog
+from .feedback import ProgressPane, FriendlyErrorPresenter
 
 
 class ClusteringDialog(QtWidgets.QDialog):
@@ -34,6 +35,9 @@ class ClusteringDialog(QtWidgets.QDialog):
         logging.log(0, "Initializing ClusteringDialog")
         super(ClusteringDialog, self).__init__(parent)
         self.setWindowTitle("Clustering Controls")
+        self.setMinimumWidth(520)
+        self.setSizeGripEnabled(True)
+        self.error_presenter = FriendlyErrorPresenter(self)
 
         # Initialize clustering settings
         self._cluster_method = "kmeans"  # default to K-means
@@ -274,11 +278,9 @@ class ClusteringDialog(QtWidgets.QDialog):
         umap_layout.addWidget(self.pushButtonPlotUMAP)
         self.groupBoxUMAP.setLayout(umap_layout)
 
-        # Create progress bar (initially hidden)
-        self.progressBarClustering = QtWidgets.QProgressBar()
-        self.progressBarClustering.setRange(0, 100)
-        self.progressBarClustering.setValue(0)
-        self.progressBarClustering.setVisible(False)
+        # Modern progress pane for async tasks
+        self.progress_pane = ProgressPane(self, busy_text="Running clustering…")
+        self.progress_pane.setVisible(False)
 
         # Add widgets to main layout
         main_layout.addWidget(self.pushButtonSelectColumns)
@@ -286,7 +288,7 @@ class ClusteringDialog(QtWidgets.QDialog):
         main_layout.addWidget(self.pushButtonCancelClustering)
         main_layout.addWidget(self.pushButtonSaveClustering)
         main_layout.addWidget(self.groupBoxUMAP)
-        main_layout.addWidget(self.progressBarClustering)
+        main_layout.addWidget(self.progress_pane)
 
     def update_clustering_parameters_ui(self):
         """
@@ -404,7 +406,6 @@ class ClusteringDialog(QtWidgets.QDialog):
         parent = self.parent()
         if parent is not None and hasattr(self.parent(), 'data_source'):
             parameter_names = parent.data_source.parameter_names
-            print("onllslslsls")
 
             # Create and show the dialog
             dialog = ColumnSelectionDialog(
@@ -451,11 +452,14 @@ class ClusteringDialog(QtWidgets.QDialog):
                     installed = False
                     logging.warning(f"Could not run installer for hdbscan: {_e}")
                 if not installed:
+                    self.error_presenter.warn(
+                        "HDBSCAN Not Installed",
+                        "Installation was cancelled or failed; clustering cannot continue."
+                    )
                     return
                 # Retry import after installation
                 if get_hdbscan() is None:
-                    QtWidgets.QMessageBox.information(
-                        QtWidgets.QApplication.activeWindow(),
+                    self.error_presenter.info(
                         "HDBSCAN Installed",
                         "HDBSCAN was installed but could not be imported immediately.\n"
                         "Please restart ChiSurf and try again."
@@ -464,8 +468,7 @@ class ClusteringDialog(QtWidgets.QDialog):
         elif self._cluster_method == "kmeans":
             # Lazy import via centralized getter
             if get_kmeans() is None:
-                QtWidgets.QMessageBox.warning(
-                    QtWidgets.QApplication.activeWindow(),
+                self.error_presenter.warn(
                     "scikit-learn Not Available",
                     "scikit-learn is not installed. Please install it using pip or conda."
                 )
@@ -474,15 +477,12 @@ class ClusteringDialog(QtWidgets.QDialog):
         # Check if any columns are selected for clustering
         if not self._cluster_columns:
             # No columns selected, ask user if they want to use default (x, y, z) values
-            reply = QtWidgets.QMessageBox.question(
-                QtWidgets.QApplication.activeWindow(),
+            reply = self.error_presenter.question(
                 "Select Columns for Clustering",
                 "It is recommended to select specific columns for clustering to get better results.\n\n"
                 "Would you like to select columns now?\n\n"
                 "If you click 'No', clustering will use only the current X, Y, and Z axis values, "
                 "which may not provide optimal clustering results.",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.Yes
             )
 
             if reply == QtWidgets.QMessageBox.Yes:
@@ -500,8 +500,11 @@ class ClusteringDialog(QtWidgets.QDialog):
         self.pushButtonSelectColumns.setEnabled(False)
         self.comboBoxClusteringMethod.setEnabled(False)
         self.pushButtonCancelClustering.setVisible(True)
-        self.progressBarClustering.setVisible(True)
-        self.progressBarClustering.setValue(0)
+        if self.progress_pane:
+            self.progress_pane.start(
+                f"Running {self._cluster_method.upper()} clustering…",
+                indeterminate=True
+            )
 
         # Notify parent to start clustering
         if self.parent() is not None and hasattr(self.parent(), 'start_clustering_from_dialog'):
@@ -573,8 +576,7 @@ class ClusteringDialog(QtWidgets.QDialog):
                 return
             # Retry import after installation
             if get_umap() is None:
-                QtWidgets.QMessageBox.information(
-                    QtWidgets.QApplication.activeWindow(),
+                self.error_presenter.info(
                     "UMAP Installed",
                     "UMAP (umap-learn) was installed but could not be imported immediately.\n"
                     "Please restart ChiSurf and try again."
@@ -583,8 +585,7 @@ class ClusteringDialog(QtWidgets.QDialog):
 
         # Require at least two columns to be selected for UMAP
         if not self._cluster_columns or len(self._cluster_columns) < 2:
-            QtWidgets.QMessageBox.warning(
-                QtWidgets.QApplication.activeWindow(),
+            self.error_presenter.warn(
                 "Select Columns for UMAP",
                 "Please select at least two columns before computing UMAP."
             )
@@ -615,11 +616,10 @@ class ClusteringDialog(QtWidgets.QDialog):
             )
             
             if success:
-                QtWidgets.QMessageBox.information(
-                    QtWidgets.QApplication.activeWindow(),
+                self.error_presenter.info(
                     "UMAP Computed",
-                    f"UMAP columns (UMAP_1, UMAP_2, etc.) have been added to the dataframe.\n"
-                    f"You can now select them in the axis controls for visualization or clustering."
+                    "UMAP columns (UMAP_1, UMAP_2, etc.) have been added to the dataframe.\n"
+                    "You can now select them in the axis controls for visualization or clustering."
                 )
 
     def on_plot_umap(self):
@@ -630,8 +630,7 @@ class ClusteringDialog(QtWidgets.QDialog):
 
         # Check if UMAP is available lazily
         if get_umap() is None:
-            QtWidgets.QMessageBox.warning(
-                QtWidgets.QApplication.activeWindow(),
+            self.error_presenter.warn(
                 "UMAP Not Available",
                 "UMAP is not installed. Please install it using pip or conda (package: umap-learn)."
             )
@@ -639,8 +638,7 @@ class ClusteringDialog(QtWidgets.QDialog):
 
         # Require at least two columns to be selected for UMAP
         if not self._cluster_columns or len(self._cluster_columns) < 2:
-            QtWidgets.QMessageBox.warning(
-                QtWidgets.QApplication.activeWindow(),
+            self.error_presenter.warn(
                 "Select Columns for UMAP",
                 "Please select at least two columns before creating a UMAP plot."
             )
@@ -675,7 +673,8 @@ class ClusteringDialog(QtWidgets.QDialog):
         Update the progress bar with the current clustering progress.
         """
         logging.log(0, f"Updating clustering progress: {progress}%")
-        self.progressBarClustering.setValue(progress)
+        if self.progress_pane:
+            self.progress_pane.set_progress(progress)
 
     def clustering_completed(self, success=True):
         """
@@ -690,6 +689,9 @@ class ClusteringDialog(QtWidgets.QDialog):
         self.pushButtonCancelClustering.setVisible(False)
         self.pushButtonCancelClustering.setText("Cancel Clustering")
         self.pushButtonCancelClustering.setEnabled(True)
-        self.progressBarClustering.setVisible(False)
-        self.progressBarClustering.setValue(0)
+        if self.progress_pane:
+            if success:
+                self.progress_pane.finish("Clustering finished successfully.")
+            else:
+                self.progress_pane.fail("Clustering cancelled or failed.")
         self.pushButtonSaveClustering.setEnabled(success)

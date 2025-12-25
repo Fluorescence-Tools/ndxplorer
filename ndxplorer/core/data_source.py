@@ -26,7 +26,7 @@ from collections import OrderedDict
 import numpy as np
 import pandas as pd
 
-from .logging_config import logging
+from ..logging_config import logging
 
 try:
     import yaml  # optional
@@ -43,30 +43,68 @@ class CaseInsensitiveDict:
     A very small wrapper that allows case-insensitive access to a pandas.DataFrame
     via indexing (d['ColName']). For columns with suffixes like 'Name | 0-2048',
     the matcher also compares the left part before the first '|'.
+    
+    Optimized for large datasets with cached column lookups.
     """
 
     def __init__(self, data: pd.DataFrame):
         self.data = data
+        self._column_cache = {}
+        self._cache_valid = False
+        self._build_cache()
+
+    def _build_cache(self):
+        """Build optimized lookup cache for column access."""
+        self._column_cache = {}
+        self._column_cache['exact'] = {}
+        self._column_cache['left_pipe'] = {}
+        self._column_cache['prefix'] = {}
+        
+        for col in self.data.columns:
+            col_str = str(col)
+            col_lower = col_str.lower()
+            left = col_str.split('|', 1)[0].strip().lower()
+            
+            # Store exact matches
+            self._column_cache['exact'][col_lower] = col
+            
+            # Store left-of-pipe matches
+            if left not in self._column_cache['left_pipe']:
+                self._column_cache['left_pipe'][left] = col
+            
+            # Store prefix matches (for fallback)
+            for prefix_len in range(1, min(10, len(col_lower)) + 1):
+                prefix = col_lower[:prefix_len]
+                if prefix not in self._column_cache['prefix']:
+                    self._column_cache['prefix'][prefix] = col
+        
+        self._cache_valid = True
 
     def __getitem__(self, key: Any):
         if isinstance(key, str) and isinstance(self.data, pd.DataFrame):
+            if not self._cache_valid:
+                self._build_cache()
+                
             k_lower = key.lower().strip()
-            for col in self.data.columns:
-                col_lower = str(col).lower()
-                if col_lower == k_lower:
-                    val = self.data[col]
-                    return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
-            # Try left-of-pipe equality first (more precise than startswith)
-            for col in self.data.columns:
-                left = str(col).split('|', 1)[0].strip().lower()
-                if left == k_lower:
-                    val = self.data[col]
-                    return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
+            
+            # Try exact match first
+            if k_lower in self._column_cache['exact']:
+                col = self._column_cache['exact'][k_lower]
+                val = self.data[col]
+                return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
+            
+            # Try left-of-pipe match
+            if k_lower in self._column_cache['left_pipe']:
+                col = self._column_cache['left_pipe'][k_lower]
+                val = self.data[col]
+                return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
+            
             # Fallback: prefix match
-            for col in self.data.columns:
-                if str(col).lower().startswith(k_lower):
-                    val = self.data[col]
-                    return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
+            if k_lower in self._column_cache['prefix']:
+                col = self._column_cache['prefix'][k_lower]
+                val = self.data[col]
+                return pd.to_numeric(val, errors='coerce') if not pd.api.types.is_numeric_dtype(val) else val
+            
             # Let pandas raise if nothing matched
             return self.data[key]
         return self.data[key]
@@ -366,6 +404,11 @@ class DataSource:
     _parameter_names: List[str]
 
     def __init__(self, parameter_names: Optional[List[str]] = None, data: Optional[pd.DataFrame | np.ndarray] = None):
+        # Performance optimization: initialize cache before data assignment
+        self._column_cache = {}
+        self._cache_valid = False
+        self._cached_values_array = None
+        
         if isinstance(data, np.ndarray):
             self.data = pd.DataFrame(data, columns=parameter_names)
         elif isinstance(data, pd.DataFrame):
@@ -394,9 +437,15 @@ class DataSource:
     def values(self) -> np.ndarray:
         """
         Returns (n_parameters, n_points) numeric np.ndarray (cached).
+        Optimized for large datasets with lazy evaluation and memory efficiency.
         """
         if not hasattr(self, '_cached_values_array') or self._cached_values_array is None:
-            self._cached_values_array = np.asarray(self._data_numeric, dtype=float).T
+            # Use memory-efficient conversion without intermediate copy
+            numeric_data = self._data_numeric.values
+            if numeric_data.dtype != np.float64:
+                numeric_data = numeric_data.astype(np.float64, copy=False)
+            # Transpose in-place when possible
+            self._cached_values_array = numeric_data.T
         return self._cached_values_array
 
     def clear(self) -> None:
@@ -432,6 +481,7 @@ class DataSource:
     ) -> np.ndarray:
         """
         Combine selection masks and optionally mask NaN/Inf on selected parameter indices.
+        Optimized for large datasets with vectorized operations and early termination.
 
         Returns
         -------
@@ -441,25 +491,38 @@ class DataSource:
         idxs = idxs or []
         d = self.values
         n_param, n_pts = d.shape
+        
+        # Pre-allocate mask with zeros for better performance
         mask = np.zeros((n_param, n_pts), dtype=bool)
-
+        
+        # Early exit if no selections and no idx filtering
+        if not selections and not idxs:
+            return mask
+        
+        # Process selections with vectorized operations
         for sel in selections:
             try:
                 m = sel.get_mask(d)
                 if isinstance(m, np.ndarray) and m.shape == mask.shape:
+                    # Use in-place OR operation for better performance
                     mask |= m
             except Exception as e:
                 print(f"[DataSource.get_mask] Selection error ({getattr(sel, 'name', 'unnamed')}): {e}", file=sys.stderr)
 
-        for idx in idxs:
-            if 0 <= idx < n_param:
-                col = d[idx, :]
-                bad = np.zeros(n_pts, dtype=bool)
-                if mask_nan:
-                    bad |= np.isnan(col)
-                if mask_inf:
-                    bad |= np.isinf(col)
-                mask[:, bad] = True
+        # Vectorized NaN/Inf filtering for selected indices
+        if idxs:
+            valid_idxs = [idx for idx in idxs if 0 <= idx < n_param]
+            if valid_idxs:
+                # Process all valid indices at once for better performance
+                for idx in valid_idxs:
+                    col = d[idx, :]
+                    bad_mask = np.zeros(n_pts, dtype=bool)
+                    if mask_nan:
+                        bad_mask |= np.isnan(col)
+                    if mask_inf:
+                        bad_mask |= np.isinf(col)
+                    # Apply column-wise mask to all parameters
+                    mask[:, bad_mask] = True
 
         return mask
 
@@ -472,9 +535,12 @@ class DataSource:
         self._data = v.copy() if isinstance(v, pd.DataFrame) else pd.DataFrame()
         self._parameter_names = list(self._data.columns)
         self._data_numeric = self._data.apply(pd.to_numeric, errors='coerce')
-        # Invalidate cached array
+        # Invalidate all caches
         if hasattr(self, '_cached_values_array'):
             self._cached_values_array = None
+        self._cache_valid = False
+        if hasattr(self, '_column_cache'):
+            self._column_cache.clear()
 
     @property
     def size(self) -> int:

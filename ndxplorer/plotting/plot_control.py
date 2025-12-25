@@ -8,8 +8,8 @@ import math
 from qtpy import QtGui, uic, QtCore, QtWidgets
 from pyqtgraph.widgets.SpinBox import SpinBox
 
-from . data_source import RectangularDataSelection, Gaussian2DSelection
-from .logging_config import logging
+from ..core.data_source import RectangularDataSelection, Gaussian2DSelection
+from ..logging_config import logging
 
 
 class SurfacePlotWidget(QtWidgets.QWidget):
