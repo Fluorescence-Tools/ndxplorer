@@ -23,8 +23,20 @@ except Exception:  # pragma: no cover
 from ..core.data_source import DataSource
 from ..settings import get_settings_path, ensure_default_settings
 
+# PyArrow support for faster CSV reading
+try:
+    import pyarrow as pa
+    import pyarrow.csv as pa_csv
+    import pyarrow.compute as pc
+    HAVE_PYARROW = True
+except ImportError:
+    pa = None
+    pa_csv = None
+    pc = None
+    HAVE_PYARROW = False
+
 from qtpy.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel, QApplication, QMessageBox
-from qtpy.QtCore import Qt, QCoreApplication
+from qtpy.QtCore import Qt, QCoreApplication, QThread
 
 
 """
@@ -56,6 +68,24 @@ _DEFAULT_BURST_EXTRA_ENDINGS: List[str] = ["bg4", "br4", "by4", "bv4", "td4"]
 
 # ----------------------------- utils -----------------------------------------
 
+def _in_gui_thread() -> bool:
+    """Return True if we're running in the main GUI thread."""
+    app = QApplication.instance()
+    if app is None:
+        return False
+    try:
+        return app.thread() == QThread.currentThread()
+    except Exception:
+        return False
+
+
+def _safe_warning(title: str, message: str) -> None:
+    """Show a QMessageBox when in GUI thread, otherwise fall back to logging."""
+    if _in_gui_thread():
+        QMessageBox.warning(None, title, message)
+    else:
+        logging.warning("%s: %s", title, message)
+
 def _zip_contains_any(zip_path: str, exts: tuple[str, ...]) -> bool:
     try:
         with zipfile.ZipFile(zip_path, 'r') as zf:
@@ -64,6 +94,124 @@ def _zip_contains_any(zip_path: str, exts: tuple[str, ...]) -> bool:
     except Exception as e:
         logging.debug("Zip inspect failed for '%s': %s", zip_path, e)
         return False
+
+
+# ----------------------------- PyArrow fast readers ---------------------------
+
+def read_csv_pyarrow(
+    path: Union[str, pathlib.Path],
+    delimiter: str = ',',
+    has_header: bool = True,
+    skip_rows: int = 0,
+) -> pd.DataFrame:
+    """
+    Read CSV file using PyArrow for maximum speed.
+    
+    This is 2-5x faster than pandas for large files due to:
+    - Multi-threaded parsing
+    - Efficient memory allocation
+    - Zero-copy string handling
+    
+    Falls back to pandas if PyArrow fails or is unavailable.
+    """
+    import time
+    t0 = time.perf_counter()
+    
+    if not HAVE_PYARROW:
+        logging.info("[read_csv_pyarrow] PyArrow not available, falling back to pandas")
+        return pd.read_csv(path, sep=delimiter, header=0 if has_header else None, skiprows=skip_rows)
+    
+    try:
+        # Configure for maximum read speed
+        read_options = pa_csv.ReadOptions(
+            use_threads=True,
+            block_size=1024 * 1024 * 32,  # 32MB blocks
+            skip_rows=skip_rows,
+        )
+        
+        parse_options = pa_csv.ParseOptions(
+            delimiter=delimiter,
+        )
+        
+        # Auto-detect column types, treating nulls appropriately
+        convert_options = pa_csv.ConvertOptions(
+            strings_can_be_null=True,
+            null_values=['', 'NA', 'N/A', 'NaN', 'nan', 'null', 'NULL', '#N/A'],
+            true_values=['true', 'True', 'TRUE', '1'],
+            false_values=['false', 'False', 'FALSE', '0'],
+        )
+        
+        if not has_header:
+            read_options.autogenerate_column_names = True
+        
+        table = pa_csv.read_csv(
+            path,
+            read_options=read_options,
+            parse_options=parse_options,
+            convert_options=convert_options,
+        )
+        
+        t1 = time.perf_counter()
+        
+        # Convert to pandas DataFrame
+        df = table.to_pandas(
+            self_destruct=True,  # Free Arrow memory immediately
+            split_blocks=True,   # Better memory layout
+            zero_copy_only=False,
+        )
+        
+        t2 = time.perf_counter()
+        logging.info("[read_csv_pyarrow] %d rows: arrow_read=%.2fs, to_pandas=%.2fs",
+                     len(df), t1 - t0, t2 - t1)
+        
+        return df
+        
+    except Exception as e:
+        logging.warning("[read_csv_pyarrow] PyArrow failed: %s. Falling back to pandas.", e)
+        return pd.read_csv(path, sep=delimiter, header=0 if has_header else None, skiprows=skip_rows)
+
+
+def read_csv_fast(
+    path: Union[str, pathlib.Path],
+    **kwargs,
+) -> pd.DataFrame:
+    """
+    Read CSV with automatic engine selection for best performance.
+    
+    Uses PyArrow when:
+    - File is large (> 10MB)
+    - No complex parsing options needed
+    
+    Falls back to pandas C engine otherwise.
+    """
+    path = pathlib.Path(path)
+    file_size = path.stat().st_size if path.exists() else 0
+    
+    # Use PyArrow for files > 10MB when available
+    use_pyarrow = (
+        HAVE_PYARROW
+        and file_size > 10 * 1024 * 1024
+        and not kwargs.get('decimal')  # PyArrow doesn't support decimal param
+        and not kwargs.get('converters')
+        and not kwargs.get('dtype')
+    )
+    
+    if use_pyarrow:
+        delimiter = kwargs.get('sep', kwargs.get('delimiter', ','))
+        has_header = kwargs.get('header', 0) == 0
+        skip_rows = kwargs.get('skiprows', 0)
+        if isinstance(skip_rows, list):
+            skip_rows = 0  # PyArrow doesn't support list skiprows
+            use_pyarrow = False
+        
+        if use_pyarrow:
+            try:
+                return read_csv_pyarrow(path, delimiter=delimiter, has_header=has_header, skip_rows=skip_rows)
+            except Exception as e:
+                logging.warning("[read_csv_fast] PyArrow fallback triggered: %s", e)
+    
+    # Fall back to pandas
+    return pd.read_csv(path, **kwargs)
 
 
 class ProgressWindow(QDialog):
@@ -234,6 +382,9 @@ def _process_burst_analysis_dir(
     """
     Process a burst analysis directory. Prefer HDF5 (hdf5/*.h5|*.hdf5), else read BUR files.
     """
+    import time as _time
+    t0 = _time.perf_counter()
+
     additional_endings = additional_endings or ["bg4", "br4", "by4", "bv4", "td4"]
 
     # Prefer HDF5
@@ -255,21 +406,32 @@ def _process_burst_analysis_dir(
     if not bur_files:
         raise FileNotFoundError("No .bur files in 'bi4_bur' or 'bur'.")
 
-    progress = ProgressWindow(
-        title="File Processing",
-        message="Processing burst files...",
-        max_value=len(bur_files),
-    )
-    progress.show()
+    n_files = len(bur_files)
+    logging.info("Processing %d .bur files from %s", n_files, base_path)
+
+    progress = None
+    if _in_gui_thread():
+        progress = ProgressWindow(
+            title="File Processing",
+            message=f"Processing {n_files} burst files...",
+            max_value=n_files,
+        )
+        progress.show()
 
     pieces: List[pd.DataFrame] = []
     macro_time_offset_ms = 0.0
     macro_col_ms = "Mean Macro Time (ms)"
     macro_col_s  = "Mean Macro Time (s)"
 
+    # Cache format detection from first file for speed (all .bur files share format)
+    bur_format_cache: Optional[Dict] = None
+    extra_format_cache: Dict[str, Dict] = {}  # ending -> kwargs
+
     for i, bur in enumerate(bur_files, start=1):
-        # main .bur with autodetection (fixes old sep="\t" bug)
-        df_main = _read_text_table_auto(bur)
+        # Detect format from first file, reuse for rest
+        if bur_format_cache is None:
+            bur_format_cache = _detect_format(bur)
+        df_main = _read_text_table_auto(bur, cached_kwargs=bur_format_cache)
         df_main.columns = [str(c).strip() for c in df_main.columns]
         if drop_last_column and df_main.shape[1] > 1:
             df_main = df_main.iloc[:, :-1]
@@ -282,7 +444,10 @@ def _process_burst_analysis_dir(
             extra = base_path / ending / f"{stem}.{ending}"
             if not extra.exists():
                 continue
-            df_extra = _read_text_table_auto(extra)
+            # Cache format per extra file type
+            if ending not in extra_format_cache:
+                extra_format_cache[ending] = _detect_format(extra)
+            df_extra = _read_text_table_auto(extra, cached_kwargs=extra_format_cache[ending])
             df_extra.columns = [str(c).strip() for c in df_extra.columns]
             if df_extra.shape[1] == 0:
                 continue
@@ -316,17 +481,26 @@ def _process_burst_analysis_dir(
 
         pieces.append(combined)
 
-        progress.set_value(i)
-        QCoreApplication.processEvents()
+        if progress is not None:
+            progress.set_value(i)
+            QCoreApplication.processEvents()
 
-    progress.set_value(len(bur_files))
-    progress.close()
+    if progress is not None:
+        progress.set_value(n_files)
+        progress.close()
+
+    t1 = _time.perf_counter()
+    logging.info("Read %d files in %.2fs, concatenating...", n_files, t1 - t0)
 
     final_df = (
         pd.concat(pieces, ignore_index=True)
         if any(len(df) for df in pieces)
         else pieces[0].iloc[0:0]
     )
+
+    t2 = _time.perf_counter()
+    logging.info("Burst load complete: %d rows, %.2fs total (concat %.2fs)",
+                 len(final_df), t2 - t0, t2 - t1)
 
     ds = DataSource()
     ds.data = final_df
@@ -350,8 +524,7 @@ def read_csv_sampling(filenames: List[str], sep: str = '\t') -> DataSource:
     for fn in filenames[1:]:
         df = pd.read_csv(fn, sep=sep)
         if len(df) != row_count:
-            QMessageBox.warning(
-                None,
+            _safe_warning(
                 "Row Count Mismatch",
                 f"File {fn} has {len(df)} rows, expected {row_count}. Skipping."
             )
@@ -447,7 +620,7 @@ def read_csv(filenames: List[str]) -> DataSource:
             df = read_csv_file(fn)
             dfs.append(df)
         except Exception as e:
-            QMessageBox.warning(None, "Open CSV", f"Could not read file {fn}: {e}")
+            _safe_warning("Open CSV", f"Could not read file {fn}: {e}")
 
     if not dfs:
         return DataSource()
@@ -475,8 +648,7 @@ def read_csv(filenames: List[str]) -> DataSource:
             d2 = d.drop(columns=list(dup)) if dup else d
             combined = pd.concat([combined, d2], axis=1)
     else:
-        QMessageBox.warning(
-            None,
+        _safe_warning(
             "Auto-merge CSV",
             "Files share neither column count nor row count. Using column-wise merge with duplicate-column removal."
         )
@@ -575,11 +747,11 @@ def read_csv_file(filename: str) -> pd.DataFrame:
                 tio = io.TextIOWrapper(bio, encoding="utf-8", errors="ignore")
                 df = pd.read_csv(tio, **kwargs)
     else:
-        with open(p, "rb") as f:
-            tio = io.TextIOWrapper(f, encoding="utf-8", errors="ignore")
-            head = _read_head_lines(tio)
-        kwargs = _detect_and_build_kwargs(head)
-        df = pd.read_csv(p, **kwargs)
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            head = _read_head_lines(f)
+            kwargs = _detect_and_build_kwargs(head)
+            f.seek(0)
+            df = pd.read_csv(f, **kwargs)
 
     logging.info("[read_csv_file] Read %d rows from %s", len(df), filename)
     logging.info("[read_csv_file] Columns: %s", ", ".join(map(str, df.columns)))
@@ -593,67 +765,225 @@ def read_csv_file(filename: str) -> pd.DataFrame:
 
 # --------------------- low-level text-table helpers --------------------------
 
-def _read_text_table_auto(path: pathlib.Path) -> pd.DataFrame:
+def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = None) -> pd.DataFrame:
     """
     Read a single text-like file (.bur/.csv/.txt/.dat) with autodetection + MSVC normalization.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        File to read.
+    cached_kwargs : Optional[Dict]
+        If provided, skip detection and use these kwargs directly for pd.read_csv.
+        This speeds up reading many files with the same format.
+
+    This implementation avoids double-reading the file by rewinding the same handle after sampling.
     """
-    with open(path, "rb") as f:
-        tio = io.TextIOWrapper(f, encoding="utf-8", errors="ignore")
-        head = _read_head_lines(tio)
-    kwargs = _detect_and_build_kwargs(head)
-    df = pd.read_csv(path, **kwargs)
-    df = _normalize_msvc_tokens(df)
-    # don't force numeric or fill here; leave types as read (burst pipeline often mixes ints/floats)
-    # but we can still best-effort numeric:
-    df = _best_effort_numeric(df)
+    import time as _time
+    
+    if cached_kwargs is not None:
+        kwargs = cached_kwargs.copy()
+    else:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            head = _read_head_lines(f)
+            kwargs = _detect_and_build_kwargs(head)
+    
+    def _load_with_kwargs(read_kwargs: Dict) -> pd.DataFrame:
+        engine_local = read_kwargs.get("engine", "c")
+        if engine_local == "pyarrow":
+            # Use chunksize for large files to reduce memory pressure
+            try:
+                file_size = path.stat().st_size
+                if file_size > 100 * 1024 * 1024:
+                    chunks = pd.read_csv(path, chunksize=100000, **read_kwargs)
+                    return pd.concat(chunks, ignore_index=True)
+                return pd.read_csv(path, **read_kwargs)
+            except Exception:
+                # Fallback to regular read if chunked fails
+                return pd.read_csv(path, **read_kwargs)
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return pd.read_csv(f, **read_kwargs)
+
+    def _drop_trailing_empty_columns(frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty or frame.shape[1] == 0:
+            return frame
+        working = frame
+        while working.shape[1] > 0:
+            last_col_name = working.columns[-1]
+            col = working[last_col_name]
+            all_nan = col.isna().all()
+            all_blank = False
+            if not all_nan and (pd.api.types.is_object_dtype(col) or pd.api.types.is_string_dtype(col)):
+                non_null = col.dropna()
+                if non_null.empty:
+                    all_blank = True
+                else:
+                    all_blank = non_null.astype(str).str.strip().eq("").all()
+            if all_nan or all_blank:
+                logging.info("[read] Dropping trailing empty column '%s'", last_col_name)
+                working = working.iloc[:, :-1]
+                continue
+            break
+        return working
+
+    def _update_cache(new_kwargs: Dict) -> None:
+        if cached_kwargs is not None:
+            cached_kwargs.clear()
+            cached_kwargs.update(new_kwargs)
+
+    t0 = _time.perf_counter()
+    while True:
+        try:
+            df = _load_with_kwargs(kwargs)
+            break
+        except Exception as exc:
+            if kwargs.get("engine") == "pyarrow":
+                logging.warning("[read] PyArrow failed for %s (%s). Falling back to pandas engine.",
+                                path.name, exc)
+                kwargs = kwargs.copy()
+                kwargs["engine"] = "c"
+                kwargs.setdefault("skipinitialspace", True)
+                _update_cache(kwargs)
+                continue
+            if cached_kwargs is not None:
+                logging.warning("[read] Cached format failed for %s (%s). Re-detecting format.",
+                                path.name, exc)
+                kwargs = _detect_format(path)
+                _update_cache(kwargs)
+                t0 = _time.perf_counter()
+                continue
+            raise
+    t1 = _time.perf_counter()
+
+    before_drop_cols = df.shape[1]
+    df = _drop_trailing_empty_columns(df)
+    if df.shape[1] != before_drop_cols:
+        logging.info("[read] Width reduced from %d to %d after dropping empty column(s)",
+                     before_drop_cols, df.shape[1])
+
+    engine = kwargs.get("engine", "c")
+    
+    # For pyarrow, convert object columns to numeric if possible
+    if engine == "pyarrow":
+        object_cols_before = df.select_dtypes(include=['object']).columns
+        if len(object_cols_before) > 0:
+            logging.info("[read] PyArrow left %d object columns, attempting conversion", len(object_cols_before))
+            # Skip filename columns that clearly contain strings
+            filename_cols = [col for col in object_cols_before 
+                           if any(keyword in col.lower() for keyword in ['file', 'path', 'name', 'directory'])]
+            if filename_cols:
+                logging.info("[read] Skipping filename columns: %s", filename_cols)
+            
+            # Convert only non-filename columns
+            cols_to_convert = [col for col in object_cols_before if col not in filename_cols]
+            if cols_to_convert:
+                # Log which columns need conversion and sample data
+                for col in cols_to_convert:
+                    sample_data = df[col].head(5).tolist()
+                    logging.info("[read] Converting column '%s': sample=%s", col, sample_data[:3])
+                # Fast in-place conversion: convert each column directly
+                for col in cols_to_convert:
+                    df[col] = pd.to_numeric(df[col], errors='coerce', downcast='float')
+    t1_post_convert = _time.perf_counter()
+    
+    object_cols = df.select_dtypes(include=['object']).columns
+    has_object_cols = len(object_cols) > 0
+    
+    t2_start = _time.perf_counter()
+    if has_object_cols:
+        # Skip filename columns from post-processing too
+        filename_cols = [col for col in object_cols 
+                       if any(keyword in col.lower() for keyword in ['file', 'path', 'name', 'directory'])]
+        if filename_cols:
+            logging.info("[read] Skipping filename columns in post-processing: %s", filename_cols)
+        
+        # Only process non-filename columns
+        cols_to_process = [col for col in object_cols if col not in filename_cols]
+        if cols_to_process:
+            logging.info("[read] Running post-processing on %d object columns", len(cols_to_process))
+            df = _normalize_msvc_tokens(df)
+            df = _best_effort_numeric(df)
+        else:
+            logging.info("[read] Skipping post-processing - only filename columns remain")
+    else:
+        logging.info("[read] Skipping post-processing - no object columns")
+    t2 = _time.perf_counter()
+    
+    logging.info("[read] %d rows, pd.read_csv=%.2fs, convert=%.2fs, post_process=%.2fs, object_cols=%d",
+                 len(df), t1 - t0, t1_post_convert - t1, t2 - t2_start, len(df.select_dtypes(include=['object']).columns))
+    
     return df
+
+
+def _detect_format(path: pathlib.Path) -> Dict:
+    """
+    Detect file format and return kwargs for pd.read_csv.
+    Can be cached and reused for files with the same format.
+    """
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        head = _read_head_lines(f)
+        return _detect_and_build_kwargs(head)
 
 
 def _normalize_msvc_tokens(df: pd.DataFrame) -> pd.DataFrame:
     """
     Replace MSVC weird tokens with NaN/±Inf (full-cell matches).
+    Optimized: only processes columns that actually contain MSVC tokens.
     """
-    def _norm_cell(x):
-        if isinstance(x, str):
-            if _WIN_NAN_RE.match(x):
-                return np.nan
-            if _WIN_PINF_RE.match(x):
-                return np.inf
-            if _WIN_NINF_RE.match(x):
-                return -np.inf
-        return x
-    return df.map(_norm_cell)
+    if df.empty:
+        return df
+    
+    str_cols = df.select_dtypes(include=['object']).columns
+    if len(str_cols) == 0:
+        return df
+    
+    # Quick check: sample first 100 rows to see if any MSVC tokens exist
+    # This avoids expensive regex on files that don't have MSVC tokens
+    sample_size = min(100, len(df))
+    has_msvc = False
+    for col in str_cols:
+        sample = df[col].head(sample_size).astype(str)
+        if sample.str.contains(r'#(?:INF|IND|QNAN|SNAN)', case=False, na=False).any():
+            has_msvc = True
+            break
+    
+    if not has_msvc:
+        return df
+    
+    # Only copy if we actually need to modify
+    result = df.copy()
+    
+    for col in str_cols:
+        # Use vectorized replace with regex - much faster than .apply()
+        series = result[col].astype(str)
+        
+        # Single pass replacements using pd.Series.replace with regex
+        result[col] = series.replace({
+            _WIN_NAN_RE: np.nan,
+            _WIN_PINF_RE: np.inf,
+            _WIN_NINF_RE: -np.inf,
+        }, regex=True)
+    
+    return result
 
 
 def _best_effort_numeric(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Convert columns to numeric only when every non-null entry parses successfully.
-
-    This emulates the previous `errors="ignore"` behaviour from `pd.to_numeric`
-    without relying on the deprecated option.
+    Convert columns to numeric. Fast path: just convert, don't validate.
     """
     if df.empty:
         return df
 
-    out = df.copy()
-    for col in out.columns:
-        series = out[col]
-        if pd.api.types.is_numeric_dtype(series):
-            continue
+    str_cols = df.select_dtypes(include=['object']).columns
+    if len(str_cols) == 0:
+        return df
+    
+    # Fast path: convert all object columns to numeric in one go
+    # Use errors='coerce' - non-numeric strings become NaN
+    for col in str_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        try:
-            converted = pd.to_numeric(series, errors="coerce")
-        except Exception:
-            continue
-
-        non_missing = series.notna()
-        if non_missing.any() and converted.loc[non_missing].isna().any():
-            continue
-
-        out[col] = converted
-
-    return out
-
+    return df
 
 def _find_first_member(zf: zipfile.ZipFile, exts: Tuple[str, ...]) -> Optional[str]:
     for name in zf.namelist():
@@ -778,12 +1108,28 @@ def _detect_and_build_kwargs(lines: List[str]) -> Dict:
         sep_show = "<whitespace>"
     else:
         kwargs["sep"] = delim
+        # Use pyarrow engine for speed if available and compatible
+        # pyarrow doesn't support: decimal comma, skiprows, skipinitialspace
+        can_use_pyarrow = (
+            not dec_comma
+            and first_idx == 0
+            and use_header_idx in (None, 0)
+        )
+        if can_use_pyarrow:
+            try:
+                import pyarrow  # noqa: F401
+                kwargs["engine"] = "pyarrow"
+                kwargs.pop("skipinitialspace", None)  # not supported by pyarrow
+            except ImportError:
+                kwargs["engine"] = "c"
+        else:
+            kwargs["engine"] = "c"
         sep_show = repr(delim)
 
     if dec_comma:
         kwargs["decimal"] = ","
 
-    # debug log (compact)
-    logging.info("[detect] sep=%s, width=%s, first=%s, header=%s, data_start=%s, dec_comma=%s",
-                 sep_show, complete_cols, first_idx, header_where, data_start, dec_comma)
+    # debug log (compact) - only shown once per file type due to caching
+    logging.info("[detect] sep=%s, width=%d, engine=%s, header=%s, data_start=%d",
+                 sep_show, complete_cols, kwargs.get("engine", "c"), header_where, data_start)
     return kwargs

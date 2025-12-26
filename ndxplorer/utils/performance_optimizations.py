@@ -22,6 +22,14 @@ import pandas as pd
 from ..logging_config import logging
 from ..core.data_source import DataSource
 
+try:  # Optional acceleration via numba
+    import numba as nb  # type: ignore
+
+    _HAVE_NUMBA = True
+except Exception:  # pragma: no cover - runtime availability only
+    nb = None  # type: ignore
+    _HAVE_NUMBA = False
+
 
 class LazyDataLoader:
     """
@@ -313,6 +321,68 @@ def create_memory_efficient_mask(data_shape: Tuple[int, int]) -> np.ndarray:
 DEFAULT_STREAM_THRESHOLD = int(os.getenv("NDX_HISTOGRAM_STREAM_THRESHOLD", "750000"))
 DEFAULT_CHUNK_SIZE = int(os.getenv("NDX_HISTOGRAM_CHUNK_SIZE", "100000"))
 
+if _HAVE_NUMBA:
+
+    @nb.njit(cache=True, parallel=True, fastmath=True)  # type: ignore[misc]
+    def _histogram1d_numba(
+        data: np.ndarray,
+        edges: np.ndarray,
+        weights: np.ndarray,
+        has_weights: bool,
+    ) -> np.ndarray:
+        """Numba-accelerated 1D histogram computation."""
+        n_bins = edges.size - 1
+        H = np.zeros(n_bins, dtype=np.float64)
+        n = data.size
+        
+        for i in nb.prange(n):
+            v = data[i]
+            if np.isnan(v):
+                continue
+            # Binary search for bin
+            bi = np.searchsorted(edges, v, side='right') - 1
+            if bi < 0 or bi >= n_bins:
+                continue
+            w = weights[i] if has_weights else 1.0
+            H[bi] += w
+        
+        return H
+
+    @nb.njit(cache=True, fastmath=False)  # type: ignore[misc]
+    def _histogram2d_numba(
+        x: np.ndarray,
+        y: np.ndarray,
+        x_edges: np.ndarray,
+        y_edges: np.ndarray,
+        weights: np.ndarray,
+        has_weights: bool,
+    ) -> np.ndarray:
+        nx = x_edges.size - 1
+        ny = y_edges.size - 1
+        H = np.zeros((nx, ny), dtype=np.float64)
+
+        for i in range(x.size):
+            xv = x[i]
+            yv = y[i]
+
+            if np.isnan(xv) or np.isnan(yv):
+                continue
+
+            xi = np.searchsorted(x_edges, xv, side="right") - 1
+            yi = np.searchsorted(y_edges, yv, side="right") - 1
+
+            if xi < 0 or xi >= nx or yi < 0 or yi >= ny:
+                continue
+
+            w = weights[i] if has_weights else 1.0
+            H[xi, yi] += w
+
+        return H
+
+else:  # pragma: no cover - exercised only without numba installed
+    _histogram1d_numba = None  # type: ignore
+    _histogram2d_numba = None  # type: ignore
+
 
 @dataclass
 class Histogram2DComputation:
@@ -367,6 +437,8 @@ def compute_histogram2d_adaptive(
 
     x_edges = np.asarray(x_edges)
     y_edges = np.asarray(y_edges)
+    x_data = np.asarray(x_data, dtype=np.float64)
+    y_data = np.asarray(y_data, dtype=np.float64)
 
     if n_points <= threshold:
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -379,6 +451,23 @@ def compute_histogram2d_adaptive(
             )
         H = np.nan_to_num(H, nan=0.0, posinf=0.0, neginf=0.0)
         return Histogram2DComputation((H, x_out, y_out), chunked=False, n_points=n_points)
+
+    if _HAVE_NUMBA and _histogram2d_numba is not None:
+        logging.info(
+            "compute_histogram2d_adaptive: numba streaming %d points", n_points
+        )
+        nb_weights = (
+            np.asarray(weights, dtype=np.float64) if weights is not None else np.empty(1, dtype=np.float64)
+        )
+        H_accum = _histogram2d_numba(
+            x_data,
+            y_data,
+            np.asarray(x_edges, dtype=np.float64),
+            np.asarray(y_edges, dtype=np.float64),
+            nb_weights,
+            weights is not None,
+        )
+        return Histogram2DComputation((H_accum, x_edges, y_edges), chunked=True, n_points=n_points)
 
     logging.info(
         "compute_histogram2d_adaptive: streaming %d points with chunk_size=%d",
@@ -402,6 +491,172 @@ def compute_histogram2d_adaptive(
         H_accum += np.nan_to_num(H_chunk, nan=0.0, posinf=0.0, neginf=0.0)
 
     return Histogram2DComputation((H_accum, x_edges, y_edges), chunked=True, n_points=n_points)
+
+
+@dataclass
+class Histogram1DComputation:
+    """Container for adaptive 1D histogram results."""
+    counts: np.ndarray
+    edges: np.ndarray
+    n_points: int
+    used_numba: bool
+
+
+def compute_histogram1d_adaptive(
+    data: np.ndarray,
+    edges: np.ndarray,
+    *,
+    weights: Optional[np.ndarray] = None,
+    density: bool = False,
+) -> Histogram1DComputation:
+    """
+    Compute 1D histogram using Numba when available for large datasets.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        1D array of values.
+    edges : np.ndarray
+        Pre-computed bin edges.
+    weights : np.ndarray, optional
+        Optional weights.
+    density : bool
+        If True, normalize to density.
+
+    Returns
+    -------
+    Histogram1DComputation
+        Contains counts, edges, and metadata.
+    """
+    n_points = len(data)
+    edges = np.asarray(edges, dtype=np.float64)
+    data = np.asarray(data, dtype=np.float64)
+
+    used_numba = False
+    if _HAVE_NUMBA and _histogram1d_numba is not None and n_points > 50000:
+        nb_weights = (
+            np.asarray(weights, dtype=np.float64) if weights is not None else np.empty(1, dtype=np.float64)
+        )
+        counts = _histogram1d_numba(data, edges, nb_weights, weights is not None)
+        used_numba = True
+    else:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            counts, _ = np.histogram(data, bins=edges, weights=weights, density=False)
+        counts = np.nan_to_num(counts, nan=0.0, posinf=0.0, neginf=0.0)
+
+    if density and counts.sum() > 0:
+        bin_widths = np.diff(edges)
+        counts = counts / (counts.sum() * bin_widths)
+
+    return Histogram1DComputation(counts=counts, edges=edges, n_points=n_points, used_numba=used_numba)
+
+
+# ---------------------------
+# Display downsampling for large datasets
+# ---------------------------
+
+DEFAULT_DISPLAY_SAMPLE_SIZE = int(os.getenv("NDX_DISPLAY_SAMPLE_SIZE", "500000"))
+
+
+def downsample_for_display(
+    data: np.ndarray,
+    max_points: Optional[int] = None,
+    seed: int = 42,
+) -> Tuple[np.ndarray, bool]:
+    """
+    Downsample data for faster interactive display.
+
+    For very large datasets, use a representative random sample for
+    interactive histogram updates, then compute full data on final.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Input data array (can be 1D or 2D with shape (n_params, n_points)).
+    max_points : int, optional
+        Maximum points to keep (default from env NDX_DISPLAY_SAMPLE_SIZE or 500k).
+    seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    sampled_data : np.ndarray
+        Downsampled data (same shape structure).
+    was_downsampled : bool
+        True if downsampling was applied.
+    """
+    max_points = max_points or DEFAULT_DISPLAY_SAMPLE_SIZE
+    
+    if data.ndim == 1:
+        n_points = len(data)
+        if n_points <= max_points:
+            return data, False
+        rng = np.random.default_rng(seed)
+        indices = rng.choice(n_points, max_points, replace=False)
+        return data[indices], True
+    elif data.ndim == 2:
+        n_points = data.shape[1]
+        if n_points <= max_points:
+            return data, False
+        rng = np.random.default_rng(seed)
+        indices = rng.choice(n_points, max_points, replace=False)
+        return data[:, indices], True
+    else:
+        return data, False
+
+
+# ---------------------------
+# Parallel histogram helpers
+# ---------------------------
+
+def compute_histograms_parallel(
+    x_data: np.ndarray,
+    y_data: np.ndarray,
+    z_data: np.ndarray,
+    x_bins: np.ndarray,
+    y_bins: np.ndarray,
+    z_bins: np.ndarray,
+    *,
+    weights: Optional[np.ndarray] = None,
+    normed_x: bool = False,
+    normed_y: bool = False,
+    normed_z: bool = False,
+) -> Tuple[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray]]:
+    """
+    Compute X, Y, Z histograms in parallel using threading.
+
+    Returns
+    -------
+    tuple of (edges, counts) for x, y, z
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def compute_one(data, bins, normed):
+        result = compute_histogram1d_adaptive(data, bins, weights=weights, density=normed)
+        return result.edges, result.counts
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(compute_one, x_data, x_bins, normed_x): 'x',
+            executor.submit(compute_one, y_data, y_bins, normed_y): 'y',
+            executor.submit(compute_one, z_data, z_bins, normed_z): 'z',
+        }
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                results[key] = future.result()
+            except Exception as e:
+                logging.warning("Parallel histogram error for %s: %s", key, e)
+                # Fallback
+                if key == 'x':
+                    results[key] = (x_bins, np.zeros(len(x_bins) - 1))
+                elif key == 'y':
+                    results[key] = (y_bins, np.zeros(len(y_bins) - 1))
+                else:
+                    results[key] = (z_bins, np.zeros(len(z_bins) - 1))
+
+    return results.get('x'), results.get('y'), results.get('z')
 
 
 def _generate_synthetic_data(n_points: int, seed: int = 13) -> Tuple[np.ndarray, np.ndarray]:

@@ -9,13 +9,23 @@ import numpy as np
 from qtpy import QtCore, QtGui, QtWidgets
 from qtpy.QtGui import QFont, QImage
 
-import guiqwt.curve
-import guiqwt.plot
-import guiqwt.styles
-from guiqwt.builder import make
-from guiqwt.plot import CurveDialog
-from qwt.plot import QwtPlot
-from qwt.plot_canvas import QwtPlotCanvas
+try:
+    import guiqwt.curve
+    import guiqwt.plot
+    import guiqwt.styles
+    from guiqwt.builder import make
+    from guiqwt.plot import CurveDialog
+    from qwt.plot import QwtPlot
+    from qwt.plot_canvas import QwtPlotCanvas
+    GUIQWT_AVAILABLE = True
+except ImportError:
+    GUIQWT_AVAILABLE = False
+    # Create dummy objects for type checking
+    guiqwt = None
+    make = None
+    CurveDialog = None
+    QwtPlot = None
+    QwtPlotCanvas = None
 
 from .image_items import FixedImageItem
 from ..logging_config import logging
@@ -195,6 +205,10 @@ def configure_dynamic_selection_controls(ndxplorer: "NDXplorer") -> None:
 
 def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
     """Create the marginal histogram plots for X, Y and Z, replacing placeholders."""
+    if not GUIQWT_AVAILABLE:
+        logging.warning("guiqwt not available, skipping histogram plot setup")
+        return
+    
     win_z = CurveDialog()
     ndxplorer.g_zplot = win_z.get_plot()
     curveparam_z = guiqwt.styles.CurveParam("Curve", icon="curve.png")
@@ -267,6 +281,10 @@ def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
 
 def setup_2d_histogram_plot(ndxplorer: "NDXplorer", cmap: str) -> None:
     """Create the guiqwt 2D histogram plot along with optional background."""
+    if not GUIQWT_AVAILABLE:
+        logging.warning("guiqwt not available, skipping 2D histogram plot setup")
+        return
+    
     win_2d = guiqwt.plot.ImageDialog(edit=False, toolbar=False)
     ndxplorer.g_2dplot = win_2d.get_plot()
 
@@ -332,6 +350,10 @@ def setup_2d_histogram_plot(ndxplorer: "NDXplorer", cmap: str) -> None:
 
 def setup_overlay_plot(ndxplorer: "NDXplorer") -> None:
     """Create a transparent overlay plot stacked on top of the 2D histogram."""
+    if not GUIQWT_AVAILABLE:
+        logging.warning("guiqwt not available, skipping overlay plot setup")
+        return
+    
     ndxplorer.overlay_plot = guiqwt.curve.CurvePlot(parent=ndxplorer)
     ndxplorer.mouse_event_filter = MouseEventFilter(ndxplorer)
     ndxplorer.overlay_plot.canvas().installEventFilter(ndxplorer.mouse_event_filter)

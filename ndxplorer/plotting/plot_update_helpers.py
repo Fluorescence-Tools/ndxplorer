@@ -6,7 +6,13 @@ from typing import Optional
 
 import numpy as np
 from qtpy import QtWidgets
-from qwt.plot import QwtPlot
+
+try:
+    from qwt.plot import QwtPlot
+    QWT_AVAILABLE = True
+except ImportError:
+    QWT_AVAILABLE = False
+    QwtPlot = None
 
 from ..logging_config import logging
 
@@ -222,6 +228,11 @@ def _compute_count_upper(counts: np.ndarray) -> float:
 
 
 def _autoscale_horizontal_hist(plot: QwtPlot, bin_edges: np.ndarray, counts: np.ndarray) -> None:
+    """Autoscale a horizontal histogram plot."""
+    if not QWT_AVAILABLE or QwtPlot is None:
+        logging.warning("QWT not available, skipping histogram autoscaling")
+        return
+        
     xmin, xmax = _compute_edge_range(bin_edges)
     ymax = _compute_count_upper(counts)
     for axis in (QwtPlot.xBottom, QwtPlot.xTop):
@@ -231,6 +242,11 @@ def _autoscale_horizontal_hist(plot: QwtPlot, bin_edges: np.ndarray, counts: np.
 
 
 def _autoscale_vertical_hist(plot: QwtPlot, bin_edges: np.ndarray, counts: np.ndarray) -> None:
+    """Autoscale a vertical histogram plot."""
+    if not QWT_AVAILABLE or QwtPlot is None:
+        logging.warning("QWT not available, skipping histogram autoscaling")
+        return
+        
     ymin, ymax = _compute_edge_range(bin_edges)
     xmax = _compute_count_upper(counts)
     for axis in (QwtPlot.yLeft, QwtPlot.yRight):
@@ -239,11 +255,12 @@ def _autoscale_vertical_hist(plot: QwtPlot, bin_edges: np.ndarray, counts: np.nd
         plot.setAxisScale(axis, 0.0, xmax)
 
 
-def update_plots(ndxplorer, skip_clustering: bool = False) -> None:
+def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidation: bool = False) -> None:
     if not getattr(ndxplorer, "_deferred_init_done", False) or ndxplorer.g_2dplot is None:
         return
-    logging.debug("update_plots(skip_clustering=%s)", skip_clustering)
-    ndxplorer.invalidate_values_cache()
+    logging.debug("update_plots(skip_clustering=%s, skip_cache_invalidation=%s)", skip_clustering, skip_cache_invalidation)
+    if not skip_cache_invalidation:
+        ndxplorer.invalidate_values_cache()
 
     if ndxplorer._data_source.empty or ndxplorer._data_source.values.shape[0] == 0:
         if hasattr(ndxplorer, "_set_data_loaded"):
@@ -285,9 +302,12 @@ def update_plots(ndxplorer, skip_clustering: bool = False) -> None:
     if not data_ready:
         # Data source exists but axes selections aren't ready yet (e.g., combos blank) —
         # keep the background visible until histograms can be computed.
-        if hasattr(ndxplorer, "_set_data_loaded"):
-            ndxplorer._set_data_loaded(False)
-        _show_background(ndxplorer)
+        # BUT: if we already have data loaded, don't toggle background to avoid flicker during selection updates
+        has_data_loaded = getattr(ndxplorer, "_has_real_data", False)
+        if not has_data_loaded:
+            if hasattr(ndxplorer, "_set_data_loaded"):
+                ndxplorer._set_data_loaded(False)
+            _show_background(ndxplorer)
         return
 
     _hide_background(ndxplorer)
@@ -315,7 +335,6 @@ def update_plots(ndxplorer, skip_clustering: bool = False) -> None:
         _autoscale_horizontal_hist(ndxplorer.g_zplot, z_bin_edges, z_counts)
 
     ndxplorer.update_spinbox_limits()
-    update_spinbox_limits(ndxplorer)
     ndxplorer.update_2d_plot()
     ndxplorer.g_xplot.replot()
     ndxplorer.g_yplot.replot()
@@ -324,6 +343,11 @@ def update_plots(ndxplorer, skip_clustering: bool = False) -> None:
 
 
 def _show_empty_plots(ndxplorer):
+    """Show empty placeholder plots when no data is available."""
+    if not QWT_AVAILABLE or QwtPlot is None:
+        logging.warning("QWT not available, skipping empty plot setup")
+        return
+        
     ndxplorer.g_xhist_m.set_data([0, 1], [0, 0])
     ndxplorer.g_yhist_m.set_data([0, 0], [0, 1])
     ndxplorer.g_zhist_m.set_data([0, 1], [0, 0])
@@ -347,6 +371,11 @@ def _show_empty_plots(ndxplorer):
 
 def auto_contrast(ndxplorer) -> None:
     """Auto-adjust vmin/vmax for the 2D histogram."""
+    # Skip auto contrast if preserving contrast during selection operations
+    if getattr(ndxplorer, '_preserve_contrast', False):
+        logging.debug("auto_contrast: preserving contrast, skipping auto contrast")
+        return
+        
     logging.debug("Auto contrast triggered")
     try:
         if "2d" not in ndxplorer._histogram:
@@ -400,6 +429,11 @@ def auto_contrast(ndxplorer) -> None:
 
 
 def update_spinbox_limits(ndxplorer, low_pct: float = 0.1, high_pct: float = 99) -> None:
+    # Skip contrast update if preserving contrast during selection operations
+    if getattr(ndxplorer, '_preserve_contrast', False):
+        logging.debug("update_spinbox_limits: preserving contrast, skipping update")
+        return
+        
     logging.debug(
         "update_spinbox_limits(low_pct=%s, high_pct=%s)", low_pct, high_pct
     )
