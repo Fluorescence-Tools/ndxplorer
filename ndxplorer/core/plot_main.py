@@ -181,65 +181,71 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     @property
     def x_values(self) -> np.ndarray:
-        logging.debug(f"Getting x_values for parameter: {self.plot_control.x_label}")
-        # Check if we have a cached result that's still valid
-        if hasattr(self, '_cached_x_values') and self._cached_x_values is not None:
-            # Check if the parameter index and values cache are still valid
-            if (getattr(self, '_cached_x_param_idx', None) == self.plot_control.p1[0] and
-                getattr(self, '_cached_values_mask_id', None) == id(self.value_mask)):
-                logging.debug("Using cached x_values")
-                return self._cached_x_values
+        """Get x-axis values, using cache when valid."""
+        p1_idx = self.plot_control.p1[0]
+        mask_id = getattr(self, '_cached_values_mask_id', None)
+        
+        # Fast path: check cache validity without recomputing mask
+        if (
+            getattr(self, '_cached_x_values', None) is not None
+            and getattr(self, '_cached_x_param_idx', None) == p1_idx
+            and mask_id is not None
+        ):
+            return self._cached_x_values
 
-        # Get the values and extract the x column
+        # Get filtered values (this handles mask caching internally)
         values = self.values
-        x_values = values[self.plot_control.p1[0]].astype('float64')
+        x_values = values[p1_idx]
 
-        # Cache the result and parameter index
+        # Cache result
         self._cached_x_values = x_values
-        self._cached_x_param_idx = self.plot_control.p1[0]
-
+        self._cached_x_param_idx = p1_idx
         return x_values
 
     @property
     def y_values(self) -> np.ndarray:
-        logging.debug(f"Getting y_values for parameter: {self.plot_control.y_label}")
-        # Check if we have a cached result that's still valid
-        if hasattr(self, '_cached_y_values') and self._cached_y_values is not None:
-            # Check if the parameter index and values cache are still valid
-            if (getattr(self, '_cached_y_param_idx', None) == self.plot_control.p2[0] and
-                getattr(self, '_cached_values_mask_id', None) == id(self.value_mask)):
-                logging.debug("Using cached y_values")
-                return self._cached_y_values
+        """Get y-axis values, using cache when valid."""
+        p2_idx = self.plot_control.p2[0]
+        mask_id = getattr(self, '_cached_values_mask_id', None)
+        
+        # Fast path: check cache validity without recomputing mask
+        if (
+            getattr(self, '_cached_y_values', None) is not None
+            and getattr(self, '_cached_y_param_idx', None) == p2_idx
+            and mask_id is not None
+        ):
+            return self._cached_y_values
 
-        # Get the values and extract the y column
+        # Get filtered values (this handles mask caching internally)
         values = self.values
-        y_values = values[self.plot_control.p2[0]].astype('float64')
+        y_values = values[p2_idx]
 
-        # Cache the result and parameter index
+        # Cache result
         self._cached_y_values = y_values
-        self._cached_y_param_idx = self.plot_control.p2[0]
-
+        self._cached_y_param_idx = p2_idx
         return y_values
 
     @property
-    def z_values(self)-> np.ndarray:
-        logging.debug(f"Getting z_values for parameter: {self.plot_control.z_label}")
-        # Check if we have a cached result that's still valid
-        if hasattr(self, '_cached_z_values') and self._cached_z_values is not None:
-            # Check if the parameter index and values cache are still valid
-            if (getattr(self, '_cached_z_param_idx', None) == self.plot_control.p3[0] and
-                getattr(self, '_cached_values_mask_id', None) == id(self.value_mask)):
-                logging.debug("Using cached z_values")
-                return self._cached_z_values
+    def z_values(self) -> np.ndarray:
+        """Get z-axis values, using cache when valid."""
+        p3_idx = self.plot_control.p3[0]
+        mask_id = getattr(self, '_cached_values_mask_id', None)
+        
+        # Fast path: check cache validity without recomputing mask
+        if (
+            getattr(self, '_cached_z_values', None) is not None
+            and getattr(self, '_cached_z_param_idx', None) == p3_idx
+            and mask_id is not None
+        ):
+            return self._cached_z_values
 
-        # Get the values and extract the z column
+        # Get filtered values (this handles mask caching internally)
         values = self.values
-        z_values = values[self.plot_control.p3[0]].astype('float64')
+        z_values = values[p3_idx]
 
-        # Cache the result and parameter index
+        # Cache result
         self._cached_z_values = z_values
-        self._cached_z_param_idx = self.plot_control.p3[0]
-
+        self._cached_z_param_idx = p3_idx
         return z_values
 
     @property
@@ -472,6 +478,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self._mask_inf = True  # type: bool
         self._mask_nan = True  # type: bool
         self._dynamic_selection = False  # type: bool
+        self._preserve_contrast = False  # type: bool
         self._has_real_data = False
         self._plot_stack_widget = None
         self._background_label = None
@@ -587,6 +594,12 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Create placeholder widgets to maintain correct layout while plots load
         setup_plot_placeholders(self)
+
+        # Plot update batching timer (debounces repeated UI-triggered updates)
+        self._plot_update_timer: Optional[QtCore.QTimer] = None
+        self._plot_update_pending = False
+        self._plot_update_requires_clustering = False
+        self._initialize_plot_update_timer()
 
         # Arrange docks immediately so the UI looks right even before deferred init finishes
         ui_helpers.arrange_docks_preserving_geometry(self)
@@ -1153,8 +1166,63 @@ class NDXplorer(QtWidgets.QMainWindow):
     def copy_2d_hist_to_clipboard_csv(self):
         copy_2d_hist_csv(self)
 
-    def update_plots(self, skip_clustering=False):
-        plot_update_helpers.update_plots(self, skip_clustering=skip_clustering)
+    def update_plots(self, skip_clustering=False, skip_cache_invalidation=False):
+        self._cancel_scheduled_plot_update()
+        plot_update_helpers.update_plots(self, skip_clustering=skip_clustering, skip_cache_invalidation=skip_cache_invalidation)
+
+    def request_plot_update(self, skip_clustering=False):
+        """
+        Schedule a plot update so rapid UI changes can be batched together.
+        Falls back to immediate update when deferred init is not complete.
+        """
+        if not getattr(self, "_deferred_init_done", False):
+            # Before full init we can't rely on timers—update immediately.
+            return self.update_plots(skip_clustering=skip_clustering)
+
+        timer = self._plot_update_timer
+        if timer is None:
+            self._initialize_plot_update_timer()
+            timer = self._plot_update_timer
+        if timer is None:
+            # If timer creation still fails, run update immediately.
+            return self.update_plots(skip_clustering=skip_clustering)
+
+        self._plot_update_requires_clustering |= not skip_clustering
+        self._plot_update_pending = True
+        if not timer.isActive():
+            timer.start()
+
+    def _cancel_scheduled_plot_update(self):
+        timer = self._plot_update_timer
+        if timer is not None and timer.isActive():
+            timer.stop()
+        self._plot_update_pending = False
+        self._plot_update_requires_clustering = False
+
+    def _initialize_plot_update_timer(self) -> bool:
+        """Create (or confirm) the batching timer used for plot updates."""
+        if self._plot_update_timer is not None:
+            return True
+        try:
+            timer = QtCore.QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(40)  # ms, batches rapid UI signals
+            timer.timeout.connect(self._execute_scheduled_plot_update)
+            self._plot_update_timer = timer
+        except Exception as exc:
+            logging.warning("Failed to create plot update timer: %s", exc)
+            self._plot_update_timer = None
+            return False
+        self._plot_update_pending = False
+        self._plot_update_requires_clustering = False
+        return True
+
+    def _execute_scheduled_plot_update(self):
+        if not self._plot_update_pending:
+            return
+        skip_clustering = not self._plot_update_requires_clustering
+        self._cancel_scheduled_plot_update()
+        self.update_plots(skip_clustering=skip_clustering)
 
     def update_spinbox_limits(self, low_pct=0.1, high_pct=99):
         plot_update_helpers.update_spinbox_limits(self, low_pct=low_pct, high_pct=high_pct)
@@ -1756,6 +1824,9 @@ class NDXplorer(QtWidgets.QMainWindow):
         """Update the curve overlays on the 2D histogram."""
         logging.debug("update_curve_overlays()")
         try:
+            # Initialize histogram metadata cache
+            self._histogram_metadata = {}
+
             # Get the 2D histogram data and edges
             histogram_data = self._histogram["2d"]
             

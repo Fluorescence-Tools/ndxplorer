@@ -6,7 +6,13 @@ import pathlib
 import math
 
 from qtpy import QtGui, uic, QtCore, QtWidgets
-from pyqtgraph.widgets.SpinBox import SpinBox
+
+try:
+    from pyqtgraph.widgets.SpinBox import SpinBox
+    PYQTGRAPH_AVAILABLE = True
+except ImportError:
+    PYQTGRAPH_AVAILABLE = False
+    SpinBox = None
 
 from ..core.data_source import RectangularDataSelection, Gaussian2DSelection
 from ..logging_config import logging
@@ -477,12 +483,28 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         # GUI
         #########################
         ui_file = pathlib.Path(__file__).parent / 'plot_control.ui'
-        self.spinBoxXmin = SpinBox()
-        self.spinBoxXmax = SpinBox()
-        self.spinBoxYmin = SpinBox()
-        self.spinBoxYmax = SpinBox()
-        self.spinBoxZmin = SpinBox()
-        self.spinBoxZmax = SpinBox()
+        
+        if PYQTGRAPH_AVAILABLE and SpinBox is not None:
+            self.spinBoxXmin = SpinBox()
+            self.spinBoxXmax = SpinBox()
+            self.spinBoxYmin = SpinBox()
+            self.spinBoxYmax = SpinBox()
+            self.spinBoxZmin = SpinBox()
+            self.spinBoxZmax = SpinBox()
+        else:
+            # Fallback to regular QSpinBox if pyqtgraph is not available
+            logging.warning("pyqtgraph SpinBox not available, using QSpinBox fallback")
+            self.spinBoxXmin = QtWidgets.QSpinBox()
+            self.spinBoxXmax = QtWidgets.QSpinBox()
+            self.spinBoxYmin = QtWidgets.QSpinBox()
+            self.spinBoxYmax = QtWidgets.QSpinBox()
+            self.spinBoxZmin = QtWidgets.QSpinBox()
+            self.spinBoxZmax = QtWidgets.QSpinBox()
+            
+            # Configure fallback spinboxes
+            for sb in [self.spinBoxXmin, self.spinBoxXmax, self.spinBoxYmin, 
+                      self.spinBoxYmax, self.spinBoxZmin, self.spinBoxZmax]:
+                sb.setRange(-1000000, 1000000)
 
         uic.loadUi(str(ui_file.as_posix()), self)
         self.horizontalLayout.addWidget(self.spinBoxXmin)
@@ -519,6 +541,10 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         except Exception:
             pass
 
+        # Set up context menu for selection table
+        self.tableWidget.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.tableWidget.customContextMenuRequested.connect(self.onSelectionTableContextMenu)
+
         # Auto complete for selectors
         self.comboBoxSelX.completer().setCompletionMode(QtWidgets.QCompleter.PopupCompletion)
         self.comboBoxSelX.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
@@ -530,7 +556,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         # Actions
         #########################
         # Generic action
-        self.actionUpdatePlots.triggered.connect(self.parent.update_plots)
+        self.actionUpdatePlots.triggered.connect(self.parent.request_plot_update)
 
         # Auto range
         self.actionAuto_range_x.triggered.connect(self.on_auto_range_x)
@@ -552,12 +578,22 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.actionSave_Burst_IDs.triggered.connect(self.parent.onSaveBurstIDs)
 
         # Change axis range
-        self.spinBoxXmin.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
-        self.spinBoxXmax.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
-        self.spinBoxYmin.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
-        self.spinBoxYmax.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
-        self.spinBoxZmin.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
-        self.spinBoxZmax.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
+        if PYQTGRAPH_AVAILABLE and SpinBox is not None:
+            # pyqtgraph SpinBox signals
+            self.spinBoxXmin.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
+            self.spinBoxXmax.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
+            self.spinBoxYmin.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
+            self.spinBoxYmax.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
+            self.spinBoxZmin.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
+            self.spinBoxZmax.sigValueChanged.connect(self.actionUpdate_axis_scales.trigger)
+        else:
+            # QSpinBox signals
+            self.spinBoxXmin.valueChanged.connect(self.actionUpdate_axis_scales.trigger)
+            self.spinBoxXmax.valueChanged.connect(self.actionUpdate_axis_scales.trigger)
+            self.spinBoxYmin.valueChanged.connect(self.actionUpdate_axis_scales.trigger)
+            self.spinBoxYmax.valueChanged.connect(self.actionUpdate_axis_scales.trigger)
+            self.spinBoxZmin.valueChanged.connect(self.actionUpdate_axis_scales.trigger)
+            self.spinBoxZmax.valueChanged.connect(self.actionUpdate_axis_scales.trigger)
 
         # Change parameter plotted on axis
         self.actionX_axis_changed.triggered.connect(self.on_x_axis_changed)
@@ -654,7 +690,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         """
         logging.log(0, f"Cluster selection changed to {value}")
         # Update plots with skip_clustering=True to avoid re-clustering the data
-        self.parent.update_plots(skip_clustering=True)
+        self.parent.request_plot_update(skip_clustering=True)
 
     def on_axis_changed(self, axis):
         """
@@ -740,7 +776,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             logging.log(0, f"{axis.upper()} axis settings for {name} not found. Using auto range.")
             props['auto_range']()
 
-        self.parent.update_plots()
+        self.parent.request_plot_update()
 
     def on_x_axis_changed(self):
         """Call the combined axis change method for X axis"""
@@ -869,15 +905,17 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             logging.log(0, "Updated parameter selectors (preserved existing selections, no replot triggered)")
 
         if update_plots:
-            # Instead of triggering the action, call update_plots directly with skip_clustering
-            # This ensures clustering is not applied automatically after loading data
-            self.parent.update_plots(skip_clustering=skip_clustering)
+            # Instead of triggering the action, call update_plots (batched) with skip_clustering
+            self.parent.request_plot_update(skip_clustering=skip_clustering)
             logging.log(0, f"Triggered plot update with clustering {'skipped' if skip_clustering else 'enabled'}")
 
     def onClearSelection(self):
         logging.log(0, "onClearSelection")
         self.tableWidget.setRowCount(0)
+        # Preserve contrast during selection operations
+        self.parent._preserve_contrast = True
         self.parent.update_plots()
+        self.parent._preserve_contrast = False
 
     def onSave_selection(self):
         logging.log(0, "onSave_selection")
@@ -1003,7 +1041,11 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         cb_enable_x = QtWidgets.QCheckBox(table)
         table.setCellWidget(row, 4, cb_enable_x)
         cb_enable_x.setChecked(enabled)
-        self.parent.update_plots()
+        # Fast path for 2D rectangle selection: use batched update to keep UI snappy
+        # - request_plot_update() batches rapid selections (40ms timer)
+        # - skip_clustering=True avoids expensive clustering recomputation
+        # - Cache system naturally detects selection changes and recomputes only when needed
+        self.parent.request_plot_update(skip_clustering=True)
 
         # Actions for selection checkbox
         cb_enable_x.stateChanged.connect(self.actionUpdatePlots.trigger)
@@ -1063,7 +1105,11 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         table.setCellWidget(row, 4, cb_enable)
         cb_enable.setChecked(bool(enabled))
 
-        self.parent.update_plots()
+        # Fast path for 2D Gaussian selection: use batched update to keep UI snappy
+        # - request_plot_update() batches rapid selections (40ms timer)
+        # - skip_clustering=True avoids expensive clustering recomputation
+        # - Cache system naturally detects selection changes and recomputes only when needed
+        self.parent.request_plot_update(skip_clustering=True)
         cb_enable.stateChanged.connect(self.actionUpdatePlots.trigger)
         cb_invert.stateChanged.connect(self.actionUpdatePlots.trigger)
         logging.log(0, f"Added G2D selection for idxs ({idx1}, {idx2}) with sigma={sigma}, invert={invert}, enabled={enabled}, log_x={log_x}, log_y={log_y}")
@@ -1075,6 +1121,14 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         xmax = float(max(xsel))
         self.addSelection(idx, xmin, xmax, False, True, name)
         logging.log(0, f"onAddSelection: Added selection for {name} with range ({xmin}, {xmax})")
+        
+        # If in single frame mode, also add frame selection
+        self._add_frame_selection_if_needed()
+        
+        # Preserve contrast during selection operations
+        self.parent._preserve_contrast = True
+        self.parent.update_plots()
+        self.parent._preserve_contrast = False
 
     def get_selections(self):
         selections = list()
@@ -1171,7 +1225,10 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
         # Name edits: trigger update only
         if col == 0:
+            # Preserve contrast during selection operations
+            self.parent._preserve_contrast = True
             self.parent.update_plots()
+            self.parent._preserve_contrast = False
             return
 
         # Only columns 1 and 2 are numeric bounds for rectangular selections
@@ -1239,7 +1296,10 @@ class SurfacePlotWidget(QtWidgets.QWidget):
                 logging.info("Selection edit ignored: load data before editing selections.")
             # For name edits (col 0), accept but skip replot
             return
+        # Preserve contrast during selection operations
+        self.parent._preserve_contrast = True
         self.parent.update_plots()
+        self.parent._preserve_contrast = False
 
     def onDeleteSelectionRows(self):
         """Delete selected selection rows using the Delete key."""
@@ -1253,7 +1313,38 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         for r in rows:
             if 0 <= r < table.rowCount():
                 table.removeRow(r)
+        # Preserve contrast during selection operations
+        self.parent._preserve_contrast = True
         self.parent.update_plots()
+        self.parent._preserve_contrast = False
+
+    def onSelectionTableContextMenu(self, position):
+        """Show context menu for selection table."""
+        table = self.tableWidget
+        # Create context menu
+        menu = QtWidgets.QMenu(self)
+        
+        # Add actions
+        select_all_action = menu.addAction("Select All")
+        clear_action = menu.addAction("Clear")
+        delete_action = menu.addAction("Delete")
+        
+        # Show menu and get action
+        action = menu.exec_(table.mapToGlobal(position))
+        
+        # Handle action
+        if action == select_all_action:
+            self.onSelectAllSelections()
+        elif action == clear_action:
+            self.onClearSelection()
+        elif action == delete_action:
+            self.onDeleteSelectionRows()
+
+    def onSelectAllSelections(self):
+        """Select all rows in the selection table."""
+        table = self.tableWidget
+        table.selectAll()
+        logging.log(0, "All selection rows selected")
 
     def onSelectionCellClicked(self, row: int, col: int):
         """Handle single-click on a cell to start inline editing after the
@@ -1326,3 +1417,126 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             return
         # Otherwise, do nothing (non-editable)
         return
+
+    def setup_frame_selection(self, frame_param: str, n_frames: int):
+        """
+        Setup frame selection UI for time series or z-stack images.
+        
+        Args:
+            frame_param: Name of the frame parameter (T pixel or Z pixel)
+            n_frames: Total number of frames in the stack
+        """
+        self._frame_param = frame_param
+        self._n_frames = n_frames
+        
+        self.checkBoxStackFrames.setVisible(True)
+        self.labelFrameInfo.setVisible(True)
+        self.spinBoxFrameNumber.setVisible(True)
+        
+        self.labelFrameInfo.setText(f"{frame_param}: ")
+        self.spinBoxFrameNumber.setMaximum(n_frames - 1)
+        self.spinBoxFrameNumber.setValue(0)
+        self.checkBoxStackFrames.setChecked(True)
+        
+        try:
+            self.checkBoxStackFrames.toggled.disconnect()
+        except Exception:
+            pass
+        try:
+            self.spinBoxFrameNumber.valueChanged.disconnect()
+        except Exception:
+            pass
+            
+        self.checkBoxStackFrames.toggled.connect(self.on_frame_selection_changed)
+        self.spinBoxFrameNumber.valueChanged.connect(self.on_frame_selection_changed)
+        
+        logging.info(f"Frame selection setup: {frame_param} with {n_frames} frames")
+
+    def hide_frame_selection(self):
+        """Hide frame selection UI when no frame stack is detected."""
+        self._frame_param = None
+        self._n_frames = 0
+        
+        self.checkBoxStackFrames.setVisible(False)
+        self.labelFrameInfo.setVisible(False)
+        self.spinBoxFrameNumber.setVisible(False)
+
+    def on_frame_selection_changed(self):
+        """Handle frame selection changes and trigger plot update."""
+        if not hasattr(self, '_frame_param') or self._frame_param is None:
+            return
+            
+        if self.checkBoxStackFrames.isChecked():
+            logging.debug("Stack frames enabled (showing all frames)")
+        else:
+            frame_num = self.spinBoxFrameNumber.value()
+            logging.debug(f"Single frame mode: showing frame {frame_num}")
+            
+        self.parent.request_plot_update()
+
+    def _add_frame_selection_if_needed(self):
+        """
+        Add frame selection to the selection table when in single frame mode.
+        This ensures that when users make selections, the current frame is included.
+        """
+        if not hasattr(self, '_frame_param') or self._frame_param is None:
+            return
+            
+        if self.checkBoxStackFrames.isChecked():
+            return
+            
+        try:
+            # Check if frame selection already exists
+            param_names = self.parent.data_source.parameter_names
+            if self._frame_param not in param_names:
+                return
+                
+            frame_idx = param_names.index(self._frame_param)
+            frame_num = self.spinBoxFrameNumber.value()
+            
+            # Check if this selection already exists
+            for sel in self.get_selections():
+                if hasattr(sel, 'idx') and sel.idx == frame_idx:
+                    # Frame selection already exists, update it
+                    if hasattr(sel, 'lower') and hasattr(sel, 'upper'):
+                        if sel.lower == frame_num and sel.upper == frame_num:
+                            return
+            
+            # Add frame selection
+            self.addSelection(frame_idx, frame_num, frame_num, False, True, self._frame_param)
+            logging.info(f"Added frame selection: {self._frame_param} = {frame_num}")
+        except Exception as e:
+            logging.warning(f"Failed to add frame selection: {e}")
+
+    def get_frame_filter_mask(self, data_source):
+        """
+        Get a boolean mask for filtering data by selected frame.
+        
+        Args:
+            data_source: The data source containing parameter values
+            
+        Returns:
+            numpy array of boolean values or None if frame filtering is disabled
+        """
+        if not hasattr(self, '_frame_param') or self._frame_param is None:
+            return None
+            
+        if self.checkBoxStackFrames.isChecked():
+            return None
+            
+        try:
+            param_names = data_source.parameter_names
+            if self._frame_param not in param_names:
+                return None
+                
+            frame_idx = param_names.index(self._frame_param)
+            frame_values = data_source.values[frame_idx, :]
+            selected_frame = self.spinBoxFrameNumber.value()
+            
+            import numpy as np
+            mask = frame_values == selected_frame
+            logging.debug(f"Frame filter mask: {mask.sum()} events in frame {selected_frame}")
+            return mask
+        except Exception as e:
+            logging.warning(f"Failed to create frame filter mask: {e}")
+            return None

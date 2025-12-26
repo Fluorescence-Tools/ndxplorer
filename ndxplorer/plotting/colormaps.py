@@ -16,7 +16,7 @@ if False:  # pragma: no cover - type checking hints without runtime import
 
 try:
     from guiqwt.colormap import get_colormap_list
-    from guiqwt.colormap import Colormap
+    from guiqwt.colormap import QwtLinearColorMap as Colormap
     GUIQWT_AVAILABLE = True
 except ImportError:
     GUIQWT_AVAILABLE = False
@@ -240,48 +240,12 @@ def current_cmap(ndxplorer: "NDXplorer") -> str:
     return "viridis"  # fallback
 
 
-def update_guiqwt_colormap(
-    ndxplorer: "NDXplorer",
-    colormap_name: Optional[str] = None
-) -> bool:
-    """
-    Update colormap in guiqwt plot widget.
-    
-    Args:
-        ndxplorer: NDXplorer instance
-        colormap_name: Name of colormap to set
-        
-    Returns:
-        True if successful, False otherwise
-    """
-    if not GUIQWT_AVAILABLE:
-        logging.warning("guiqwt not available")
-        return False
-    
-    if not getattr(ndxplorer, "_deferred_init_done", False) or ndxplorer.g_2dplot is None:
-        logging.debug("Plot not ready for colormap update")
-        return False
-    
-    try:
-        if colormap_name is None:
-            colormap_name = current_cmap(ndxplorer)
-        
-        ndxplorer.cax.set_color_map(colormap_name)
-        ndxplorer.g_2dplot.replot()
-        logging.debug(f"Updated guiqwt colormap to {colormap_name}")
-        return True
-        
-    except Exception as e:
-        logging.error(f"Failed to update guiqwt colormap: {e}")
-        return False
-
-
 def populate_colormap_combobox(ndxplorer: "NDXplorer") -> None:
     """
     Populate colormap combobox with available colormaps.
     
     Args:
-        ndxplorer: NDXplorer instance with comboBoxCmap
+        ndxplorer: NDXplorer instance with comboBoxCmap attribute
     """
     if not hasattr(ndxplorer, 'comboBoxCmap'):
         logging.warning("NDXplorer instance missing comboBoxCmap")
@@ -302,6 +266,90 @@ def populate_colormap_combobox(ndxplorer: "NDXplorer") -> None:
         index = colormap_names.index(default_cmap)
         ndxplorer.comboBoxCmap.setCurrentIndex(index)
         logging.info(f"Set default colormap to {default_cmap}")
+
+
+def update_guiqwt_colormap(ndxplorer: "NDXplorer", colormap_name: Optional[str] = None) -> bool:
+    """
+    Update the colormap of the 2D plot image item.
+    
+    This function handles both guiqwt native colormaps and matplotlib fallback
+    when guiqwt is not available or the requested colormap is not supported.
+    
+    Args:
+        ndxplorer: The NDXplorer instance containing the plot
+        colormap_name: Name of the colormap to apply. If None, uses current colormap.
+        
+    Returns:
+        True if colormap was successfully updated, False otherwise.
+    """
+    try:
+        if not getattr(ndxplorer, "_deferred_init_done", False) or ndxplorer.g_2dplot is None:
+            logging.debug("Plot not ready for colormap update")
+            return False
+            
+        if colormap_name is None:
+            colormap_name = current_cmap(ndxplorer)
+        
+        if GUIQWT_AVAILABLE:
+            # Use guiqwt's native colormap functionality
+            try:
+                # Check if the colormap exists in guiqwt
+                available_colormaps = get_colormap_list()
+                if colormap_name not in available_colormaps:
+                    logging.warning(f"Colormap '{colormap_name}' not available in guiqwt, trying matplotlib fallback")
+                    # Fall back to matplotlib for unsupported colormaps
+                    return _apply_matplotlib_fallback(ndxplorer, colormap_name)
+                
+                ndxplorer.cax.set_color_map(colormap_name)
+                ndxplorer.g_2dplot.replot()
+                logging.debug(f"Updated guiqwt colormap to {colormap_name}")
+                return True
+                
+            except Exception as e:
+                logging.warning(f"Failed to apply guiqwt colormap '{colormap_name}': {e}")
+                # Fall back to matplotlib
+                return _apply_matplotlib_fallback(ndxplorer, colormap_name)
+        else:
+            # Use matplotlib fallback
+            return _apply_matplotlib_fallback(ndxplorer, colormap_name)
+            
+    except Exception as e:
+        logging.error(f"Failed to update colormap: {e}")
+        return False
+
+
+def _apply_matplotlib_fallback(ndxplorer: "NDXplorer", colormap_name: str) -> bool:
+    """Apply matplotlib colormap as fallback when guiqwt is not available or fails."""
+    try:
+        # Get the current data from the image item
+        if hasattr(ndxplorer.cax, 'data') and ndxplorer.cax.data is not None:
+            data = ndxplorer.cax.data
+        else:
+            logging.warning("No data available in image item for colormap application")
+            return False
+        
+        # Apply colormap using the FixedImageItem's matplotlib support
+        vmin = getattr(ndxplorer, 'vmin', data.min())
+        vmax = getattr(ndxplorer, 'vmax', data.max())
+        
+        if hasattr(ndxplorer.cax, 'set_matplotlib_colormap'):
+            success = ndxplorer.cax.set_matplotlib_colormap(colormap_name, vmin, vmax)
+            if success:
+                # Force a redraw by triggering a plot update
+                if hasattr(ndxplorer, 'g_2dplot') and ndxplorer.g_2dplot is not None:
+                    ndxplorer.g_2dplot.replot()
+                logging.info(f"Applied matplotlib colormap '{colormap_name}' via FixedImageItem")
+                return True
+            else:
+                logging.warning("Failed to set matplotlib colormap on FixedImageItem")
+                return False
+        else:
+            logging.warning("FixedImageItem does not support matplotlib colormaps")
+            return False
+        
+    except Exception as e:
+        logging.error(f"Failed to apply matplotlib colormap: {e}")
+        return False
 
 
 def get_colormap_statistics(

@@ -167,13 +167,46 @@ def open_files(
 
     if reader_input:
         logging.info("Opening files (%s): %s", file_type or "csv", file_handles_seq)
-        new_data_source = data_reader(reader_input)
-        if append:
-            _handle_append(ndxplorer, new_data_source, merge_mode)
-        else:
-            ndxplorer._data_source = new_data_source
-            ndxplorer.update()
 
+        def load_callable():
+            return data_reader(reader_input)
+
+        _dispatch_data_load(
+            ndxplorer,
+            f"Loading {file_type or 'CSV'} files",
+            load_callable,
+            append,
+            merge_mode,
+        )
+
+
+def _dispatch_data_load(
+    ndxplorer: "NDXplorer",
+    description: str,
+    load_callable,
+    append: bool,
+    merge_mode: str,
+) -> None:
+    """Route loading through NDxplorer's async runner when available."""
+    runner = getattr(ndxplorer, "_run_data_load_task", None)
+    if callable(runner):
+        runner(description, load_callable, append, merge_mode)
+    else:
+        data_source = load_callable()
+        _finalize_loaded_data(ndxplorer, data_source, append, merge_mode)
+
+
+def _finalize_loaded_data(
+    ndxplorer: "NDXplorer", data_source, append: bool, merge_mode: str
+) -> None:
+    """Apply the loaded data to NDxplorer and refresh the UI."""
+    if data_source is None:
+        return
+    if append:
+        _handle_append(ndxplorer, data_source, merge_mode)
+    else:
+        ndxplorer._data_source = data_source
+        ndxplorer.update()
     _apply_axes_and_refresh(ndxplorer)
 
 

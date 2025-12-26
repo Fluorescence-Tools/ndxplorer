@@ -26,6 +26,9 @@ def check_and_set_image_axes(ndxplorer: "NDXplorer") -> bool:
     logging.info("Image data detected (X pixel and Y pixel columns found)")
     x_pixel_param = next((name for name in param_names if "x pixel" in name.lower()), None)
     y_pixel_param = next((name for name in param_names if "y pixel" in name.lower()), None)
+    
+    t_pixel_param = next((name for name in param_names if "t pixel" in name.lower()), None)
+    z_pixel_param = next((name for name in param_names if "z pixel" in name.lower()), None)
 
     x_success = ndxplorer.plot_control.set_axis_by_name("x", x_pixel_param, block_signals=True)
     y_success = ndxplorer.plot_control.set_axis_by_name("y", y_pixel_param, block_signals=True)
@@ -41,6 +44,11 @@ def check_and_set_image_axes(ndxplorer: "NDXplorer") -> bool:
     )
     if weight_success:
         logging.debug("Set weighting to %s", photon_param)
+        try:
+            ndxplorer.weight_param = photon_param
+            ndxplorer.weight_enabled = True
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.debug("Failed to enable weight parameter: %s", exc)
     else:
         logging.debug("No matching weight parameter found, using default")
 
@@ -53,12 +61,24 @@ def check_and_set_image_axes(ndxplorer: "NDXplorer") -> bool:
     y_pixels = int(np.max(y_values)) + 1
     logging.info("Image dimensions: %sx%s pixels", x_pixels, y_pixels)
 
+    ndxplorer.plot_control.n_xhist_1d = x_pixels
+    ndxplorer.plot_control.n_yhist_1d = y_pixels
     ndxplorer.plot_control.n_xhist_2d = x_pixels
     ndxplorer.plot_control.n_yhist_2d = y_pixels
     ndxplorer.plot_control.xmin = 0
     ndxplorer.plot_control.xmax = x_pixels - 1
     ndxplorer.plot_control.ymin = 0
     ndxplorer.plot_control.ymax = y_pixels - 1
+
+    frame_param = t_pixel_param or z_pixel_param
+    if frame_param:
+        frame_values = data_source.values[param_names.index(frame_param), :]
+        n_frames = int(np.max(frame_values)) + 1
+        logging.info("Frame stack detected (%s): %d frames", frame_param, n_frames)
+        
+        ndxplorer.plot_control.setup_frame_selection(frame_param, n_frames)
+    else:
+        ndxplorer.plot_control.hide_frame_selection()
 
     logging.debug("Set binning and ranges to match pixel dimensions")
     logging.debug("Applying auto contrast to image")

@@ -22,12 +22,21 @@ except ImportError:
     from qtpy import QtGui, QtWidgets
 
 import matplotlib.pyplot as plt
-import pyqtgraph as pg
+
+try:
+    import pyqtgraph as pg
+    PYQTGRAPH_AVAILABLE = True
+except ImportError:
+    PYQTGRAPH_AVAILABLE = False
+    pg = None
 
 # Import for 3D plotting
 try:
     import pyqtgraph.opengl as gl
+    PYQTGRAPH_OPENGL_AVAILABLE = True
 except ImportError:
+    PYQTGRAPH_OPENGL_AVAILABLE = False
+    gl = None
     gl = None
 
 from ..utils.lazy_imports import get_umap
@@ -52,6 +61,15 @@ def create_umap_plot(parent, columns: Set[str], params: Dict[str, Any],
         z_values: The z values for the plot
         cluster_labels: Optional array of cluster labels for coloring points
     """
+    if not PYQTGRAPH_AVAILABLE or pg is None:
+        logging.warning("pyqtgraph not available, cannot create UMAP plot")
+        QtWidgets.QMessageBox.warning(
+            parent, 
+            "UMAP Plot Unavailable", 
+            "PyQtGraph is required for UMAP plotting. Please install PyQtGraph to use this feature."
+        )
+        return None
+        
     logging.log(0, f"Creating UMAP plot with params: {params}")
 
     # Lazy import of umap via centralized getter; offer installation if missing

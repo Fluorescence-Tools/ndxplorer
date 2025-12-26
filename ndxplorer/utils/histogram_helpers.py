@@ -10,6 +10,8 @@ import numpy as np
 from ..logging_config import logging
 from ..utils.performance_optimizations import (
     compute_histogram2d_adaptive,
+    compute_histogram1d_adaptive,
+    downsample_for_display,
     get_performance_monitor,
 )
 
@@ -231,11 +233,30 @@ def resolve_weights(ndxplorer: "NDXplorer", use_weights: bool, d1) -> Optional[n
 
 
 def histogram_with_fallback(data, bins, normed, weights=None):
-    """Compute histogram with automatic fallback bin generation."""
+    """Compute histogram with automatic fallback bin generation.
+    
+    Uses Numba-accelerated computation for large datasets when available.
+    Optimized to avoid unnecessary dtype conversions for float32 data.
+    """
     try:
-        with np.errstate(divide="ignore", invalid="ignore"):
-            return np.histogram(data, bins=bins, weights=weights, density=normed)[::-1]
-    except ValueError as exc:
+        # Avoid copy if data is already contiguous float32/float64
+        data_arr = np.asarray(data)
+        if data_arr.dtype not in (np.float32, np.float64):
+            data_arr = data_arr.astype(np.float64, copy=False)
+        
+        bins_arr = np.asarray(bins)
+        if bins_arr.dtype != np.float64:
+            bins_arr = bins_arr.astype(np.float64, copy=False)
+        
+        # Use optimized adaptive histogram for large datasets
+        result = compute_histogram1d_adaptive(
+            data_arr if data_arr.dtype == np.float64 else data_arr.astype(np.float64),
+            bins_arr,
+            weights=weights,
+            density=normed,
+        )
+        return (result.edges, result.counts)
+    except (ValueError, TypeError) as exc:
         logging.warning("Could not compute histogram: %s", exc)
         try:
             if len(data) > 0 and np.isfinite(data).any():
@@ -250,14 +271,18 @@ def histogram_with_fallback(data, bins, normed, weights=None):
                         np.max(valid_data),
                         int(max(2, n)) + 1,
                     )
-                    with np.errstate(divide="ignore", invalid="ignore"):
-                        return np.histogram(valid_data, bins=auto_bins, density=normed)[::-1]
+                    result = compute_histogram1d_adaptive(
+                        valid_data.astype(np.float64),
+                        auto_bins,
+                        density=normed,
+                    )
+                    return (result.edges, result.counts)
                 else:
-                    return (np.array([1]), np.array([0, 1]))
-            return (np.array([0]), np.array([0, 1]))
+                    return (np.array([0, 1]), np.array([1]))
+            return (np.array([0, 1]), np.array([0]))
         except Exception as nested:
             logging.error("Failed to compute histogram with fallback: %s", nested)
-            return (np.array([0]), np.array([0, 1]))
+            return (np.array([0, 1]), np.array([0]))
 
 
 def update_histograms(ndxplorer: "NDXplorer") -> None:
