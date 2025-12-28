@@ -321,6 +321,10 @@ def create_memory_efficient_mask(data_shape: Tuple[int, int]) -> np.ndarray:
 DEFAULT_STREAM_THRESHOLD = int(os.getenv("NDX_HISTOGRAM_STREAM_THRESHOLD", "750000"))
 DEFAULT_CHUNK_SIZE = int(os.getenv("NDX_HISTOGRAM_CHUNK_SIZE", "100000"))
 
+# Target dtype for histogram data - float32 saves 50% memory vs float64
+# with sufficient precision for binning operations
+HISTOGRAM_DTYPE = np.float32
+
 if _HAVE_NUMBA:
 
     @nb.njit(cache=True, parallel=True, fastmath=True)  # type: ignore[misc]
@@ -330,9 +334,10 @@ if _HAVE_NUMBA:
         weights: np.ndarray,
         has_weights: bool,
     ) -> np.ndarray:
-        """Numba-accelerated 1D histogram computation."""
+        """Numba-accelerated 1D histogram computation (float32 optimized)."""
         n_bins = edges.size - 1
-        H = np.zeros(n_bins, dtype=np.float64)
+        # Use float32 accumulator - sufficient precision for counts
+        H = np.zeros(n_bins, dtype=np.float32)
         n = data.size
         
         for i in nb.prange(n):
@@ -343,7 +348,7 @@ if _HAVE_NUMBA:
             bi = np.searchsorted(edges, v, side='right') - 1
             if bi < 0 or bi >= n_bins:
                 continue
-            w = weights[i] if has_weights else 1.0
+            w = np.float32(weights[i]) if has_weights else np.float32(1.0)
             H[bi] += w
         
         return H
@@ -357,9 +362,11 @@ if _HAVE_NUMBA:
         weights: np.ndarray,
         has_weights: bool,
     ) -> np.ndarray:
+        """Numba-accelerated 2D histogram (float32 optimized)."""
         nx = x_edges.size - 1
         ny = y_edges.size - 1
-        H = np.zeros((nx, ny), dtype=np.float64)
+        # Use float32 accumulator - sufficient for count data
+        H = np.zeros((nx, ny), dtype=np.float32)
 
         for i in range(x.size):
             xv = x[i]
@@ -374,7 +381,7 @@ if _HAVE_NUMBA:
             if xi < 0 or xi >= nx or yi < 0 or yi >= ny:
                 continue
 
-            w = weights[i] if has_weights else 1.0
+            w = np.float32(weights[i]) if has_weights else np.float32(1.0)
             H[xi, yi] += w
 
         return H
@@ -435,35 +442,38 @@ def compute_histogram2d_adaptive(
     threshold = _resolve_threshold(threshold, DEFAULT_STREAM_THRESHOLD)
     chunk_size = max(1000, _resolve_threshold(chunk_size, DEFAULT_CHUNK_SIZE))
 
-    x_edges = np.asarray(x_edges)
-    y_edges = np.asarray(y_edges)
-    x_data = np.asarray(x_data, dtype=np.float64)
-    y_data = np.asarray(y_data, dtype=np.float64)
+    # Use float32 for data to halve memory usage
+    x_edges = np.asarray(x_edges, dtype=np.float32)
+    y_edges = np.asarray(y_edges, dtype=np.float32)
+    x_data = np.asarray(x_data, dtype=np.float32)
+    y_data = np.asarray(y_data, dtype=np.float32)
 
     if n_points <= threshold:
         with np.errstate(divide="ignore", invalid="ignore"):
+            # numpy histogram2d returns float64, but we convert back to float32
             H, x_out, y_out = np.histogram2d(
                 x_data,
                 y_data,
                 bins=[x_edges, y_edges],
-                weights=weights,
+                weights=weights.astype(np.float32) if weights is not None else None,
                 density=False,
             )
-        H = np.nan_to_num(H, nan=0.0, posinf=0.0, neginf=0.0)
-        return Histogram2DComputation((H, x_out, y_out), chunked=False, n_points=n_points)
+        H = np.nan_to_num(H, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+        return Histogram2DComputation((H, x_out.astype(np.float32), y_out.astype(np.float32)), chunked=False, n_points=n_points)
 
     if _HAVE_NUMBA and _histogram2d_numba is not None:
         logging.info(
             "compute_histogram2d_adaptive: numba streaming %d points", n_points
         )
+        # Use float32 throughout for memory efficiency
         nb_weights = (
-            np.asarray(weights, dtype=np.float64) if weights is not None else np.empty(1, dtype=np.float64)
+            np.asarray(weights, dtype=np.float32) if weights is not None else np.empty(1, dtype=np.float32)
         )
         H_accum = _histogram2d_numba(
             x_data,
             y_data,
-            np.asarray(x_edges, dtype=np.float64),
-            np.asarray(y_edges, dtype=np.float64),
+            x_edges,
+            y_edges,
             nb_weights,
             weights is not None,
         )
@@ -474,12 +484,12 @@ def compute_histogram2d_adaptive(
         n_points,
         chunk_size,
     )
-    # Preallocate accumulator with target shape derived from edges.
-    H_accum = np.zeros((len(x_edges) - 1, len(y_edges) - 1), dtype=np.float64)
+    # Preallocate accumulator with float32 for memory efficiency
+    H_accum = np.zeros((len(x_edges) - 1, len(y_edges) - 1), dtype=np.float32)
 
     for start in range(0, n_points, chunk_size):
         end = min(start + chunk_size, n_points)
-        w_chunk = weights[start:end] if weights is not None else None
+        w_chunk = weights[start:end].astype(np.float32) if weights is not None else None
         with np.errstate(divide="ignore", invalid="ignore"):
             H_chunk, _, _ = np.histogram2d(
                 x_data[start:end],
@@ -488,7 +498,7 @@ def compute_histogram2d_adaptive(
                 weights=w_chunk,
                 density=False,
             )
-        H_accum += np.nan_to_num(H_chunk, nan=0.0, posinf=0.0, neginf=0.0)
+        H_accum += np.nan_to_num(H_chunk, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
     return Histogram2DComputation((H_accum, x_edges, y_edges), chunked=True, n_points=n_points)
 
@@ -529,20 +539,22 @@ def compute_histogram1d_adaptive(
         Contains counts, edges, and metadata.
     """
     n_points = len(data)
-    edges = np.asarray(edges, dtype=np.float64)
-    data = np.asarray(data, dtype=np.float64)
+    # Use float32 for memory efficiency
+    edges = np.asarray(edges, dtype=np.float32)
+    data = np.asarray(data, dtype=np.float32)
 
     used_numba = False
     if _HAVE_NUMBA and _histogram1d_numba is not None and n_points > 50000:
+        # Use float32 weights for consistency
         nb_weights = (
-            np.asarray(weights, dtype=np.float64) if weights is not None else np.empty(1, dtype=np.float64)
+            np.asarray(weights, dtype=np.float32) if weights is not None else np.empty(1, dtype=np.float32)
         )
         counts = _histogram1d_numba(data, edges, nb_weights, weights is not None)
         used_numba = True
     else:
         with np.errstate(divide="ignore", invalid="ignore"):
             counts, _ = np.histogram(data, bins=edges, weights=weights, density=False)
-        counts = np.nan_to_num(counts, nan=0.0, posinf=0.0, neginf=0.0)
+        counts = np.nan_to_num(counts, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
     if density and counts.sum() > 0:
         bin_widths = np.diff(edges)

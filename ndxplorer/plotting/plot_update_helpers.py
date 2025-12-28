@@ -30,6 +30,47 @@ def update_histograms(ndxplorer) -> None:
         logging.info("Skipping update_histograms: data/axes not ready")
         return
 
+    # Use the new background computation system if available
+    if (hasattr(ndxplorer.plot_control, 'compute_histograms_background') and 
+        hasattr(ndxplorer.plot_control, '_background_computation_enabled') and 
+        ndxplorer.plot_control._background_computation_enabled):
+        
+        try:
+            # Import the helper functions
+            from ..utils.histogram_computation import (
+                extract_histogram_params_from_plot_control,
+                should_recompute_histograms,
+                resolve_weights
+            )
+            
+            # Extract histogram parameters
+            histogram_params = extract_histogram_params_from_plot_control(ndxplorer.plot_control)
+            
+            # Check if recomputation is needed
+            if not should_recompute_histograms(ndxplorer.plot_control, histogram_params):
+                logging.info("Using cached histograms")
+                if hasattr(ndxplorer, '_histogram') and ndxplorer._histogram:
+                    ndxplorer.lineEditCountCurrent.setText(str(len(ndxplorer.x_values)))
+                return
+            
+            # Resolve weights
+            weights = resolve_weights(ndxplorer.plot_control, ndxplorer.data_source)
+            
+            # Use background computation
+            ndxplorer.plot_control.compute_histograms_background(histogram_params, weights)
+            logging.debug("Scheduled background histogram computation")
+            return
+            
+        except Exception as e:
+            logging.warning(f"Background histogram system failed, falling back to immediate computation: {e}")
+            # Fall back to the original immediate computation
+    
+    # Original immediate computation as fallback
+    _update_histograms_immediate(ndxplorer)
+
+
+def _update_histograms_immediate(ndxplorer) -> None:
+    """Original immediate histogram computation - used as fallback."""
     recompute_needed = True
     p1_idx = ndxplorer.plot_control.p1[0]
     p2_idx = ndxplorer.plot_control.p2[0]
@@ -174,6 +215,18 @@ def update_histograms(ndxplorer) -> None:
         "y_bins_1d": str(y_bins_1d),
         "z_bins_1d": str(z_bins_1d),
     }
+    
+    # Cache histogram for current frame in time series mode (not stacked)
+    if (
+        hasattr(ndxplorer.plot_control, '_frame_param')
+        and ndxplorer.plot_control._frame_param is not None
+        and hasattr(ndxplorer.plot_control, 'checkBoxStackFrames')
+        and not ndxplorer.plot_control.checkBoxStackFrames.isChecked()
+    ):
+        # Store count with histogram for display
+        cache_data = dict(ndxplorer._histogram)
+        cache_data['_count'] = len(d1)
+        ndxplorer.plot_control.cache_current_frame_histogram(cache_data)
 
 
 def _safe_histogram(data, bins, weights, normed):

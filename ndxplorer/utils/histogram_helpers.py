@@ -209,7 +209,7 @@ def save_cache(ndxplorer: "NDXplorer", params: HistogramParams) -> None:
 
 
 def resolve_weights(ndxplorer: "NDXplorer", use_weights: bool, d1) -> Optional[np.ndarray]:
-    """Return weight array matching d1 length or None."""
+    """Return weight array matching d1 length or None (float32 for memory efficiency)."""
     if not use_weights:
         return None
     weight_param = ndxplorer.comboBoxWeight.currentText()
@@ -221,7 +221,8 @@ def resolve_weights(ndxplorer: "NDXplorer", use_weights: bool, d1) -> Optional[n
     if weight_idx < 0:
         logging.warning("Weight parameter '%s' not found in data source. Disabling weights.", weight_param)
         return None
-    weight_values = ndxplorer.values[weight_idx].astype("float64")
+    # Use float32 for memory efficiency - sufficient precision for weights
+    weight_values = ndxplorer.values[weight_idx].astype(np.float32)
     if len(weight_values) != len(d1):
         logging.warning(
             "Weights array shape (%d) doesn't match data array shape (%d). Disabling weights.",
