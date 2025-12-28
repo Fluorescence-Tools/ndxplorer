@@ -148,7 +148,7 @@ else:
 # Fast numeric conversion
 # ---------------------------
 
-def _fast_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
+def _fast_to_numeric(df: pd.DataFrame, use_float32: bool = True) -> pd.DataFrame:
     """
     Convert DataFrame columns to numeric efficiently.
     
@@ -159,6 +159,8 @@ def _fast_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
     ----------
     df : pd.DataFrame
         Input DataFrame with potentially mixed types
+    use_float32 : bool
+        If True (default), use float32 to halve memory usage.
     
     Returns
     -------
@@ -171,31 +173,35 @@ def _fast_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
     import time
     t0 = time.perf_counter()
     
+    # Target dtype for memory efficiency
+    target_dtype = np.float32 if use_float32 else np.float64
+    pa_target = pa.float32() if use_float32 else pa.float64()
+    
     if _HAVE_PYARROW:
         try:
             # Convert to Arrow Table for fast processing
             table = pa.Table.from_pandas(df, preserve_index=False)
             
-            # Convert each column to float64, coercing errors to null
+            # Convert each column to target float type
             new_columns = []
             for i, col_name in enumerate(table.column_names):
                 col = table.column(i)
                 col_type = col.type
                 
-                # If already numeric, cast to float64
+                # If already numeric, cast to target type
                 if pa.types.is_floating(col_type) or pa.types.is_integer(col_type):
-                    new_columns.append(pc.cast(col, pa.float64(), safe=False))
+                    new_columns.append(pc.cast(col, pa_target, safe=False))
                 elif pa.types.is_boolean(col_type):
-                    new_columns.append(pc.cast(col, pa.float64(), safe=False))
+                    new_columns.append(pc.cast(col, pa_target, safe=False))
                 else:
                     # String or other type: try to convert
                     try:
                         # Use Arrow's string-to-float conversion
-                        new_columns.append(pc.cast(col, pa.float64(), safe=False))
+                        new_columns.append(pc.cast(col, pa_target, safe=False))
                     except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
                         # Fall back to pandas for this column
                         series = col.to_pandas()
-                        numeric_series = pd.to_numeric(series, errors='coerce')
+                        numeric_series = pd.to_numeric(series, errors='coerce').astype(target_dtype)
                         new_columns.append(pa.array(numeric_series.values))
             
             # Reconstruct table and convert back to pandas
@@ -207,7 +213,8 @@ def _fast_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
             )
             
             t1 = time.perf_counter()
-            logging.debug("[_fast_to_numeric] PyArrow: %d rows × %d cols in %.3fs",
+            logging.debug("[_fast_to_numeric] PyArrow (%s): %d rows × %d cols in %.3fs",
+                         'float32' if use_float32 else 'float64',
                          len(df), len(df.columns), t1 - t0)
             return result
             
@@ -218,10 +225,13 @@ def _fast_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
     result = df.copy()
     for col in result.columns:
         if not pd.api.types.is_numeric_dtype(result[col]):
-            result[col] = pd.to_numeric(result[col], errors='coerce')
+            result[col] = pd.to_numeric(result[col], errors='coerce').astype(target_dtype)
+        elif result[col].dtype != target_dtype:
+            result[col] = result[col].astype(target_dtype)
     
     t1 = time.perf_counter()
-    logging.debug("[_fast_to_numeric] pandas: %d rows × %d cols in %.3fs",
+    logging.debug("[_fast_to_numeric] pandas (%s): %d rows × %d cols in %.3fs",
+                 'float32' if use_float32 else 'float64',
                  len(df), len(df.columns), t1 - t0)
     return result
 
