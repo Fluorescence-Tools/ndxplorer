@@ -67,3 +67,5 @@ include = ["ndxplorer*"]
     "*.dll", "*.so", "*.pyd",
     "*.txt"
 ]
+"ndxplorer.plotting" = ["*.ui"]
+"ndxplorer.ui" = ["*.ui", "*.qrc"]

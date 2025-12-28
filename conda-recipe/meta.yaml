@@ -20,6 +20,8 @@ build:
       {% for name, entry in gui_scripts.items() -%}
       - {{ name }} = {{ entry }}
       {% endfor %}
+    script:
+      - python -m pip install . --no-deps --ignore-installed -vv
 
 requirements:
   host:
