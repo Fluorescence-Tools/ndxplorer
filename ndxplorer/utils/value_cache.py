@@ -1,22 +1,45 @@
-"""Helpers for computing value masks and filtered data caches."""
+"""Helpers for computing value masks and filtered data caches.
+
+Optimized with bitfield support and enhanced caching.
+"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
 from ..logging_config import logging
 
+try:
+    from .bitfield_mask import BitfieldMask
+    _HAVE_BITFIELD = True
+except ImportError:
+    _HAVE_BITFIELD = False
+    BitfieldMask = None
+
 if TYPE_CHECKING:  # pragma: no cover
     from ..core.plot_main import NDXplorer
 
 
-def get_value_mask(ndxplorer: "NDXplorer") -> np.ndarray:
+def get_value_mask(ndxplorer: "NDXplorer", use_bitfield: bool = False) -> np.ndarray:
     """Return 1D boolean mask (True = excluded), updating caches on the ndxplorer instance.
     
     Optimized to operate only on relevant columns (axes + selections) for better
     performance with large datasets containing many columns.
+    
+    Parameters
+    ----------
+    ndxplorer : NDXplorer
+        NDXplorer instance
+    use_bitfield : bool
+        If True and available, use BitfieldMask for 8x memory savings.
+        Beneficial for datasets with >1M points.
+    
+    Returns
+    -------
+    mask : np.ndarray or BitfieldMask
+        Boolean mask (True = excluded)
     """
     selections = ndxplorer.plot_control.get_selections()
     mask_inf = ndxplorer._mask_inf

@@ -1,9 +1,11 @@
 from __future__ import print_function
-from typing import List, Dict
+from typing import List, Dict, Optional
 import json
 import os
 import pathlib
 import math
+
+import numpy as np
 
 from qtpy import QtGui, uic, QtCore, QtWidgets
 
@@ -16,6 +18,7 @@ except ImportError:
 
 from ..core.data_source import RectangularDataSelection, Gaussian2DSelection
 from ..logging_config import logging
+from .background_histograms import HistogramComputeWorker, EnhancedHistogramCache
 
 
 class SurfacePlotWidget(QtWidgets.QWidget):
@@ -607,6 +610,22 @@ class SurfacePlotWidget(QtWidgets.QWidget):
 
         # Connect spinBoxCluster to update plots when value changes
         self.spinBoxCluster.valueChanged.connect(self.onClusterSelectionChanged)
+        
+        # Initialize frame/time series related attributes
+        self._frame_param = None
+        self._n_frames = 0
+        self._frame_histogram_cache = {}
+        self._playback_direction = 0
+        
+        # Initialize background computation and enhanced caching
+        self._histogram_worker = None
+        self._histogram_cache = EnhancedHistogramCache()
+        self._background_computation_enabled = True
+        self._frame_duration_ms = 200  # Default value
+        self._load_playback_settings()
+        
+        # Setup playback controls (hidden by default)
+        self._setup_playback_controls()
 
     def set_axis_settings(self, name, amin, amax, scale, bins_1d, bins_2d):
         self.axis_settings[str(name)] = {
@@ -912,6 +931,8 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     def onClearSelection(self):
         logging.log(0, "onClearSelection")
         self.tableWidget.setRowCount(0)
+        # Clear frame histogram cache when selections change
+        self.clear_frame_histogram_cache()
         # Preserve contrast during selection operations
         self.parent._preserve_contrast = True
         self.parent.update_plots()
@@ -993,9 +1014,14 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         logging.log(0, "onSelectionTableClicked")
         row = self.tableWidget.currentRow()
         self.tableWidget.removeRow(row)
+        # Clear frame histogram cache when selections change
+        self.clear_frame_histogram_cache()
         self.parent.update_plots()
 
     def addSelection(self, idx, xmin, xmax, invert=False, enabled=True, name=""):
+        # Clear frame histogram cache when selections change
+        self.clear_frame_histogram_cache()
+        
         # Ensure xmin < xmax
         if xmin > xmax:
             xmin, xmax = xmax, xmin
@@ -1429,9 +1455,8 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self._frame_param = frame_param
         self._n_frames = n_frames
         
-        self.checkBoxStackFrames.setVisible(True)
-        self.labelFrameInfo.setVisible(True)
-        self.spinBoxFrameNumber.setVisible(True)
+        # Initialize per-frame histogram cache for time series playback
+        self._frame_histogram_cache = {}
         
         self.labelFrameInfo.setText(f"{frame_param}: ")
         self.spinBoxFrameNumber.setMaximum(n_frames - 1)
@@ -1456,10 +1481,8 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         """Hide frame selection UI when no frame stack is detected."""
         self._frame_param = None
         self._n_frames = 0
-        
-        self.checkBoxStackFrames.setVisible(False)
-        self.labelFrameInfo.setVisible(False)
-        self.spinBoxFrameNumber.setVisible(False)
+        self._frame_histogram_cache = {}
+        self._stop_playback()
 
     def on_frame_selection_changed(self):
         """Handle frame selection changes and trigger plot update."""
@@ -1468,9 +1491,15 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             
         if self.checkBoxStackFrames.isChecked():
             logging.debug("Stack frames enabled (showing all frames)")
+            # Clear cache when switching to stacked mode
+            self._frame_histogram_cache = {}
+            self._stop_playback()
         else:
             frame_num = self.spinBoxFrameNumber.value()
             logging.debug(f"Single frame mode: showing frame {frame_num}")
+            # Try to use cached histogram for this frame
+            if self._use_cached_frame_histogram(frame_num):
+                return
             
         self.parent.request_plot_update()
 
@@ -1540,3 +1569,339 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         except Exception as e:
             logging.warning(f"Failed to create frame filter mask: {e}")
             return None
+
+    # ==================== Settings and Configuration ====================
+    
+    def _load_playback_settings(self):
+        """Load playback settings from settings file."""
+        try:
+            settings_path = pathlib.Path(__file__).parent.parent / 'settings' / 'mfd.settings.json'
+            if settings_path.exists():
+                with open(settings_path, 'r') as f:
+                    settings = json.load(f)
+                
+                playback_settings = settings.get('playback', {})
+                self._frame_duration_ms = playback_settings.get('frame_duration_ms', 200)
+                self._background_computation_enabled = playback_settings.get('enable_background_computation', True)
+                
+                # Configure cache based on settings
+                cache_size_mb = playback_settings.get('cache_size_mb', 100)
+                cache_max_entries = playback_settings.get('cache_max_entries', 50)
+                self._histogram_cache = EnhancedHistogramCache(
+                    max_size=cache_max_entries,
+                    max_memory_mb=cache_size_mb
+                )
+                
+                logging.info(f"Loaded playback settings: duration={self._frame_duration_ms}ms, "
+                           f"background={self._background_computation_enabled}, "
+                           f"cache={cache_size_mb}MB")
+            else:
+                # Default settings
+                self._frame_duration_ms = 200
+                self._background_computation_enabled = True
+                logging.warning("Playback settings file not found, using defaults")
+        except Exception as e:
+            logging.warning(f"Failed to load playback settings: {e}")
+            # Fallback to defaults
+            self._frame_duration_ms = 200
+            self._background_computation_enabled = True
+    
+    def update_playback_settings(self, frame_duration_ms: int = None, 
+                                enable_background: bool = None,
+                                cache_size_mb: int = None,
+                                cache_max_entries: int = None):
+        """Update playback settings and reconfigure components."""
+        if frame_duration_ms is not None:
+            self._frame_duration_ms = frame_duration_ms
+            if hasattr(self, '_playback_timer'):
+                self._playback_timer.setInterval(self._frame_duration_ms)
+        
+        if enable_background is not None:
+            self._background_computation_enabled = enable_background
+        
+        if cache_size_mb is not None or cache_max_entries is not None:
+            # Recreate cache with new settings
+            old_cache = self._histogram_cache
+            self._histogram_cache = EnhancedHistogramCache(
+                max_size=cache_max_entries or old_cache.max_size,
+                max_memory_mb=cache_size_mb or (old_cache.max_memory_bytes / 1024 / 1024)
+            )
+        
+        logging.info(f"Updated playback settings: duration={self._frame_duration_ms}ms, "
+                   f"background={self._background_computation_enabled}")
+    
+    # ==================== Time Series Playback Controls ====================
+    
+    def _setup_playback_controls(self):
+        """Setup playback control buttons - connect signals and create timer."""
+        self.toolButtonPlayBackward.clicked.connect(self._on_play_backward)
+        self.toolButtonPause.clicked.connect(self._on_pause)
+        self.toolButtonPlayForward.clicked.connect(self._on_play_forward)
+        
+        self._playback_timer = QtCore.QTimer(self)
+        self._playback_timer.setInterval(self._frame_duration_ms)  # Use settings value
+        self._playback_timer.timeout.connect(self._on_playback_tick)
+        self._playback_direction = 0
+        
+    def _on_play_backward(self):
+        """Start playing backward through frames."""
+        if self.toolButtonPlayBackward.isChecked():
+            self._playback_direction = -1
+            self.toolButtonPlayForward.setChecked(False)
+            self._playback_timer.start()
+            logging.debug("Started backward playback")
+        else:
+            self._stop_playback()
+            
+    def _on_play_forward(self):
+        """Start playing forward through frames."""
+        if self.toolButtonPlayForward.isChecked():
+            self._playback_direction = 1
+            self.toolButtonPlayBackward.setChecked(False)
+            self._playback_timer.start()
+            logging.debug("Started forward playback")
+        else:
+            self._stop_playback()
+            
+    def _on_pause(self):
+        """Pause playback."""
+        self._stop_playback()
+        
+    def _stop_playback(self):
+        """Stop any active playback."""
+        if hasattr(self, '_playback_timer'):
+            self._playback_timer.stop()
+        self._playback_direction = 0
+        self.toolButtonPlayBackward.setChecked(False)
+        self.toolButtonPlayForward.setChecked(False)
+        
+    def _on_playback_tick(self):
+        """Handle playback timer tick - advance to next/previous frame."""
+        if not hasattr(self, '_frame_param') or self._frame_param is None:
+            self._stop_playback()
+            return
+            
+        if self.checkBoxStackFrames.isChecked():
+            self._stop_playback()
+            return
+            
+        current = self.spinBoxFrameNumber.value()
+        n_frames = getattr(self, '_n_frames', 0)
+        
+        if self._playback_direction > 0:
+            # Forward
+            new_frame = current + 1
+            if new_frame >= n_frames:
+                new_frame = 0  # Loop
+        elif self._playback_direction < 0:
+            # Backward
+            new_frame = current - 1
+            if new_frame < 0:
+                new_frame = n_frames - 1  # Loop
+        else:
+            return
+            
+        self.spinBoxFrameNumber.setValue(new_frame)
+        
+    # ==================== Background Histogram Computation ====================
+    
+    def _initialize_histogram_worker(self):
+        """Initialize the background histogram computation worker."""
+        if self._histogram_worker is None:
+            self._histogram_worker = HistogramComputeWorker(self)
+            self._histogram_worker.computation_complete.connect(self._on_histograms_computed)
+            self._histogram_worker.computation_failed.connect(self._on_histogram_computation_failed)
+    
+    def compute_histograms_background(self, histogram_params: dict, weights: Optional[np.ndarray] = None):
+        """Compute histograms in background thread if enabled, otherwise compute immediately."""
+        if not self._background_computation_enabled or not hasattr(self.parent, 'data_source'):
+            # Fall back to immediate computation
+            return self._compute_histograms_immediate(histogram_params, weights)
+        
+        self._initialize_histogram_worker()
+        
+        # Check cache first
+        cached_result = self._histogram_cache.get(histogram_params, weights)
+        if cached_result is not None:
+            logging.debug("Using cached histogram data")
+            self._on_histograms_computed(cached_result)
+            return
+        
+        # Schedule background computation
+        try:
+            self._histogram_worker.compute_histograms(
+                self.parent.data_source,
+                histogram_params,
+                weights
+            )
+            logging.debug("Scheduled background histogram computation")
+        except Exception as e:
+            logging.error(f"Failed to schedule histogram computation: {e}")
+            self._compute_histograms_immediate(histogram_params, weights)
+    
+    def _compute_histograms_immediate(self, histogram_params: dict, weights: Optional[np.ndarray] = None):
+        """Compute histograms immediately in the main thread."""
+        try:
+            # Import here to avoid circular imports
+            from ..utils.histogram_computation import compute_histograms_sync
+            
+            result = compute_histograms_sync(
+                self.parent.data_source,
+                histogram_params,
+                weights
+            )
+            self._on_histograms_computed(result)
+        except Exception as e:
+            logging.error(f"Immediate histogram computation failed: {e}")
+            self._on_histogram_computation_failed(str(e))
+    
+    def _on_histograms_computed(self, histogram_data: dict):
+        """Handle completion of histogram computation (background or immediate)."""
+        try:
+            # Cache the result
+            if '_params' in histogram_data:
+                self._histogram_cache.put(
+                    histogram_data['_params'],
+                    histogram_data,
+                    # We'll need to extract weights from the parent context
+                )
+            
+            # Update the parent's histogram data
+            self.parent._histogram = histogram_data
+            
+            # Update the UI
+            if '_count' in histogram_data:
+                self.parent.lineEditCountCurrent.setText(str(histogram_data['_count']))
+            
+            # Update histogram displays
+            self._update_histogram_displays_from_data(histogram_data)
+            
+            # Cache for frame if we're in frame mode
+            if hasattr(self, '_frame_param') and self._frame_param and not self.checkBoxStackFrames.isChecked():
+                self.cache_current_frame_histogram(histogram_data)
+            
+            logging.debug(f"Updated histogram displays (computation time: {histogram_data.get('_computation_time', 'N/A'):.3f}s)")
+            
+        except Exception as e:
+            logging.error(f"Failed to update histogram displays: {e}")
+    
+    def _on_histogram_computation_failed(self, error_message: str):
+        """Handle failure of histogram computation."""
+        logging.error(f"Histogram computation failed: {error_message}")
+        # Could show user notification here
+    
+    def _update_histogram_displays_from_data(self, histogram_data: dict):
+        """Update histogram plot widgets from computed data."""
+        try:
+            # Update X histogram
+            if 'x' in histogram_data and hasattr(self.parent, 'g_xhist_m'):
+                x_bin_edges, x_counts = histogram_data['x']
+                self.parent.g_xhist_m.set_data(x_bin_edges[1:], x_counts)
+            
+            # Update Y histogram
+            if 'y' in histogram_data and hasattr(self.parent, 'g_yhist_m'):
+                y_bin_edges, y_counts = histogram_data['y']
+                self.parent.g_yhist_m.set_data(y_counts, y_bin_edges[1:])
+            
+            # Update Z histogram
+            if ('z' in histogram_data and hasattr(self.parent, 'g_zhist_m') and 
+                hasattr(self.parent, 'checkBoxEnableZ') and self.parent.checkBoxEnableZ.isChecked()):
+                z_bin_edges, z_counts = histogram_data['z']
+                self.parent.g_zhist_m.set_data(z_bin_edges[1:], z_counts)
+                
+        except Exception as e:
+            logging.error(f"Failed to update histogram displays: {e}")
+    
+    def get_cache_stats(self) -> dict:
+        """Get histogram cache statistics for debugging."""
+        return self._histogram_cache.get_stats()
+    
+    def clear_histogram_cache(self):
+        """Clear the histogram cache."""
+        self._histogram_cache.clear()
+        logging.info("Cleared histogram cache")
+    
+    # ==================== Frame Histogram Caching ====================
+    
+    def cache_current_frame_histogram(self, histogram_data: dict):
+        """
+        Cache the histogram data for the current frame.
+        
+        Args:
+            histogram_data: Dictionary containing histogram data (x, y, z, 2d)
+        """
+        if not hasattr(self, '_frame_histogram_cache'):
+            self._frame_histogram_cache = {}
+            
+        if self.checkBoxStackFrames.isChecked():
+            return  # Don't cache in stacked mode
+            
+        frame_num = self.spinBoxFrameNumber.value()
+        # Deep copy the histogram data to avoid reference issues
+        import copy
+        self._frame_histogram_cache[frame_num] = copy.deepcopy(histogram_data)
+        logging.debug(f"Cached histogram for frame {frame_num}")
+        
+    def get_cached_frame_histogram(self, frame_num: int) -> dict:
+        """
+        Get cached histogram data for a specific frame.
+        
+        Args:
+            frame_num: Frame number to retrieve
+            
+        Returns:
+            Cached histogram dict or None if not cached
+        """
+        if not hasattr(self, '_frame_histogram_cache'):
+            return None
+        return self._frame_histogram_cache.get(frame_num)
+        
+    def _use_cached_frame_histogram(self, frame_num: int) -> bool:
+        """
+        Try to use cached histogram for the given frame.
+        
+        Returns:
+            True if cache was used and plots updated, False otherwise
+        """
+        cached = self.get_cached_frame_histogram(frame_num)
+        if cached is None:
+            return False
+            
+        try:
+            # Update parent's histogram data directly from cache
+            self.parent._histogram = cached
+            # Trigger plot update without recomputing histograms
+            from . import plot_update_helpers
+            # Update the plots using cached data
+            self.parent.lineEditCountCurrent.setText(str(cached.get('_count', '?')))
+            
+            # Update histogram displays
+            if 'x' in cached:
+                x_bin_edges, x_counts = cached['x']
+                self.parent.g_xhist_m.set_data(x_bin_edges[1:], x_counts)
+            if 'y' in cached:
+                y_bin_edges, y_counts = cached['y']
+                self.parent.g_yhist_m.set_data(y_counts, y_bin_edges[1:])
+            if 'z' in cached and hasattr(self.parent, 'checkBoxEnableZ') and self.parent.checkBoxEnableZ.isChecked():
+                z_bin_edges, z_counts = cached['z']
+                self.parent.g_zhist_m.set_data(z_bin_edges[1:], z_counts)
+                
+            # Update 2D plot
+            self.parent.update_2d_plot()
+            
+            # Replot all
+            self.parent.g_xplot.replot()
+            self.parent.g_yplot.replot()
+            self.parent.g_zplot.replot()
+            self.parent.g_2dplot.replot()
+            
+            logging.debug(f"Used cached histogram for frame {frame_num}")
+            return True
+        except Exception as e:
+            logging.warning(f"Failed to use cached histogram: {e}")
+            return False
+            
+    def clear_frame_histogram_cache(self):
+        """Clear all cached frame histograms."""
+        self._frame_histogram_cache = {}
+        logging.debug("Cleared frame histogram cache")
