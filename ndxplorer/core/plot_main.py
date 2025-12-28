@@ -386,7 +386,9 @@ class NDXplorer(QtWidgets.QMainWindow):
     @vmin.setter
     def vmin(self, v):
         logging.debug(f"Setting vmin to {v}")
-        return self.doubleSpinBox_vmin.setValue(v)
+        self.doubleSpinBox_vmin.blockSignals(True)
+        self.doubleSpinBox_vmin.setValue(v)
+        self.doubleSpinBox_vmin.blockSignals(False)
 
     @property
     def vmax(self):
@@ -398,7 +400,9 @@ class NDXplorer(QtWidgets.QMainWindow):
     @vmax.setter
     def vmax(self, v):
         logging.debug(f"Setting vmax to {v}")
-        return self.doubleSpinBox_vmax.setValue(v)
+        self.doubleSpinBox_vmax.blockSignals(True)
+        self.doubleSpinBox_vmax.setValue(v)
+        self.doubleSpinBox_vmax.blockSignals(False)
 
     @property
     def current_cmap(self) -> str:
@@ -416,16 +420,32 @@ class NDXplorer(QtWidgets.QMainWindow):
     def on_vmin_vmax_changed(self):
         if not getattr(self, '_deferred_init_done', False) or self.g_2dplot is None:
             return
+        
+        # Debounce: schedule update instead of executing immediately
+        if not hasattr(self, '_vmin_vmax_timer'):
+            from qtpy import QtCore
+            self._vmin_vmax_timer = QtCore.QTimer()
+            self._vmin_vmax_timer.setSingleShot(True)
+            self._vmin_vmax_timer.timeout.connect(self._apply_vmin_vmax_change)
+        
+        # Cancel any pending update and schedule a new one
+        self._vmin_vmax_timer.stop()
+        self._vmin_vmax_timer.start(50)  # 50ms debounce
+    
+    def _apply_vmin_vmax_change(self):
+        """Actually apply the vmin/vmax change (called after debounce)."""
+        if not getattr(self, '_deferred_init_done', False) or self.g_2dplot is None:
+            return
+        
         logging.info("vmin/vmax values changed")
-        # Get current values from the spin boxes using the properties
-        current_vmin = self.vmin  # this should read from doubleSpinBox_vmin.value()
-        current_vmax = self.vmax  # similarly for doubleSpinBox_vmax.value()
-        logging.info( f"Setting colormap limits to vmin={current_vmin}, vmax={current_vmax}")
+        current_vmin = self.vmin
+        current_vmax = self.vmax
+        logging.info(f"Setting colormap limits to vmin={current_vmin}, vmax={current_vmax}")
 
         # Update the colormap limits for the 2D histogram image
         self.cax.set_lut_range([current_vmin, current_vmax])
-        self.g_2dplot.replot()  # Redraw the plot to reflect the change
-        logging.info( "Colormap limits updated")
+        self.g_2dplot.replot()
+        logging.info("Colormap limits updated")
 
     def set_default_colormap(self, default_cmap):
         """Set default colormap using new colormaps module."""
