@@ -28,9 +28,14 @@ except ImportError:
     QwtPlotCanvas = None
 
 from .image_items import FixedImageItem
+from .simple_image_widget import SimpleImageWidget
 from ..logging_config import logging
 from ..utils.mouse_event_filter import MouseEventFilter
 from ..widgets import ScientificSpinBox
+
+# Check environment variable for backend selection
+# NDXPLORER_2D_BACKEND can be "guiqwt" or "simple" (default: "simple")
+USE_SIMPLE_BACKEND = os.environ.get('NDXPLORER_2D_BACKEND', 'simple').lower() != 'guiqwt'
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..core.plot_main import NDXplorer
@@ -102,6 +107,30 @@ class _BackgroundLabel(QtWidgets.QLabel):
         self.setPixmap(scaled)
 
 
+
+def _get_layout(ndxplorer: "NDXplorer", primary: str, fallbacks: tuple[str, ...] = ()) -> QtWidgets.QLayout:
+    layout = getattr(ndxplorer, primary, None)
+    if layout is not None:
+        return layout
+    for name in fallbacks:
+        layout = getattr(ndxplorer, name, None)
+        if layout is not None:
+            logging.warning("Using fallback layout '%s' for '%s'", name, primary)
+            return layout
+    raise AttributeError(f"Could not find layout '{primary}' (fallbacks tried: {fallbacks})")
+
+
+def _top_row_target_height(ndxplorer: "NDXplorer") -> int:
+    controls_widget = getattr(ndxplorer, "widget_6", None)
+    for method in ("sizeHint", "minimumSizeHint", "size"):
+        if controls_widget is None:
+            break
+        size = getattr(controls_widget, method)()
+        if size.height() > 0:
+            return size.height()
+    return 140
+
+
 def setup_plot_placeholders(ndxplorer: "NDXplorer") -> None:
     """Create placeholder widgets that maintain correct layout until real plots are created.
     
@@ -112,25 +141,38 @@ def setup_plot_placeholders(ndxplorer: "NDXplorer") -> None:
     ndxplorer._placeholder_z = QtWidgets.QFrame()
     ndxplorer._placeholder_z.setFrameStyle(QtWidgets.QFrame.StyledPanel)
     ndxplorer._placeholder_z.setStyleSheet("background-color: white;")
-    ndxplorer._placeholder_z.setMaximumHeight(150)
-    ndxplorer._placeholder_z.setMinimumHeight(80)
+    ndxplorer._placeholder_z.setSizePolicy(
+        QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+    )
     ndxplorer.plot_control.verticalLayout_4.addWidget(ndxplorer._placeholder_z)
 
     # X-axis placeholder (horizontal histogram above 2D plot)
     ndxplorer._placeholder_x = QtWidgets.QFrame()
     ndxplorer._placeholder_x.setFrameStyle(QtWidgets.QFrame.StyledPanel)
     ndxplorer._placeholder_x.setStyleSheet("background-color: white;")
-    ndxplorer._placeholder_x.setMaximumHeight(150)
-    ndxplorer._placeholder_x.setMinimumHeight(80)
-    ndxplorer.verticalLayout_5.addWidget(ndxplorer._placeholder_x)
+    ndxplorer._placeholder_x.setMaximumHeight(100)
+    ndxplorer._placeholder_x.setSizePolicy(
+        QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
+    )
+    target_height = _top_row_target_height(ndxplorer)
+    ndxplorer._placeholder_x.setMaximumHeight(target_height)
+    x_layout = _get_layout(ndxplorer, "verticalLayout_xhist", ("verticalLayout_5",))
+    ndxplorer._x_hist_layout = x_layout
+    x_layout.addWidget(ndxplorer._placeholder_x)
 
     # Y-axis placeholder (vertical histogram to right of 2D plot)
     ndxplorer._placeholder_y = QtWidgets.QFrame()
     ndxplorer._placeholder_y.setFrameStyle(QtWidgets.QFrame.StyledPanel)
     ndxplorer._placeholder_y.setStyleSheet("background-color: white;")
     ndxplorer._placeholder_y.setMaximumWidth(150)
-    ndxplorer._placeholder_y.setMinimumWidth(80)
-    ndxplorer.verticalLayout_7.addWidget(ndxplorer._placeholder_y)
+    ndxplorer._placeholder_y.setMaximumWidth(150)
+    ndxplorer._placeholder_y.setSizePolicy(
+        QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding
+    )
+    ndxplorer._placeholder_y.setMaximumWidth(120)
+    y_layout = _get_layout(ndxplorer, "verticalLayout_yhist", ("verticalLayout_7",))
+    ndxplorer._y_hist_layout = y_layout
+    y_layout.addWidget(ndxplorer._placeholder_y)
 
     # 2D plot placeholder (main histogram area) - use background.png
     bg_path = _find_background_image()
@@ -175,9 +217,9 @@ def configure_dynamic_selection_controls(ndxplorer: "NDXplorer") -> None:
 
     ndxplorer._last_z_range = None
 
-    ndxplorer.checkBoxEnableZ = plot_control.checkBoxEnableZ
-    ndxplorer.checkBoxEnableZ.setToolTip("When checked, the Z-axis plot is displayed")
-    ndxplorer.checkBoxEnableZ.stateChanged.connect(ndxplorer.on_enable_z_changed)
+    ndxplorer.groupBox_3 = plot_control.groupBox_3
+    ndxplorer.groupBox_3.setToolTip("When checked, the Z-axis plot is displayed")
+    ndxplorer.groupBox_3.toggled.connect(ndxplorer.on_enable_z_changed)
 
     ndxplorer.checkBoxWeight = plot_control.checkBoxWeight
     ndxplorer.checkBoxWeight.setToolTip(
@@ -225,7 +267,7 @@ def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
         getattr(ndxplorer, "_placeholder_z", None),
         ndxplorer.g_zplot,
     )
-    ndxplorer.g_zplot.setVisible(ndxplorer.checkBoxEnableZ.isChecked())
+    ndxplorer.g_zplot.setVisible(ndxplorer.groupBox_3.isChecked())
 
     win_x = CurveDialog()
     ndxplorer.g_xplot = win_x.get_plot()
@@ -241,8 +283,12 @@ def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
     curveparam_x.line.width = 2.0
     ndxplorer.g_xhist_m = guiqwt.curve.CurveItem(curveparam=curveparam_x)
     ndxplorer.g_xplot.add_item(ndxplorer.g_xhist_m)
+    x_layout = getattr(ndxplorer, "_x_hist_layout", None)
+    if x_layout is None:
+        x_layout = _get_layout(ndxplorer, "verticalLayout_xhist", ("verticalLayout_5",))
+        ndxplorer._x_hist_layout = x_layout
     _replace_placeholder(
-        ndxplorer.verticalLayout_5,
+        x_layout,
         getattr(ndxplorer, "_placeholder_x", None),
         ndxplorer.g_xplot,
     )
@@ -261,8 +307,12 @@ def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
     curveparam_y.line.width = 2.0
     ndxplorer.g_yhist_m = guiqwt.curve.CurveItem(curveparam=curveparam_y)
     ndxplorer.g_yplot.add_item(ndxplorer.g_yhist_m)
+    y_layout = getattr(ndxplorer, "_y_hist_layout", None)
+    if y_layout is None:
+        y_layout = _get_layout(ndxplorer, "verticalLayout_yhist", ("verticalLayout_7",))
+        ndxplorer._y_hist_layout = y_layout
     _replace_placeholder(
-        ndxplorer.verticalLayout_7,
+        y_layout,
         getattr(ndxplorer, "_placeholder_y", None),
         ndxplorer.g_yplot,
     )
@@ -273,112 +323,228 @@ def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
         ndxplorer.g_zplot.canvas(),
     ):
         canvas.setStyleSheet("background-color: white;")
+        try:
+            canvas.setPaintAttribute(QwtPlotCanvas.BackingStore, False)
+            canvas.setPaintAttribute(QwtPlotCanvas.Opaque, True)
+            canvas.setPaintAttribute(QwtPlotCanvas.HackStyledBackground, False)
+            canvas.setPaintAttribute(QwtPlotCanvas.ImmediatePaint, True)
+        except Exception:
+            pass
 
-    ndxplorer.g_xplot.setMaximumHeight(150)
-    ndxplorer.g_yplot.setMaximumWidth(150)
-    ndxplorer.g_zplot.setMaximumHeight(150)
+    # Constrain x-axis marginal height to match control widget height
+    target_height = _top_row_target_height(ndxplorer)
+    ndxplorer.g_xplot.setMinimumHeight(0)
+    ndxplorer.g_xplot.setMaximumHeight(target_height)
+    
+    # Constrain y-axis marginal width to match control widget width
+    controls_widget = getattr(ndxplorer, "widget_6", None)
+    if controls_widget is not None:
+        target_width = controls_widget.sizeHint().width()
+        if target_width <= 0:
+            target_width = 150
+    else:
+        target_width = 150
+    ndxplorer.g_yplot.setMinimumWidth(0)
+    ndxplorer.g_yplot.setMaximumWidth(target_width)
+    
+    # Z-plot can expand freely
+    ndxplorer.g_zplot.setMinimumHeight(0)
+    ndxplorer.g_zplot.setMaximumHeight(QtWidgets.QWIDGETSIZE_MAX)
 
 
 def setup_2d_histogram_plot(ndxplorer: "NDXplorer", cmap: str) -> None:
-    """Create the guiqwt 2D histogram plot along with optional background."""
-    if not GUIQWT_AVAILABLE:
-        logging.warning("guiqwt not available, skipping 2D histogram plot setup")
-        return
+    """Create the 2D histogram plot widget (guiqwt or simple backend based on env var)."""
     
-    win_2d = guiqwt.plot.ImageDialog(edit=False, toolbar=False)
-    ndxplorer.g_2dplot = win_2d.get_plot()
-
-    # Create empty initial data for the main image
-    data = np.zeros((10, 10))
-    ndxplorer.cax = FixedImageItem(data=data)
-    ndxplorer.g_2dplot.add_item(ndxplorer.cax)
-
-    # Load background image for when there's no data
-    bg_image_path = _find_background_image()
-    ndxplorer.bg_image_item = None
-    if bg_image_path:
-        bg_qimage = QImage(bg_image_path)
-        if not bg_qimage.isNull():
-            bg_qimage = bg_qimage.convertToFormat(QImage.Format_RGBA8888)
-            width = bg_qimage.width()
-            height = bg_qimage.height()
-            ptr = bg_qimage.bits()
-            ptr.setsize(height * width * 4)
-            arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 4))
-            ndxplorer.bg_image_item = FixedImageItem(data=arr[:, :, 0].copy())
-            ndxplorer.g_2dplot.add_item(ndxplorer.bg_image_item)
-            # Ensure the splash image renders on top of the histogram image.
-            try:
-                ndxplorer.bg_image_item.setZ(ndxplorer.cax.z() + 1.0)
-            except Exception:
-                ndxplorer.bg_image_item.setZ(1.0)
-            ndxplorer.bg_image_item.setVisible(True)
+    if USE_SIMPLE_BACKEND:
+        # Use simple Qt-based image widget
+        logging.info("Using simple Qt backend for 2D histogram plot")
+        ndxplorer.g_2dplot = SimpleImageWidget(parent=ndxplorer)
+        ndxplorer.cax = ndxplorer.g_2dplot
+        ndxplorer._use_simple_backend = True
+        
+        # Set initial empty data
+        data = np.zeros((10, 10))
+        ndxplorer.g_2dplot.set_data(data)
+        
+        # Load background image for when there's no data
+        bg_image_path = _find_background_image()
+        if bg_image_path:
+            ndxplorer.g_2dplot.set_background_image(bg_image_path)
+        else:
+            logging.warning("Background image not found: %s", bg_image_path)
+        
+        # Set default colormap
+        ndxplorer.set_default_colormap(cmap)
+        
+        # Set axis font
+        ndxplorer.g_2dplot.set_axis_font("left", QFont("Courier"))
+        
+        # Store font settings
+        ndxplorer.font_settings = {
+            "tick_size_pt": 8,
+            "title_size_pt": 10,
+            "title_weight": 700,
+            "color": "#000000",
+        }
+        
+        # Disable all axes by default
+        ndxplorer.g_2dplot.enable_axis("xBottom", False)
+        ndxplorer.g_2dplot.enable_axis("xTop", False)
+        ndxplorer.g_2dplot.enable_axis("yLeft", False)
+        ndxplorer.g_2dplot.enable_axis("yRight", False)
+        
+        # Enable mouse tracking
+        ndxplorer.g_2dplot.setMouseTracking(True)
+        
+        # Install event filter
+        try:
+            ndxplorer.g_2dplot.installEventFilter(ndxplorer)
+        except Exception:
+            pass
     else:
-        logging.warning("Background image not found: %s", bg_image_path)
+        # Use guiqwt backend
+        if not GUIQWT_AVAILABLE:
+            logging.error("guiqwt backend requested but not available, falling back to simple backend")
+            # Fall back to simple backend by creating SimpleImageWidget directly
+            logging.info("Using simple Qt backend for 2D histogram plot (fallback)")
+            ndxplorer.g_2dplot = SimpleImageWidget(parent=ndxplorer)
+            ndxplorer.cax = ndxplorer.g_2dplot
+            ndxplorer._use_simple_backend = True
+            
+            data = np.zeros((10, 10))
+            ndxplorer.g_2dplot.set_data(data)
+            
+            bg_image_path = _find_background_image()
+            if bg_image_path:
+                ndxplorer.g_2dplot.set_background_image(bg_image_path)
+            
+            ndxplorer.set_default_colormap(cmap)
+            ndxplorer.g_2dplot.set_axis_font("left", QFont("Courier"))
+            ndxplorer.font_settings = {
+                "tick_size_pt": 8,
+                "title_size_pt": 10,
+                "title_weight": 700,
+                "color": "#000000",
+            }
+            
+            ndxplorer.g_2dplot.enable_axis("xBottom", False)
+            ndxplorer.g_2dplot.enable_axis("xTop", False)
+            ndxplorer.g_2dplot.enable_axis("yLeft", False)
+            ndxplorer.g_2dplot.enable_axis("yRight", False)
+            ndxplorer.g_2dplot.setMouseTracking(True)
+            
+            try:
+                ndxplorer.g_2dplot.installEventFilter(ndxplorer)
+            except Exception:
+                pass
+            return
+        
+        logging.info("Using guiqwt backend for 2D histogram plot")
+        ndxplorer._use_simple_backend = False
+        
+        win_2d = guiqwt.plot.ImageDialog(edit=False, toolbar=False)
+        ndxplorer.g_2dplot = win_2d.get_plot()
 
-    # Keep the 2D histogram image under the splash by default.
-    try:
-        ndxplorer.cax.setZ(0.0)
-    except Exception:
-        pass
+        # Create empty initial data for the main image
+        data = np.zeros((10, 10))
+        ndxplorer.cax = FixedImageItem(data=data)
+        ndxplorer.g_2dplot.add_item(ndxplorer.cax)
 
-    ndxplorer.set_default_colormap(cmap)
-    ndxplorer.g_2dplot.set_axis_font("left", QFont("Courier"))
-    ndxplorer.g_2dplot.set_axis_font("bottom", QFont("Courier"))
-    ndxplorer.font_settings = {
-        "tick_size_pt": 8,
-        "title_size_pt": 10,
-        "title_weight": 700,
-        "color": "#000000",
-    }
-    try:
-        ndxplorer.apply_fonts()
-    except Exception:
-        pass
+        # Load background image for when there's no data
+        bg_image_path = _find_background_image()
+        ndxplorer.bg_image_item = None
+        if bg_image_path:
+            bg_qimage = QImage(bg_image_path)
+            if not bg_qimage.isNull():
+                bg_qimage = bg_qimage.convertToFormat(QImage.Format_RGBA8888)
+                width = bg_qimage.width()
+                height = bg_qimage.height()
+                ptr = bg_qimage.bits()
+                ptr.setsize(height * width * 4)
+                arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 4))
+                ndxplorer.bg_image_item = FixedImageItem(data=arr[:, :, 0].copy())
+                ndxplorer.g_2dplot.add_item(ndxplorer.bg_image_item)
+                try:
+                    ndxplorer.bg_image_item.setZ(ndxplorer.cax.z() + 1.0)
+                except Exception:
+                    ndxplorer.bg_image_item.setZ(1.0)
+                ndxplorer.bg_image_item.setVisible(True)
+        else:
+            logging.warning("Background image not found: %s", bg_image_path)
 
-    ndxplorer.g_2dplot.enableAxis(QwtPlot.xBottom, False)
-    ndxplorer.g_2dplot.enableAxis(QwtPlot.xTop, False)
-    ndxplorer.g_2dplot.enableAxis(QwtPlot.yLeft, False)
-    ndxplorer.g_2dplot.enableAxis(QwtPlot.yRight, False)
-    ndxplorer.g_2dplot.canvas().setStyleSheet("background-color: white;")
-    ndxplorer.g_2dplot.canvas().setMouseTracking(True)
-    try:
-        ndxplorer.g_2dplot.canvas().installEventFilter(ndxplorer)
-    except Exception:
-        pass
+        try:
+            ndxplorer.cax.setZ(0.0)
+        except Exception:
+            pass
+
+        ndxplorer.set_default_colormap(cmap)
+        ndxplorer.g_2dplot.set_axis_font("left", QFont("Courier"))
+        ndxplorer.g_2dplot.set_axis_font("bottom", QFont("Courier"))
+        ndxplorer.font_settings = {
+            "tick_size_pt": 8,
+            "title_size_pt": 10,
+            "title_weight": 700,
+            "color": "#000000",
+        }
+        try:
+            ndxplorer.apply_fonts()
+        except Exception:
+            pass
+
+        ndxplorer.g_2dplot.enableAxis(QwtPlot.xBottom, False)
+        ndxplorer.g_2dplot.enableAxis(QwtPlot.xTop, False)
+        ndxplorer.g_2dplot.enableAxis(QwtPlot.yLeft, False)
+        ndxplorer.g_2dplot.enableAxis(QwtPlot.yRight, False)
+        ndxplorer.g_2dplot.canvas().setStyleSheet("background-color: white;")
+        ndxplorer.g_2dplot.canvas().setMouseTracking(True)
+        try:
+            ndxplorer.g_2dplot.canvas().installEventFilter(ndxplorer)
+        except Exception:
+            pass
 
 
 def setup_overlay_plot(ndxplorer: "NDXplorer") -> None:
     """Create a transparent overlay plot stacked on top of the 2D histogram."""
-    if not GUIQWT_AVAILABLE:
-        logging.warning("guiqwt not available, skipping overlay plot setup")
-        return
+    # Use PyQt overlay widget for simple backend, guiqwt for guiqwt backend
+    use_simple = getattr(ndxplorer, '_use_simple_backend', True)
     
-    ndxplorer.overlay_plot = guiqwt.curve.CurvePlot(parent=ndxplorer)
-    ndxplorer.mouse_event_filter = MouseEventFilter(ndxplorer)
-    ndxplorer.overlay_plot.canvas().installEventFilter(ndxplorer.mouse_event_filter)
-    ndxplorer.overlay_plot.grid.setVisible(False)
-    ndxplorer.overlay_plot.setAutoFillBackground(False)
-    ndxplorer.overlay_plot.setStyleSheet("background-color: transparent;")
-    ndxplorer.overlay_plot.setFrameStyle(QtWidgets.QFrame.NoFrame)
-    ndxplorer.overlay_plot.canvas().setAutoFillBackground(False)
-    ndxplorer.overlay_plot.canvas().setStyleSheet("background-color: transparent;")
-    ndxplorer.overlay_plot.canvas().setFrameStyle(QtWidgets.QFrame.NoFrame)
-    ndxplorer.overlay_plot.canvas().setPaintAttribute(
-        QwtPlotCanvas.BackingStore, False
-    )
-    ndxplorer.overlay_plot.canvas().setPaintAttribute(QwtPlotCanvas.Opaque, False)
-    ndxplorer.overlay_plot.canvas().setPaintAttribute(
-        QwtPlotCanvas.HackStyledBackground, False
-    )
-    ndxplorer.overlay_plot.canvas().setPaintAttribute(
-        QwtPlotCanvas.ImmediatePaint, True
-    )
+    if use_simple:
+        # Use PyQt-based overlay widget
+        from ..widgets.drawing_overlay_widget import DrawingOverlayWidget
+        ndxplorer.overlay_plot = DrawingOverlayWidget(parent=ndxplorer)
+        ndxplorer.mouse_event_filter = MouseEventFilter(ndxplorer)
+        ndxplorer.overlay_plot.installEventFilter(ndxplorer.mouse_event_filter)
+    else:
+        # Use guiqwt overlay (original implementation)
+        if not GUIQWT_AVAILABLE:
+            logging.warning("guiqwt not available, skipping overlay plot setup")
+            return
+        
+        ndxplorer.overlay_plot = guiqwt.curve.CurvePlot(parent=ndxplorer)
+        ndxplorer.mouse_event_filter = MouseEventFilter(ndxplorer)
+        ndxplorer.overlay_plot.canvas().installEventFilter(ndxplorer.mouse_event_filter)
+        ndxplorer.overlay_plot.grid.setVisible(False)
+        ndxplorer.overlay_plot.setAutoFillBackground(False)
+        ndxplorer.overlay_plot.setStyleSheet("background-color: transparent;")
+        ndxplorer.overlay_plot.setFrameStyle(QtWidgets.QFrame.NoFrame)
+        ndxplorer.overlay_plot.canvas().setAutoFillBackground(False)
+        ndxplorer.overlay_plot.canvas().setStyleSheet("background-color: transparent;")
+        ndxplorer.overlay_plot.canvas().setFrameStyle(QtWidgets.QFrame.NoFrame)
+        ndxplorer.overlay_plot.canvas().setPaintAttribute(
+            QwtPlotCanvas.BackingStore, False
+        )
+        ndxplorer.overlay_plot.canvas().setPaintAttribute(QwtPlotCanvas.Opaque, False)
+        ndxplorer.overlay_plot.canvas().setPaintAttribute(
+            QwtPlotCanvas.HackStyledBackground, False
+        )
+        ndxplorer.overlay_plot.canvas().setPaintAttribute(
+            QwtPlotCanvas.ImmediatePaint, True
+        )
 
-    ndxplorer.overlay_plot.enableAxis(QwtPlot.xBottom, False)
-    ndxplorer.overlay_plot.enableAxis(QwtPlot.xTop, False)
-    ndxplorer.overlay_plot.enableAxis(QwtPlot.yLeft, False)
-    ndxplorer.overlay_plot.enableAxis(QwtPlot.yRight, False)
+        ndxplorer.overlay_plot.enableAxis(QwtPlot.xBottom, False)
+        ndxplorer.overlay_plot.enableAxis(QwtPlot.xTop, False)
+        ndxplorer.overlay_plot.enableAxis(QwtPlot.yLeft, False)
+        ndxplorer.overlay_plot.enableAxis(QwtPlot.yRight, False)
 
     plot_container = QtWidgets.QWidget()
     plot_container.setAutoFillBackground(False)
@@ -435,3 +601,13 @@ def _find_background_image() -> Optional[str]:
         ", ".join(candidates),
     )
     return None
+
+
+__all__ = [
+    'setup_histogram_spinboxes',
+    'setup_plot_placeholders',
+    'configure_dynamic_selection_controls',
+    'setup_histogram_plots',
+    'setup_2d_histogram_plot',
+    'setup_overlay_plot',
+]

@@ -6,15 +6,15 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>922</width>
-    <height>620</height>
+    <width>899</width>
+    <height>627</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>ndxplorer</string>
   </property>
   <property name="windowIcon">
-   <iconset resource="ui/resource.qrc">
+   <iconset>
     <normaloff>:/icons/icon.svg</normaloff>:/icons/icon.svg</iconset>
   </property>
   <widget class="QWidget" name="centralwidget">
@@ -55,8 +55,24 @@
       </item>
       <item>
        <widget class="QToolButton" name="toolButtonChangePath">
+        <property name="toolTipDuration">
+         <number>-1</number>
+        </property>
         <property name="text">
          <string>...</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="comboBoxCmap">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="editable">
+         <bool>true</bool>
         </property>
        </widget>
       </item>
@@ -86,6 +102,95 @@
        <property name="spacing">
         <number>0</number>
        </property>
+       <item row="1" column="0">
+        <widget class="QWidget" name="widget_4" native="true">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+           <horstretch>1</horstretch>
+           <verstretch>1</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>400</width>
+           <height>400</height>
+          </size>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_12">
+          <property name="spacing">
+           <number>0</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <layout class="QVBoxLayout" name="verticalLayout_11">
+            <property name="spacing">
+             <number>0</number>
+            </property>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QWidget" name="widget_5" native="true">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Minimum" vsizetype="Expanding">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>150</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>16777215</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayout_8">
+          <property name="spacing">
+           <number>0</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <layout class="QVBoxLayout" name="verticalLayout_yhist">
+            <property name="spacing">
+             <number>0</number>
+            </property>
+            <property name="rightMargin">
+             <number>0</number>
+            </property>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
        <item row="0" column="0">
         <widget class="QWidget" name="widget_3" native="true">
          <property name="sizePolicy">
@@ -97,7 +202,7 @@
          <property name="minimumSize">
           <size>
            <width>0</width>
-           <height>0</height>
+           <height>110</height>
           </size>
          </property>
          <property name="maximumSize">
@@ -123,15 +228,12 @@
            <number>0</number>
           </property>
           <item>
-           <layout class="QVBoxLayout" name="verticalLayout_5">
+           <layout class="QVBoxLayout" name="verticalLayout_xhist">
             <property name="spacing">
              <number>0</number>
             </property>
-            <property name="sizeConstraint">
-             <enum>QLayout::SetFixedSize</enum>
-            </property>
             <property name="topMargin">
-             <number>6</number>
+             <number>0</number>
             </property>
            </layout>
           </item>
@@ -166,60 +268,32 @@
               <property name="spacing">
                <number>0</number>
               </property>
-              <item row="2" column="2">
-               <widget class="QToolButton" name="toolButtonClearPlot">
+              <item row="2" column="1">
+               <widget class="QToolButton" name="toolButton_3">
                 <property name="enabled">
                  <bool>true</bool>
                 </property>
                 <property name="sizePolicy">
-                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                 <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
                   <horstretch>0</horstretch>
                   <verstretch>0</verstretch>
                  </sizepolicy>
                 </property>
-                <property name="toolTip">
-                 <string>Clear plot</string>
-                </property>
                 <property name="text">
-                 <string>Clear</string>
+                 <string>Data</string>
                 </property>
                </widget>
               </item>
-              <item row="3" column="0">
-               <widget class="QToolButton" name="toolButton_screenshot">
+              <item row="3" column="2">
+               <widget class="QToolButton" name="toolButton_AutoContrast">
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
                   <horstretch>0</horstretch>
                   <verstretch>0</verstretch>
                  </sizepolicy>
                 </property>
-                <property name="font">
-                 <font>
-                  <pointsize>8</pointsize>
-                 </font>
-                </property>
                 <property name="text">
-                 <string>📷</string>
-                </property>
-               </widget>
-              </item>
-              <item row="7" column="0" colspan="3">
-               <layout class="QHBoxLayout" name="horizontalLayout_3">
-                <property name="spacing">
-                 <number>0</number>
-                </property>
-               </layout>
-              </item>
-              <item row="8" column="0" colspan="3">
-               <widget class="QComboBox" name="comboBoxCmap">
-                <property name="sizePolicy">
-                 <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
-                  <horstretch>0</horstretch>
-                  <verstretch>0</verstretch>
-                 </sizepolicy>
-                </property>
-                <property name="editable">
-                 <bool>true</bool>
+                 <string>Contrast</string>
                 </property>
                </widget>
               </item>
@@ -274,7 +348,7 @@
                  <bool>true</bool>
                 </property>
                 <property name="sizePolicy">
-                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                 <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
                   <horstretch>0</horstretch>
                   <verstretch>0</verstretch>
                  </sizepolicy>
@@ -287,50 +361,44 @@
                 </property>
                </widget>
               </item>
-              <item row="3" column="2">
-               <widget class="QToolButton" name="toolButton_AutoContrast">
+              <item row="2" column="2">
+               <widget class="QToolButton" name="toolButtonClearPlot">
+                <property name="enabled">
+                 <bool>true</bool>
+                </property>
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
                   <horstretch>0</horstretch>
                   <verstretch>0</verstretch>
                  </sizepolicy>
                 </property>
+                <property name="toolTip">
+                 <string>Clear plot</string>
+                </property>
                 <property name="text">
-                 <string>Contrast</string>
+                 <string>Clear</string>
                 </property>
                </widget>
               </item>
-              <item row="2" column="0" colspan="2">
-               <widget class="QToolButton" name="toolButton_3">
-                <property name="enabled">
-                 <bool>true</bool>
-                </property>
+              <item row="2" column="0">
+               <widget class="QToolButton" name="toolButton_screenshot">
                 <property name="sizePolicy">
-                 <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                 <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
                   <horstretch>0</horstretch>
                   <verstretch>0</verstretch>
                  </sizepolicy>
                 </property>
+                <property name="font">
+                 <font>
+                  <pointsize>8</pointsize>
+                 </font>
+                </property>
                 <property name="text">
-                 <string>Data table</string>
+                 <string>📷</string>
                 </property>
                </widget>
               </item>
-             </layout>
-            </item>
-            <item>
-             <layout class="QHBoxLayout" name="horizontalLayout_2">
-              <property name="spacing">
-               <number>0</number>
-              </property>
-              <item>
-               <widget class="QToolButton" name="pushButtonShowClusteringDialog">
-                <property name="text">
-                 <string>Cluster</string>
-                </property>
-               </widget>
-              </item>
-              <item>
+              <item row="3" column="0">
                <widget class="QCheckBox" name="checkBoxLogCounts">
                 <property name="enabled">
                  <bool>true</bool>
@@ -346,7 +414,11 @@
                 </property>
                </widget>
               </item>
-              <item>
+             </layout>
+            </item>
+            <item>
+             <layout class="QGridLayout" name="gridLayout_3">
+              <item row="1" column="2">
                <widget class="QCheckBox" name="checkBoxMaskNaN">
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
@@ -362,7 +434,10 @@
                 </property>
                </widget>
               </item>
-              <item>
+              <item row="0" column="1" colspan="2">
+               <layout class="QHBoxLayout" name="horizontalLayout_3"/>
+              </item>
+              <item row="1" column="1">
                <widget class="QCheckBox" name="checkBoxMaskInf">
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
@@ -385,95 +460,6 @@
          </layout>
         </widget>
        </item>
-       <item row="1" column="0">
-        <widget class="QWidget" name="widget_4" native="true">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-           <horstretch>1</horstretch>
-           <verstretch>1</verstretch>
-          </sizepolicy>
-         </property>
-         <layout class="QVBoxLayout" name="verticalLayout_12">
-          <property name="spacing">
-           <number>0</number>
-          </property>
-          <property name="leftMargin">
-           <number>0</number>
-          </property>
-          <property name="topMargin">
-           <number>0</number>
-          </property>
-          <property name="rightMargin">
-           <number>0</number>
-          </property>
-          <property name="bottomMargin">
-           <number>0</number>
-          </property>
-          <item>
-           <layout class="QVBoxLayout" name="verticalLayout_11">
-            <property name="spacing">
-             <number>0</number>
-            </property>
-            <property name="sizeConstraint">
-             <enum>QLayout::SetFixedSize</enum>
-            </property>
-           </layout>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item row="1" column="1">
-        <widget class="QWidget" name="widget_5" native="true">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Minimum" vsizetype="Expanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="minimumSize">
-          <size>
-           <width>0</width>
-           <height>0</height>
-          </size>
-         </property>
-         <property name="maximumSize">
-          <size>
-           <width>16777215</width>
-           <height>16777215</height>
-          </size>
-         </property>
-         <layout class="QVBoxLayout" name="verticalLayout_8">
-          <property name="spacing">
-           <number>0</number>
-          </property>
-          <property name="leftMargin">
-           <number>0</number>
-          </property>
-          <property name="topMargin">
-           <number>0</number>
-          </property>
-          <property name="rightMargin">
-           <number>0</number>
-          </property>
-          <property name="bottomMargin">
-           <number>0</number>
-          </property>
-          <item>
-           <layout class="QVBoxLayout" name="verticalLayout_7">
-            <property name="spacing">
-             <number>0</number>
-            </property>
-            <property name="sizeConstraint">
-             <enum>QLayout::SetFixedSize</enum>
-            </property>
-            <property name="rightMargin">
-             <number>6</number>
-            </property>
-           </layout>
-          </item>
-         </layout>
-        </widget>
-       </item>
       </layout>
      </widget>
     </item>
@@ -484,7 +470,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>922</width>
+     <width>899</width>
      <height>21</height>
     </rect>
    </property>
@@ -524,6 +510,7 @@
     <property name="title">
      <string>Settings</string>
     </property>
+    <addaction name="actionPerformanceSettings"/>
     <widget class="QMenu" name="menuSave_settings">
      <property name="title">
       <string>Save settings</string>
@@ -567,8 +554,8 @@
   <widget class="QDockWidget" name="dockWidget_PlotControl">
    <property name="minimumSize">
     <size>
-     <width>98</width>
-     <height>45</height>
+     <width>80</width>
+     <height>38</height>
     </size>
    </property>
    <property name="windowTitle">
@@ -607,8 +594,8 @@
   <widget class="QDockWidget" name="dockWidget_Parameters">
    <property name="minimumSize">
     <size>
-     <width>98</width>
-     <height>45</height>
+     <width>80</width>
+     <height>43</height>
     </size>
    </property>
    <property name="windowTitle">
@@ -808,6 +795,14 @@
     <string>Axis settings</string>
    </property>
   </action>
+  <action name="actionPerformanceSettings">
+   <property name="text">
+    <string>Performance Settings</string>
+   </property>
+   <property name="toolTip">
+    <string>Configure performance settings for histogram computation, memory usage, and optimization features</string>
+   </property>
+  </action>
   <action name="actionBurst_IDs">
    <property name="text">
     <string>Burst IDs</string>
@@ -970,9 +965,7 @@
    </property>
   </action>
  </widget>
- <resources>
-  <include location="ui/resource.qrc"/>
- </resources>
+ <resources/>
  <connections>
   <connection>
    <sender>toolButtonUpdatePlot</sender>

@@ -97,7 +97,11 @@ def apply_colormap(
     if data is None:
         if "2d" not in ndxplorer._histogram:
             raise ValueError("No 2D histogram data available")
-        data = ndxplorer._histogram["2d"][0]
+        hist_2d = ndxplorer._histogram["2d"]
+        if hasattr(hist_2d, 'H'):
+            data = hist_2d.H
+        else:
+            data = hist_2d[0]
     
     if colormap_name is None:
         colormap_name = colormaps.current_cmap(ndxplorer)
@@ -197,7 +201,11 @@ def export_plot_data(
                 # CSV/JSON export for 2D
                 if format == "csv":
                     csv_data = "x,y,value\n"
-                    x_edges, y_edges = ndxplorer._histogram["2d"][1], ndxplorer._histogram["2d"][2]
+                    hist_2d = ndxplorer._histogram["2d"]
+                    if hasattr(hist_2d, 'x_edges'):
+                        x_edges, y_edges = hist_2d.x_edges, hist_2d.y_edges
+                    else:
+                        x_edges, y_edges = hist_2d[1], hist_2d[2]
                     for i in range(hist_data.shape[0]):
                         for j in range(hist_data.shape[1]):
                             csv_data += f"{x_edges[i]},{y_edges[j]},{hist_data[i,j]}\n"

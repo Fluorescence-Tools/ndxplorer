@@ -412,3 +412,10 @@ def create_3d_umap_plot(parent, embedding, mask, cluster_labels=None):
     # Bring the window to the front
     umap_window.activateWindow()
     umap_window.raise_()
+
+
+__all__ = [
+    'create_umap_plot',
+    'create_2d_umap_plot',
+    'create_3d_umap_plot',
+]
