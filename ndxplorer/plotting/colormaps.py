@@ -300,9 +300,17 @@ def update_guiqwt_colormap(ndxplorer: "NDXplorer", colormap_name: Optional[str] 
                     # Fall back to matplotlib for unsupported colormaps
                     return _apply_matplotlib_fallback(ndxplorer, colormap_name)
                 
-                ndxplorer.cax.set_color_map(colormap_name)
+                # Handle both backends
+                if getattr(ndxplorer, '_use_simple_backend', True):
+                    # SimpleImageWidget uses set_colormap
+                    vmin = getattr(ndxplorer, 'vmin', 0.0)
+                    vmax = getattr(ndxplorer, 'vmax', 1.0)
+                    ndxplorer.cax.set_colormap(colormap_name, vmin, vmax)
+                else:
+                    # guiqwt uses set_color_map
+                    ndxplorer.cax.set_color_map(colormap_name)
                 ndxplorer.g_2dplot.replot()
-                logging.debug(f"Updated guiqwt colormap to {colormap_name}")
+                logging.debug(f"Updated colormap to {colormap_name}")
                 return True
                 
             except Exception as e:
@@ -408,7 +416,15 @@ def set_default_colormap(ndxplorer: "NDXplorer", default_cmap: str) -> None:
     
     # Update plot if already initialized
     if getattr(ndxplorer, "_deferred_init_done", False) and hasattr(ndxplorer, 'cax') and ndxplorer.cax is not None:
-        ndxplorer.cax.set_color_map(default_cmap)
+        # Handle both backends
+        if getattr(ndxplorer, '_use_simple_backend', True):
+            # SimpleImageWidget uses set_colormap
+            vmin = getattr(ndxplorer, 'vmin', 0.0)
+            vmax = getattr(ndxplorer, 'vmax', 1.0)
+            ndxplorer.cax.set_colormap(default_cmap, vmin, vmax)
+        else:
+            # guiqwt uses set_color_map
+            ndxplorer.cax.set_color_map(default_cmap)
         if hasattr(ndxplorer, 'g_2dplot') and ndxplorer.g_2dplot is not None:
             ndxplorer.g_2dplot.replot()
     

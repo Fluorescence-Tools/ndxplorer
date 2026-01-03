@@ -562,16 +562,20 @@ class CurveOverlayWidget(QtWidgets.QWidget):
             histogram_data: Tuple of (counts, x_edges, y_edges) for the 2D histogram
             plot_control: Widget for controlling plot settings
             curve_evaluator: Class for evaluating curve equations
-            value_to_bin_func: Function to convert value to bin index
+            value_to_bin_func: Function to convert values to bin indices
         """
-        from qwt.plot import QwtPlot
-        import guiqwt.styles
-        import guiqwt.curve
-
-        # Remove existing curve items
-        for curve_item in self.curve_items:
-            overlay_plot.del_item(curve_item)
-        self.curve_items = []
+        # Check if using PyQt overlay or guiqwt overlay
+        is_pyqt_overlay = hasattr(overlay_plot, 'add_curve')
+        
+        if is_pyqt_overlay:
+            # Clear existing curves for PyQt overlay
+            overlay_plot.clear_curves()
+        else:
+            # Remove existing curve items for guiqwt overlay
+            from qwt.plot import QwtPlot
+            for curve_item in self.curve_items:
+                overlay_plot.del_item(curve_item)
+            self.curve_items = []
 
         try:
             # Get the 2D histogram data and edges
@@ -591,8 +595,13 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         num_points = self.get_num_points()
 
         # Synchronize the overlay plot's axes with the main plot
-        overlay_plot.setAxisScale(QwtPlot.xBottom, 0, len(x_edges) - 1)
-        overlay_plot.setAxisScale(QwtPlot.yLeft, 0, len(y_edges) - 1)
+        if is_pyqt_overlay:
+            overlay_plot.setAxisScale(0, 0, len(x_edges) - 1)  # xBottom
+            overlay_plot.setAxisScale(1, 0, len(y_edges) - 1)  # yLeft
+        else:
+            from qwt.plot import QwtPlot
+            overlay_plot.setAxisScale(QwtPlot.xBottom, 0, len(x_edges) - 1)
+            overlay_plot.setAxisScale(QwtPlot.yLeft, 0, len(y_edges) - 1)
 
         for equation, parameters, color in visible_curves:
             # Create x values array with the specified number of points
@@ -659,16 +668,26 @@ class CurveOverlayWidget(QtWidgets.QWidget):
             if not x_coords:
                 continue  # Skip if no valid points
 
-            # Create a curve item
-            curveparam = guiqwt.styles.CurveParam()
-            curveparam.line.color = color  # Use the selected color
-            curveparam.line.width = 2.0
-            curve_item = guiqwt.curve.CurveItem(curveparam=curveparam)
-            curve_item.set_data(x_coords, y_coords)
-
-            # Add the curve to the overlay plot
-            overlay_plot.add_item(curve_item)
-            self.curve_items.append(curve_item)
+            # Add curve to overlay
+            if is_pyqt_overlay:
+                # Use PyQt overlay's add_curve method
+                overlay_plot.add_curve(
+                    np.array(x_coords),
+                    np.array(y_coords),
+                    color=color,
+                    width=2
+                )
+            else:
+                # Create a guiqwt curve item
+                import guiqwt.styles
+                import guiqwt.curve
+                curveparam = guiqwt.styles.CurveParam()
+                curveparam.line.color = color  # Use the selected color
+                curveparam.line.width = 2.0
+                curve_item = guiqwt.curve.CurveItem(curveparam=curveparam)
+                curve_item.set_data(x_coords, y_coords)
+                overlay_plot.add_item(curve_item)
+                self.curve_items.append(curve_item)
 
         # Redraw the overlay plot to update the display
         overlay_plot.replot()

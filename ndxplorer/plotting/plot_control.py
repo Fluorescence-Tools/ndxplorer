@@ -16,169 +16,42 @@ except ImportError:
     PYQTGRAPH_AVAILABLE = False
     SpinBox = None
 
-from ..core.data_source import RectangularDataSelection, Gaussian2DSelection
+from ..core.data_source import RectangularDataSelection, Gaussian2DSelection, MaskDataSelection
 from ..logging_config import logging
-from .background_histograms import HistogramComputeWorker, EnhancedHistogramCache
+from .background_histograms import HistogramComputationManager, EnhancedHistogramCache
+from ..widgets.mask_drawing_widget import MaskDrawingWidget
+from .controls import ScaleControlMixin, AxisControlMixin, HistogramControlMixin
 
 
-class SurfacePlotWidget(QtWidgets.QWidget):
+def is_background_computation_enabled():
+    """Check if background computation is enabled via environment variable or settings."""
+    # First check if there's a settings file override
+    try:
+        from .utils.performance_config import _get_environment_overrides
+        settings_env = _get_environment_overrides()
+        if "NDXPLORER_ENABLE_BACKGROUND_WORKER" in settings_env and settings_env["NDXPLORER_ENABLE_BACKGROUND_WORKER"] is not None:
+            value = str(settings_env["NDXPLORER_ENABLE_BACKGROUND_WORKER"]).lower()
+            enabled = value not in ('0', 'false', 'no', 'off')
+            logging.debug(f"Background worker enabled via settings: {enabled}")
+            return enabled
+    except Exception as e:
+        logging.debug(f"Failed to check settings for background worker: {e}")
+    
+    # Fall back to environment variable (default to enabled unless explicitly disabled)
+    return os.environ.get('NDXPLORER_ENABLE_BACKGROUND_WORKER', '').lower() not in ('0', 'false', 'no', 'off')
 
-    _selections = list()  # type: List[RectangularDataSelection]
+
+class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMixin, QtWidgets.QWidget):
+    """
+    Surface plot control widget with modular control mixins.
+    
+    Architecture:
+    - ScaleControlMixin: Log/linear scale controls
+    - AxisControlMixin: X/Y/Z/Weight parameter selection
+    - HistogramControlMixin: Bins and normalization settings
+    """
+
     axis_settings = dict()  # type: Dict[str, Dict[str, float]]
-
-    @property
-    def scale_x(self):
-        if bool(self.checkBoxLogX.isChecked()):
-            return "log"
-        else:
-            return "lin"
-
-    @scale_x.setter
-    def scale_x(self, v):
-        if v == "log":
-            self.checkBoxLogX.setChecked(True)
-        else:
-            self.checkBoxLogX.setChecked(False)
-
-    @property
-    def scale_y(self):
-        if bool(self.checkBoxLogY.isChecked()):
-            return "log"
-        else:
-            return "lin"
-
-    @scale_y.setter
-    def scale_y(self, v):
-        if v == "log":
-            self.checkBoxLogY.setChecked(True)
-        else:
-            self.checkBoxLogY.setChecked(False)
-
-    @property
-    def scale_z(self):
-        if self.checkBoxLogZ.isChecked():
-            return "log"
-        else:
-            return "lin"
-
-    @scale_z.setter
-    def scale_z(self, v):
-        if v == "log":
-            self.checkBoxLogZ.setChecked(True)
-        else:
-            self.checkBoxLogZ.setChecked(False)
-
-    @property
-    def normed_hist_x(self):
-        return bool(self.checkBoxNormX.isChecked())
-
-    @property
-    def normed_hist_y(self):
-        return bool(self.checkBoxNormY.isChecked())
-
-    @property
-    def normed_hist_z(self):
-        return bool(self.checkBoxNormZ.isChecked())
-        
-    @property
-    def weight_enabled(self):
-        """Returns whether weighting is enabled."""
-        return bool(self.checkBoxWeight.isChecked())
-        
-    @weight_enabled.setter
-    def weight_enabled(self, value, block_signals=False):
-        """
-        Set whether weighting is enabled.
-        
-        Args:
-            value: Boolean indicating whether weighting should be enabled
-            block_signals: If True, signals will be blocked during the change
-        """
-        # Handle the block_signals parameter
-        was_blocked = self.checkBoxWeight.signalsBlocked()
-        if block_signals and not was_blocked:
-            self.checkBoxWeight.blockSignals(True)
-            
-        try:
-            self.checkBoxWeight.setChecked(bool(value))
-        finally:
-            # Restore previous signal blocking state
-            if block_signals and not was_blocked:
-                self.checkBoxWeight.blockSignals(was_blocked)
-                
-    @property
-    def weight_parameter(self):
-        """Returns the currently selected weight parameter."""
-        return str(self.comboBoxWeight.currentText())
-        
-    @weight_parameter.setter
-    def weight_parameter(self, value, block_signals=False):
-        """
-        Set the weight parameter.
-        
-        Args:
-            value: Parameter name (str) to use for weighting or index (int)
-            block_signals: If True, signals will be blocked during the change
-        """
-        # Handle the block_signals parameter
-        was_blocked = self.comboBoxWeight.signalsBlocked()
-        if block_signals and not was_blocked:
-            self.comboBoxWeight.blockSignals(True)
-            
-        try:
-            if isinstance(value, str):
-                index = self.comboBoxWeight.findText(value)
-                if index >= 0:
-                    self.comboBoxWeight.setCurrentIndex(index)
-            elif isinstance(value, int) and value >= 0:
-                self.comboBoxWeight.setCurrentIndex(value)
-        finally:
-            # Restore previous signal blocking state
-            if block_signals and not was_blocked:
-                self.comboBoxWeight.blockSignals(was_blocked)
-
-    @property
-    def p1(self):
-        idx = self.comboBoxSelX.currentIndex()
-        name = self.comboBoxSelX.currentText()
-        return idx, str(name)
-        
-    @p1.setter
-    def p1(self, value, block_signals=False):
-        """
-        Set the X axis parameter.
-        
-        Args:
-            value: Either an index (int) or parameter name (str) or tuple (idx, name)
-            block_signals: If True, signals will be blocked during the change
-        """
-        # Handle the block_signals parameter
-        was_blocked = self.comboBoxSelX.signalsBlocked()
-        if block_signals and not was_blocked:
-            self.comboBoxSelX.blockSignals(True)
-            
-        try:
-            if isinstance(value, tuple) and len(value) == 2:
-                # If a tuple (idx, name) is provided
-                idx, name = value
-                if isinstance(idx, int) and idx >= 0:
-                    self.comboBoxSelX.setCurrentIndex(idx)
-                elif isinstance(name, str):
-                    index = self.comboBoxSelX.findText(name)
-                    if index >= 0:
-                        self.comboBoxSelX.setCurrentIndex(index)
-            elif isinstance(value, int) and value >= 0:
-                # If just an index is provided
-                self.comboBoxSelX.setCurrentIndex(value)
-            elif isinstance(value, str):
-                # If just a name is provided
-                index = self.comboBoxSelX.findText(value)
-                if index >= 0:
-                    self.comboBoxSelX.setCurrentIndex(index)
-        finally:
-            # Restore previous signal blocking state
-            if block_signals and not was_blocked:
-                self.comboBoxSelX.blockSignals(was_blocked)
 
     @property
     def p2(self):
@@ -195,33 +68,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             value: Either an index (int) or parameter name (str) or tuple (idx, name)
             block_signals: If True, signals will be blocked during the change
         """
-        # Handle the block_signals parameter
-        was_blocked = self.comboBoxSelY.signalsBlocked()
-        if block_signals and not was_blocked:
-            self.comboBoxSelY.blockSignals(True)
-            
-        try:
-            if isinstance(value, tuple) and len(value) == 2:
-                # If a tuple (idx, name) is provided
-                idx, name = value
-                if isinstance(idx, int) and idx >= 0:
-                    self.comboBoxSelY.setCurrentIndex(idx)
-                elif isinstance(name, str):
-                    index = self.comboBoxSelY.findText(name)
-                    if index >= 0:
-                        self.comboBoxSelY.setCurrentIndex(index)
-            elif isinstance(value, int) and value >= 0:
-                # If just an index is provided
-                self.comboBoxSelY.setCurrentIndex(value)
-            elif isinstance(value, str):
-                # If just a name is provided
-                index = self.comboBoxSelY.findText(value)
-                if index >= 0:
-                    self.comboBoxSelY.setCurrentIndex(index)
-        finally:
-            # Restore previous signal blocking state
-            if block_signals and not was_blocked:
-                self.comboBoxSelY.blockSignals(was_blocked)
+        self._set_combobox_from_tuple_or_value(self.comboBoxSelY, value, block_signals)
 
     @property
     def p3(self):
@@ -268,84 +115,9 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             value: Either an index (int) or parameter name (str) or tuple (idx, name)
             block_signals: If True, signals will be blocked during the change
         """
-        # Handle the block_signals parameter
-        was_blocked = self.comboBoxSelZ.signalsBlocked()
-        if block_signals and not was_blocked:
-            self.comboBoxSelZ.blockSignals(True)
-            
-        try:
-            if isinstance(value, tuple) and len(value) == 2:
-                # If a tuple (idx, name) is provided
-                idx, name = value
-                if isinstance(idx, int) and idx >= 0:
-                    self.comboBoxSelZ.setCurrentIndex(idx)
-                elif isinstance(name, str):
-                    index = self.comboBoxSelZ.findText(name)
-                    if index >= 0:
-                        self.comboBoxSelZ.setCurrentIndex(index)
-            elif isinstance(value, int) and value >= 0:
-                # If just an index is provided
-                self.comboBoxSelZ.setCurrentIndex(value)
-            elif isinstance(value, str):
-                # If just a name is provided
-                index = self.comboBoxSelZ.findText(value)
-                if index >= 0:
-                    self.comboBoxSelZ.setCurrentIndex(index)
-        finally:
-            # Restore previous signal blocking state
-            if block_signals and not was_blocked:
-                self.comboBoxSelZ.blockSignals(was_blocked)
-                
-    def set_axis_by_name(self, axis, name, match_contains=True, block_signals=False):
-        """
-        Set an axis by parameter name with optional substring matching.
-        
-        Args:
-            axis: String indicating which axis to set ('x', 'y', or 'z')
-            name: Parameter name to set
-            match_contains: If True, use Qt.MatchContains to find partial matches
-            block_signals: If True, signals will be blocked during the change
-            
-        Returns:
-            bool: True if the axis was successfully set, False otherwise
-        """
-
-        if not isinstance(name, str) or not name:
-            return False
-            
-        # Determine which combo box to use based on the axis
-        combo_box = None
-        if axis.lower() == 'x':
-            combo_box = self.comboBoxSelX
-        elif axis.lower() == 'y':
-            combo_box = self.comboBoxSelY
-        elif axis.lower() == 'z':
-            combo_box = self.comboBoxSelZ
-        elif axis.lower() == 'weight':
-            combo_box = self.comboBoxWeight
-        else:
-            return False
-            
-        # Find the index of the parameter name
-        match_flag = QtCore.Qt.MatchContains if match_contains else QtCore.Qt.MatchExactly
-        index = combo_box.findText(name, match_flag)
-        
-        if index < 0:
-            return False
-            
-        # Block signals if requested
-        was_blocked = combo_box.signalsBlocked()
-        if block_signals and not was_blocked:
-            combo_box.blockSignals(True)
-            
-        try:
-            # Set the combo box to the found index
-            combo_box.setCurrentIndex(index)
-            return True
-        finally:
-            # Restore previous signal blocking state
-            if block_signals and not was_blocked:
-                combo_box.blockSignals(was_blocked)
+        self._set_combobox_from_tuple_or_value(self.comboBoxSelZ, value, block_signals)
+    
+    # Note: set_axis_by_name is now provided by AxisControlMixin
 
     @property
     def binsX(self):
@@ -481,41 +253,130 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super(SurfacePlotWidget, self).__init__()
         self.parent = parent
+        self._selections = list()  # Instance-level selections list
+        self.axis_settings = dict()  # Instance-level axis settings
         logging.log(0, "Initializing SurfacePlotWidget")
         #########################
         # GUI
         #########################
         ui_file = pathlib.Path(__file__).parent / 'plot_control.ui'
+
+        uic.loadUi(str(ui_file.as_posix()), self)
+
+        # Expose the clustering button on the parent (NDXplorer) for legacy wiring.
+        clustering_btn = getattr(self, "pushButtonShowClusteringDialog", None)
+        if clustering_btn is not None and self.parent is not None:
+            self.parent.pushButtonShowClusteringDialog = clustering_btn
         
+        # Handle pyqtgraph SpinBox replacement if available
         if PYQTGRAPH_AVAILABLE and SpinBox is not None:
+            # Replace QSpinBox widgets with pyqtgraph SpinBox for better functionality
+            logging.log(0, "Replacing QSpinBox with pyqtgraph SpinBox widgets")
+            
+            # Get the current layout positions and widget properties
+            x_min_widget = self.spinBoxXmin
+            x_max_widget = self.spinBoxXmax
+            y_min_widget = self.spinBoxYmin
+            y_max_widget = self.spinBoxYmax
+            z_min_widget = self.spinBoxZmin
+            z_max_widget = self.spinBoxZmax
+            
+            # Create pyqtgraph SpinBox widgets
             self.spinBoxXmin = SpinBox()
             self.spinBoxXmax = SpinBox()
             self.spinBoxYmin = SpinBox()
             self.spinBoxYmax = SpinBox()
             self.spinBoxZmin = SpinBox()
             self.spinBoxZmax = SpinBox()
-        else:
-            # Fallback to regular QSpinBox if pyqtgraph is not available
-            logging.warning("pyqtgraph SpinBox not available, using QSpinBox fallback")
-            self.spinBoxXmin = QtWidgets.QSpinBox()
-            self.spinBoxXmax = QtWidgets.QSpinBox()
-            self.spinBoxYmin = QtWidgets.QSpinBox()
-            self.spinBoxYmax = QtWidgets.QSpinBox()
-            self.spinBoxZmin = QtWidgets.QSpinBox()
-            self.spinBoxZmax = QtWidgets.QSpinBox()
             
-            # Configure fallback spinboxes
-            for sb in [self.spinBoxXmin, self.spinBoxXmax, self.spinBoxYmin, 
-                      self.spinBoxYmax, self.spinBoxZmin, self.spinBoxZmax]:
-                sb.setRange(-1000000, 1000000)
-
-        uic.loadUi(str(ui_file.as_posix()), self)
-        self.horizontalLayout.addWidget(self.spinBoxXmin)
-        self.horizontalLayout.addWidget(self.spinBoxXmax)
-        self.horizontalLayout_2.addWidget(self.spinBoxYmin)
-        self.horizontalLayout_2.addWidget(self.spinBoxYmax)
-        self.horizontalLayout_3.addWidget(self.spinBoxZmin)
-        self.horizontalLayout_3.addWidget(self.spinBoxZmax)
+            # Copy properties from original widgets
+            for new_widget, old_widget in [
+                (self.spinBoxXmin, x_min_widget),
+                (self.spinBoxXmax, x_max_widget),
+                (self.spinBoxYmin, y_min_widget),
+                (self.spinBoxYmax, y_max_widget),
+                (self.spinBoxZmin, z_min_widget),
+                (self.spinBoxZmax, z_max_widget)
+            ]:
+                # Copy size policy
+                new_widget.setSizePolicy(old_widget.sizePolicy())
+                # Copy tooltip
+                new_widget.setToolTip(old_widget.toolTip())
+                # Set reasonable range
+                new_widget.setRange(-1000000, 1000000)
+            
+            # Get the grid layout and replace widgets in their positions
+            grid_layout = self.gridLayout_6  # This is the main histogram grid layout
+            
+            # Replace widgets in the grid layout
+            # X axis widgets are at row 6
+            grid_layout.replaceWidget(x_min_widget, self.spinBoxXmin)
+            grid_layout.replaceWidget(x_max_widget, self.spinBoxXmax)
+            # Y axis widgets are at row 8
+            grid_layout.replaceWidget(y_min_widget, self.spinBoxYmin)
+            grid_layout.replaceWidget(y_max_widget, self.spinBoxYmax)
+            # Z axis widgets are in a different grid (gridLayout_2)
+            z_grid_layout = self.gridLayout_2
+            z_grid_layout.replaceWidget(z_min_widget, self.spinBoxZmin)
+            z_grid_layout.replaceWidget(z_max_widget, self.spinBoxZmax)
+            
+            # Delete old widgets
+            x_min_widget.deleteLater()
+            x_max_widget.deleteLater()
+            y_min_widget.deleteLater()
+            y_max_widget.deleteLater()
+            z_min_widget.deleteLater()
+            z_max_widget.deleteLater()
+        else:
+            # Use QSpinBox widgets from UI file
+            logging.log(0, "Using QSpinBox widgets from UI file")
+        
+        # Initialize mask drawing widget - use UI elements directly
+        self.mask_widget = MaskDrawingWidget(self)
+        # Store reference to NDXplorer parent for easy access
+        self.mask_widget._ndxplorer_parent = self.parent
+        
+        # Connect UI elements from the .ui file to the mask widget
+        self.categorySpinBox.valueChanged.connect(self.mask_widget._on_category_changed)
+        self.brushSpinBox.valueChanged.connect(self.mask_widget._on_brush_size_changed)
+        self.drawRadio.toggled.connect(self.mask_widget._on_mode_changed)
+        self.loadMaskBtn.clicked.connect(self.mask_widget.load_mask)
+        self.saveMaskBtn.clicked.connect(self.mask_widget.save_mask)
+        self.clearMaskBtn.clicked.connect(self.mask_widget.clear_mask)
+        self.applyMaskBtn.clicked.connect(self.mask_widget._on_apply_mask)
+        self.groupBoxMaskDrawing.toggled.connect(self.mask_widget._on_drawing_enabled_changed)
+        
+        # Set up references to UI elements for the mask widget
+        self.mask_widget.category_spinbox = self.categorySpinBox
+        self.mask_widget.brush_spinbox = self.brushSpinBox
+        self.mask_widget.draw_radio = self.drawRadio
+        self.mask_widget.erase_radio = self.eraseRadio
+        self.mask_widget.load_mask_btn = self.loadMaskBtn
+        self.mask_widget.save_mask_btn = self.saveMaskBtn
+        self.mask_widget.clear_mask_btn = self.clearMaskBtn
+        self.mask_widget.apply_mask_btn = self.applyMaskBtn
+        self.mask_widget.enable_drawing_checkbox = self.groupBoxMaskDrawing
+        # maskStatsLabel has been removed from UI - set to None
+        self.mask_widget.stats_label = None
+        
+        # Initialize spinbox values to prevent empty fields
+        if PYQTGRAPH_AVAILABLE and SpinBox is not None:
+            # For pyqtgraph SpinBox, set default values
+            self.spinBoxXmin.setValue(0.0)
+            self.spinBoxXmax.setValue(1.0)
+            self.spinBoxYmin.setValue(0.0)
+            self.spinBoxYmax.setValue(1.0)
+            self.spinBoxZmin.setValue(0.0)
+            self.spinBoxZmax.setValue(1.0)
+        else:
+            # For QSpinBox fallback, set default values
+            # The UI file already has these values, but we set them again for consistency
+            self.spinBoxXmin.setValue(0)
+            self.spinBoxXmax.setValue(100)
+            self.spinBoxYmin.setValue(0)
+            self.spinBoxYmax.setValue(100)
+            self.spinBoxZmin.setValue(0)
+            self.spinBoxZmax.setValue(100)
 
         # Allow inline editing of selection numeric bounds in the table with single-click
         # Keep double-click deletion as defined in the .ui (cellDoubleClicked -> actionSelectionTableClicked)
@@ -559,7 +420,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         # Actions
         #########################
         # Generic action
-        self.actionUpdatePlots.triggered.connect(self.parent.request_plot_update)
+        self.actionUpdatePlots.triggered.connect(self._on_normalize_changed)
 
         # Auto range
         self.actionAuto_range_x.triggered.connect(self.on_auto_range_x)
@@ -611,21 +472,40 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         # Connect spinBoxCluster to update plots when value changes
         self.spinBoxCluster.valueChanged.connect(self.onClusterSelectionChanged)
         
+        # Connect bin count spinboxes to clear mask when bins change
+        self.spinBoxBin2DX.valueChanged.connect(self.on_bin_count_changed)
+        self.spinBoxBin2DY.valueChanged.connect(self.on_bin_count_changed)
+        
+        # Connect 1D bin count spinboxes as well
+        self.spinBoxBin1DX.valueChanged.connect(self.on_bin_count_changed)
+        self.spinBoxBin1DY.valueChanged.connect(self.on_bin_count_changed)
+        self.spinBoxBin1DZ.valueChanged.connect(self.on_bin_count_changed)
+        
         # Initialize frame/time series related attributes
         self._frame_param = None
         self._n_frames = 0
         self._frame_histogram_cache = {}
         self._playback_direction = 0
         
-        # Initialize background computation and enhanced caching
+        # Initialize background computation (no caching)
         self._histogram_worker = None
-        self._histogram_cache = EnhancedHistogramCache()
-        self._background_computation_enabled = True
+        self._background_computation_enabled = is_background_computation_enabled()
+        self._background_computation_pending = False
         self._frame_duration_ms = 200  # Default value
+        
+        # Log background computation status
+        if self._background_computation_enabled:
+            logging.info("Background histogram computation enabled (use NDXPLORER_ENABLE_BACKGROUND_WORKER=0 to disable)")
+        else:
+            logging.info("Background histogram computation disabled (NDXPLORER_ENABLE_BACKGROUND_WORKER=0 or false/no/off)")
+        
         self._load_playback_settings()
         
         # Setup playback controls (hidden by default)
         self._setup_playback_controls()
+        
+        # Initialize frame selection widgets as hidden
+        self.hide_frame_selection()
 
     def set_axis_settings(self, name, amin, amax, scale, bins_1d, bins_2d):
         self.axis_settings[str(name)] = {
@@ -795,6 +675,18 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             logging.log(0, f"{axis.upper()} axis settings for {name} not found. Using auto range.")
             props['auto_range']()
 
+        # When X or Y axis changes, disable drawing mode and clear current drawing
+        # but keep existing bitmap selections (they will be automatically updated)
+        if axis in ['x', 'y']:
+            logging.log(0, f"{axis.upper()} axis changed - disabling drawing mode and clearing current drawing")
+            # Disable drawing mode and clear current drawing only
+            if hasattr(self, 'mask_widget') and self.mask_widget is not None:
+                self.mask_widget.set_drawing_enabled(False)
+                self.mask_widget.clear_mask()
+            
+            # Note: Existing bitmap selections are kept - they will be automatically
+            # updated when the histogram is recomputed with new axis/bin settings
+
         self.parent.request_plot_update()
 
     def on_x_axis_changed(self):
@@ -818,6 +710,55 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     # Keep the old method name for backward compatibility
     onZ_axis_changed = on_z_axis_changed
 
+    def on_bin_count_changed(self):
+        """
+        Handle changes to 2D histogram bin counts.
+        
+        When bin counts change, disable drawing mode, clear current drawing,
+        and force immediate histogram recomputation with new bin sizes.
+        Bypasses all caching and background computation for immediate response.
+        """
+        logging.log(0, "Bin count changed - forcing immediate recomputation with no cache")
+        
+        # Disable drawing mode and clear current drawing only
+        if hasattr(self, 'mask_widget') and self.mask_widget is not None:
+            self.mask_widget.set_drawing_enabled(False)
+            self.mask_widget.clear_mask()
+        
+        # Force immediate recomputation by bypassing background system entirely
+        # This is critical for bin count changes - no cache should be used
+        old_pending = getattr(self, '_background_computation_pending', False)
+        self._background_computation_pending = False  # Clear any pending flag
+        
+        # Clear all histogram caches
+        self.clear_frame_histogram_cache()
+        self.clear_histogram_cache()
+        
+        # Force immediate histogram computation (no background, no cache)
+        try:
+            from .plot_update_helpers import _update_histograms_immediate
+            _update_histograms_immediate(self.parent)
+            logging.log(0, "Bin count change - immediate histogram computation completed")
+        except Exception as e:
+            logging.error(f"Failed to compute histograms immediately after bin count change: {e}")
+            # Fallback to regular update
+            self.parent.request_plot_update(skip_clustering=True)
+        
+        logging.log(0, "Bin count change handled - forced immediate recomputation")
+
+    def _on_normalize_changed(self):
+        """Handle normalization (density) checkbox changes."""
+        logging.log(0, "Normalization changed - clearing caches and recomputing histograms")
+        
+        # Clear histogram caches to force recomputation with new normalization settings
+        self.clear_frame_histogram_cache()
+        self.clear_histogram_cache()
+        
+        # Force histogram recomputation
+        self.parent.request_plot_update(skip_clustering=True)
+        
+        logging.log(0, "Normalization change handled - histograms recomputed")
+
     def update_axis_scales(self):
         """Update all axis scales based on current settings and refresh plots"""
         # Set y-plot axes
@@ -831,8 +772,18 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         # Set z-plot axes
         self.parent.g_zplot.set_axis_scale("bottom", self.scale_z)
 
-        self.parent.update_plots()
-        logging.log(0, "Axis scales updated for all plot axes")
+        # CRITICAL: Log scale changes require histogram recomputation
+        # because the binning and data representation changes with scale
+        logging.log(0, "Axis scales updated - forcing histogram recomputation for log scale changes")
+        
+        # Clear histogram caches to force recomputation with new scale settings
+        self.clear_frame_histogram_cache()
+        self.clear_histogram_cache()
+        
+        # Force histogram recomputation
+        self.parent.request_plot_update(skip_clustering=True)
+        
+        logging.log(0, "Axis scales updated and histograms recomputed")
 
     # Keep the old method name for backward compatibility
     onUpdate_axis_scales = update_axis_scales
@@ -931,11 +882,13 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     def onClearSelection(self):
         logging.log(0, "onClearSelection")
         self.tableWidget.setRowCount(0)
+        self._selections.clear()  # Clear instance-level selections
         # Clear frame histogram cache when selections change
         self.clear_frame_histogram_cache()
+        self.clear_histogram_cache()
         # Preserve contrast during selection operations
         self.parent._preserve_contrast = True
-        self.parent.update_plots()
+        self.parent.request_plot_update(skip_clustering=True)
         self.parent._preserve_contrast = False
 
     def onSave_selection(self):
@@ -1016,11 +969,13 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.tableWidget.removeRow(row)
         # Clear frame histogram cache when selections change
         self.clear_frame_histogram_cache()
-        self.parent.update_plots()
+        self.clear_histogram_cache()
+        self.parent.request_plot_update(skip_clustering=True)
 
     def addSelection(self, idx, xmin, xmax, invert=False, enabled=True, name=""):
         # Clear frame histogram cache when selections change
         self.clear_frame_histogram_cache()
+        self.clear_histogram_cache()
         
         # Ensure xmin < xmax
         if xmin > xmax:
@@ -1140,6 +1095,64 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         cb_invert.stateChanged.connect(self.actionUpdatePlots.trigger)
         logging.log(0, f"Added G2D selection for idxs ({idx1}, {idx2}) with sigma={sigma}, invert={invert}, enabled={enabled}, log_x={log_x}, log_y={log_y}")
 
+    def addMaskSelection(self, name, mask, edges1, edges2, idx1, idx2, invert=False, enabled=True, selection_id=None):
+        """Add a mask-based selection to the table."""
+        table = self.tableWidget
+        row = table.rowCount()
+        
+        try:
+            self._block_selection_item_changed = True
+            table.setRowCount(row + 1)
+
+            # Metadata for MaskDataSelection
+            meta = {
+                "type": "Mask",
+                "name": str(name),
+                "idx1": int(idx1),
+                "idx2": int(idx2),
+                "invert": bool(invert),
+                "enabled": bool(enabled),
+                "selection_id": str(selection_id) if selection_id else None
+            }
+
+            item0 = QtWidgets.QTableWidgetItem(str(name))
+            item0.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEditable)
+            # Store index for compatibility
+            item0.setData(1, int(idx1))
+            try:
+                # Store metadata redundantly in UserRole AND role 32
+                meta_json = json.dumps(meta)
+                item0.setData(QtCore.Qt.UserRole, meta_json)
+                item0.setData(32, meta_json)
+            except Exception as e:
+                logging.debug(f"Failed to set metadata for mask selection: {e}")
+            table.setItem(row, 0, item0)
+
+            # Placeholders for columns 1 and 2
+            for col in [1, 2]:
+                tmp = QtWidgets.QTableWidgetItem("Bitmap")
+                # Do NOT set data role 0 to 0.0, so onSelectionItemChanged knows it's text
+                tmp.setFlags(QtCore.Qt.ItemIsEnabled)
+                tmp.setTextAlignment(QtCore.Qt.AlignCenter)
+                table.setItem(row, col, tmp)
+
+            # Invert and Enabled checkboxes
+            cb_invert = QtWidgets.QCheckBox(table)
+            table.setCellWidget(row, 3, cb_invert)
+            cb_invert.setChecked(bool(invert))
+
+            cb_enable = QtWidgets.QCheckBox(table)
+            table.setCellWidget(row, 4, cb_enable)
+            cb_enable.setChecked(bool(enabled))
+
+            # Re-trigger plot update
+            self.parent.request_plot_update(skip_clustering=True)
+            cb_enable.stateChanged.connect(self.actionUpdatePlots.trigger)
+            cb_invert.stateChanged.connect(self.actionUpdatePlots.trigger)
+            logging.info(f"Added mask selection UI row: {name} (id={selection_id})")
+        finally:
+            self._block_selection_item_changed = False
+
     def onAddSelection(self):
         idx, name = self.p3
         xsel = self.parent.selection_z.get_range()
@@ -1155,44 +1168,102 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.parent._preserve_contrast = True
         self.parent.update_plots()
         self.parent._preserve_contrast = False
-
     def get_selections(self):
         selections = list()
         table = self.tableWidget
         n_rows = int(table.rowCount())
+        
+        # Log the internal selections list state for debugging
+        logging.debug(f"get_selections: table_rows={n_rows}, internal_list_size={len(self._selections)}")
+        
         for r in range(n_rows):
             item0 = table.item(r, 0)
-            idx = int(item0.data(1)) if item0 is not None else 0
-            name = str(item0.data(0)) if item0 is not None else ""
+            if item0 is None:
+                continue
+                
+            idx = int(item0.data(1))
+            name = str(item0.text()) # Use text() directly for comparison
             lower_item = table.item(r, 1)
             upper_item = table.item(r, 2)
-            lower = float(lower_item.data(0)) if lower_item is not None else 0.0
-            upper = float(upper_item.data(0)) if upper_item is not None else 0.0
-            invert = bool(table.cellWidget(r, 3).checkState())
-            enabled = bool(table.cellWidget(r, 4).checkState())
+            
+            # Use safe conversion for lower/upper bounds
+            def safe_float(item):
+                if item is None:
+                    return 0.0
+                try:
+                    # Try data role 0 first (stored numeric value)
+                    data_val = item.data(0)
+                    if data_val is not None:
+                        try:
+                            return float(data_val)
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    # Fallback to display text
+                    txt = item.text().strip()
+                    if txt in ("Bitmap", "Mask", "G2D", "---"):
+                        return 0.0
+                    return float(txt)
+                except (ValueError, TypeError):
+                    return 0.0
 
-            # Try to decode Gaussian2D metadata
-            meta_raw = None
-            try:
-                meta_raw = item0.data(32)
-            except Exception:
-                meta_raw = None
+            lower = safe_float(lower_item)
+            upper = safe_float(upper_item)
+            
+            # Get invert and enabled states from checkboxes
+            cb_invert = table.cellWidget(r, 3)
+            cb_enable = table.cellWidget(r, 4)
+            invert = cb_invert.isChecked() if cb_invert else False
+            enabled = cb_enable.isChecked() if cb_enable else True
+            logging.debug(f"Row {r} ({name}): invert={invert}, enabled={enabled}")
+            
+            # Try to decode metadata
             meta = None
-            if meta_raw:
-                try:
-                    meta = json.loads(meta_raw)
-                except Exception:
-                    meta = None
+            try:
+                # Try multiple roles for metadata
+                # Use a larger set of roles to be safe
+                for role in [QtCore.Qt.UserRole, 32, QtCore.Qt.UserRole + 10, QtCore.Qt.UserRole + 100]:
+                    meta_raw = item0.data(role)
+                    if meta_raw:
+                        try:
+                            if isinstance(meta_raw, dict):
+                                meta = meta_raw
+                            else:
+                                meta = json.loads(str(meta_raw))
+                            if meta and isinstance(meta, dict) and "type" in meta: 
+                                break
+                        except Exception:
+                            continue
+            except Exception:
+                meta = None
+            
+            # Identify selection type with heavy fallback
+            sel_type = None
+            if isinstance(meta, dict):
+                sel_type = meta.get("type")
+            
+            # Fallback identification based on cell text if metadata missing or corrupted
+            if sel_type is None:
+                txt1 = lower_item.text() if lower_item else ""
+                txt2 = upper_item.text() if upper_item else ""
+                if "Bitmap" in txt1 or "Bitmap" in txt2 or "Mask" in name:
+                    sel_type = "Mask"
+                    logging.info(f"Row {r}: Identified as 'Mask' via text fallback (name='{name}')")
+                elif "G2D" in name:
+                    sel_type = "G2D"
+                    logging.info(f"Row {r}: Identified as 'G2D' via text fallback (name='{name}')")
 
-            if isinstance(meta, dict) and meta.get("type") == "G2D":
+            # RECONSTRUCTION
+            if sel_type == "G2D":
                 try:
-                    idx1 = int(meta.get("idx1", idx))
-                    idx2 = int(meta.get("idx2", idx))
-                    mu = meta.get("mu", [0.0, 0.0])
-                    cov = meta.get("cov", [[1.0, 0.0], [0.0, 1.0]])
-                    sigma = float(meta.get("sigma", 1.0))
-                    log_x = bool(meta.get("log_x", False))
-                    log_y = bool(meta.get("log_y", False))
+                    idx1 = int(meta.get("idx1", idx)) if meta else idx
+                    idx2 = int(meta.get("idx2", idx)) if meta else idx
+                    mu = meta.get("mu", [0.0, 0.0]) if meta else [0.0, 0.0]
+                    cov = meta.get("cov", [[1.0, 0.0], [0.0, 1.0]]) if meta else [[1.0, 0.0], [0.0, 1.0]]
+                    sigma = float(meta.get("sigma", 1.0)) if meta else 1.0
+                    log_x = bool(meta.get("log_x", False)) if meta else False
+                    log_y = bool(meta.get("log_y", False)) if meta else False
+                    
                     selections.append(
                         Gaussian2DSelection(
                             parameter_idx1=idx1,
@@ -1207,10 +1278,52 @@ class SurfacePlotWidget(QtWidgets.QWidget):
                             log_y=log_y
                         )
                     )
+                    continue # Success
+                except Exception as e:
+                    logging.error(f"Error recreating G2D selection '{name}': {e}")
+                    # NEVER fall through to rectangular for suspected G2D
                     continue
-                except Exception:
-                    # Fallback to rectangular if decoding fails
-                    pass
+
+            elif sel_type == "Mask":
+                try:
+                    mask_found = False
+                    meta_idx1 = int(meta.get('idx1', -1)) if meta else -1
+                    meta_idx2 = int(meta.get('idx2', -1)) if meta else -1
+                    sel_id = meta.get('selection_id') if meta else None
+                    
+                    # Recover the MaskDataSelection object from the internal list
+                    for s in self._selections:
+                        if isinstance(s, MaskDataSelection):
+                            # 1. Try matching by selection_id
+                            if sel_id and hasattr(s, 'selection_id') and s.selection_id == sel_id:
+                                mask_found = True
+                            
+                            # 2. Fallback to indices and name matching
+                            if not mask_found:
+                                # If meta is missing, idx matching will use -1, so we rely on name or single-mask assumption
+                                idx_match = (s.idx1 == meta_idx1 and s.idx2 == meta_idx2) or (meta is None)
+                                # Compare against current table text 'name' and original 'meta_name'
+                                name_match = (s.name == name or name.startswith(s.name) or s.name.startswith(name))
+                                
+                                if idx_match and (name_match or len([x for x in self._selections if isinstance(x, MaskDataSelection)]) == 1):
+                                    mask_found = True
+                            
+                            if mask_found:
+                                s.enabled = enabled
+                                s.invert = invert
+                                s.name = name # Keep in sync with UI
+                                selections.append(s)
+                                logging.debug(f"Recovered MaskDataSelection object for '{name}' (id={getattr(s, 'selection_id', 'None')[:8]})")
+                                break
+                    
+                    if not mask_found:
+                        available = [f"{x.name}(id={getattr(x, 'selection_id', 'None')[:8]}, idxs={x.idx1},{x.idx2})" for x in self._selections if isinstance(x, MaskDataSelection)]
+                        logging.warning(f"MaskDataSelection object NOT FOUND for '{name}' (id={sel_id}, idxs={meta_idx1},{meta_idx2}). Available: {available}")
+                    
+                    continue # CRITICAL: never fall through to rectangular for Mask type
+                except Exception as e:
+                    logging.error(f"Error retrieving MaskDataSelection '{name}': {e}")
+                    continue
 
             # Default rectangular selection
             selections.append(
@@ -1223,7 +1336,8 @@ class SurfacePlotWidget(QtWidgets.QWidget):
                     name=name
                 )
             )
-        logging.log(0, f"get_selections: Retrieved {len(selections)} selections")
+        
+        logging.debug(f"get_selections: Returning {len(selections)} valid selection objects")
         return selections
 
     def onSelectionItemChanged(self, item: QtWidgets.QTableWidgetItem):
@@ -1238,16 +1352,45 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         table = self.tableWidget
         row = item.row()
         col = item.column()
-        # If this row encodes a Gaussian2D selection, ignore bound edits (placeholders)
+        
+        # Guard against invalid row/col or missing items
+        if row < 0 or col < 0:
+            return
+            
+        # Get metadata from column 0 to check if this is a special selection type
         item0 = table.item(row, 0)
+        if item0 is None:
+            return
+            
+        name = item0.text()
         meta = None
         try:
-            meta_raw = item0.data(32)
-            if meta_raw:
-                meta = json.loads(meta_raw)
+            # Try multiple roles for metadata
+            for role in [QtCore.Qt.UserRole, 32, QtCore.Qt.UserRole + 10]:
+                meta_raw = item0.data(role)
+                if meta_raw:
+                    try:
+                        if isinstance(meta_raw, dict):
+                            meta = meta_raw
+                        else:
+                            meta = json.loads(str(meta_raw))
+                        if meta and isinstance(meta, dict) and "type" in meta: 
+                            break
+                    except Exception:
+                        continue
         except Exception:
             meta = None
-        is_g2d = isinstance(meta, dict) and meta.get("type") == "G2D"
+        
+        sel_type = meta.get("type") if isinstance(meta, dict) else None
+        
+        # Fallback identification based on name if metadata missing
+        if sel_type is None:
+            if name.startswith("Mask") or "Bitmap" in name:
+                sel_type = "Mask"
+            elif name.startswith("G2D"):
+                sel_type = "G2D"
+                
+        is_special = sel_type in ("G2D", "Mask")
 
         # Name edits: trigger update only
         if col == 0:
@@ -1260,17 +1403,29 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         # Only columns 1 and 2 are numeric bounds for rectangular selections
         if col not in (1, 2):
             return
-        if is_g2d:
-            # Revert to stored numeric (keep placeholders) if accidentally made editable
+            
+        if is_special:
+            # Revert to stored value or placeholder if accidentally made editable
             try:
                 self._block_selection_item_changed = True
-                val = float(item.data(0) or 0.0)
-                item.setText(str(val))
+                if sel_type == "Mask":
+                    item.setText("Bitmap")
+                    item.setData(0, None) # Clear any accidental numeric data
+                elif sel_type == "G2D":
+                    # For G2D, we typically show 0.0 as placeholder
+                    val_data = item.data(0)
+                    try:
+                        val = float(val_data) if val_data is not None else 0.0
+                        item.setText(str(val))
+                    except (ValueError, TypeError):
+                        item.setText("0.0")
+                else:
+                    item.setText(str(item.data(0) or "---"))
             finally:
                 self._block_selection_item_changed = False
             return
 
-        # Parse the edited text as float
+        # Parse the edited text as float for normal rectangular selections
         txt = item.text().strip()
         try:
             val = float(txt)
@@ -1278,8 +1433,15 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             # Revert to previous value stored in data role 0
             try:
                 self._block_selection_item_changed = True
-                prev = float(item.data(0)) if item.data(0) is not None else 0.0
-                item.setText(str(prev))
+                prev_data = item.data(0)
+                if prev_data is not None:
+                    try:
+                        prev = float(prev_data)
+                        item.setText(str(prev))
+                    except (ValueError, TypeError):
+                        item.setText(str(prev_data))
+                else:
+                    item.setText("0.0")
             finally:
                 self._block_selection_item_changed = False
             return
@@ -1461,7 +1623,10 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.labelFrameInfo.setText(f"{frame_param}: ")
         self.spinBoxFrameNumber.setMaximum(n_frames - 1)
         self.spinBoxFrameNumber.setValue(0)
-        self.checkBoxStackFrames.setChecked(True)
+        
+        # Update frame count label
+        if hasattr(self, 'label_frame_nbr'):
+            self.label_frame_nbr.setText(f"/{n_frames}")
         
         try:
             self.checkBoxStackFrames.toggled.disconnect()
@@ -1475,6 +1640,23 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self.checkBoxStackFrames.toggled.connect(self.on_frame_selection_changed)
         self.spinBoxFrameNumber.valueChanged.connect(self.on_frame_selection_changed)
         
+        # Make frame selection UI widgets visible
+        self.label_4.setVisible(True)  # "Frame" label
+        self.checkBoxStackFrames.setVisible(True)
+        self.spinBoxFrameNumber.setVisible(True)
+        self.labelFrameInfo.setVisible(True)
+        self.label_frame_nbr.setVisible(True)
+        
+        # Show playback controls if they exist
+        if hasattr(self, 'toolButtonStepBackward'):
+            self.toolButtonStepBackward.setVisible(True)
+        if hasattr(self, 'toolButtonPlayBackward'):
+            self.toolButtonPlayBackward.setVisible(True)
+        if hasattr(self, 'toolButtonPlayForward'):
+            self.toolButtonPlayForward.setVisible(True)
+        if hasattr(self, 'toolButtonStepForward'):
+            self.toolButtonStepForward.setVisible(True)
+        
         logging.info(f"Frame selection setup: {frame_param} with {n_frames} frames")
 
     def hide_frame_selection(self):
@@ -1483,6 +1665,9 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         self._n_frames = 0
         self._frame_histogram_cache = {}
         self._stop_playback()
+        
+        # Don't hide any UI elements - keep everything visible for consistency
+        # Frame controls will remain visible but inactive when no frame stack is present
 
     def on_frame_selection_changed(self):
         """Handle frame selection changes and trigger plot update."""
@@ -1497,9 +1682,7 @@ class SurfacePlotWidget(QtWidgets.QWidget):
         else:
             frame_num = self.spinBoxFrameNumber.value()
             logging.debug(f"Single frame mode: showing frame {frame_num}")
-            # Try to use cached histogram for this frame
-            if self._use_cached_frame_histogram(frame_num):
-                return
+            # Always compute live histograms (no caching)
             
         self.parent.request_plot_update()
 
@@ -1582,7 +1765,10 @@ class SurfacePlotWidget(QtWidgets.QWidget):
                 
                 playback_settings = settings.get('playback', {})
                 self._frame_duration_ms = playback_settings.get('frame_duration_ms', 200)
-                self._background_computation_enabled = playback_settings.get('enable_background_computation', True)
+                # Only enable background computation if both env var and settings allow it
+                env_enabled = is_background_computation_enabled()
+                settings_enabled = playback_settings.get('enable_background_computation', True)
+                self._background_computation_enabled = env_enabled and settings_enabled
                 
                 # Configure cache based on settings
                 cache_size_mb = playback_settings.get('cache_size_mb', 100)
@@ -1598,13 +1784,13 @@ class SurfacePlotWidget(QtWidgets.QWidget):
             else:
                 # Default settings
                 self._frame_duration_ms = 200
-                self._background_computation_enabled = True
+                self._background_computation_enabled = is_background_computation_enabled()
                 logging.warning("Playback settings file not found, using defaults")
         except Exception as e:
             logging.warning(f"Failed to load playback settings: {e}")
             # Fallback to defaults
             self._frame_duration_ms = 200
-            self._background_computation_enabled = True
+            self._background_computation_enabled = is_background_computation_enabled()
     
     def update_playback_settings(self, frame_duration_ms: int = None, 
                                 enable_background: bool = None,
@@ -1617,7 +1803,9 @@ class SurfacePlotWidget(QtWidgets.QWidget):
                 self._playback_timer.setInterval(self._frame_duration_ms)
         
         if enable_background is not None:
-            self._background_computation_enabled = enable_background
+            # Only enable if both env var and parameter allow it
+            env_enabled = is_background_computation_enabled()
+            self._background_computation_enabled = enable_background and env_enabled
         
         if cache_size_mb is not None or cache_max_entries is not None:
             # Recreate cache with new settings
@@ -1634,9 +1822,11 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     
     def _setup_playback_controls(self):
         """Setup playback control buttons - connect signals and create timer."""
+        self.toolButtonStepBackward.clicked.connect(self._on_step_backward)
         self.toolButtonPlayBackward.clicked.connect(self._on_play_backward)
         self.toolButtonPause.clicked.connect(self._on_pause)
         self.toolButtonPlayForward.clicked.connect(self._on_play_forward)
+        self.toolButtonStepForward.clicked.connect(self._on_step_forward)
         
         self._playback_timer = QtCore.QTimer(self)
         self._playback_timer.setInterval(self._frame_duration_ms)  # Use settings value
@@ -1666,6 +1856,44 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     def _on_pause(self):
         """Pause playback."""
         self._stop_playback()
+        
+    def _on_step_backward(self):
+        """Step one frame backward."""
+        if not hasattr(self, '_frame_param') or self._frame_param is None:
+            return
+            
+        if self.checkBoxStackFrames.isChecked():
+            return
+            
+        current = self.spinBoxFrameNumber.value()
+        n_frames = getattr(self, '_n_frames', 0)
+        
+        # Step backward with loop
+        new_frame = current - 1
+        if new_frame < 0:
+            new_frame = n_frames - 1
+            
+        self.spinBoxFrameNumber.setValue(new_frame)
+        logging.debug(f"Stepped backward to frame {new_frame}")
+        
+    def _on_step_forward(self):
+        """Step one frame forward."""
+        if not hasattr(self, '_frame_param') or self._frame_param is None:
+            return
+            
+        if self.checkBoxStackFrames.isChecked():
+            return
+            
+        current = self.spinBoxFrameNumber.value()
+        n_frames = getattr(self, '_n_frames', 0)
+        
+        # Step forward with loop
+        new_frame = current + 1
+        if new_frame >= n_frames:
+            new_frame = 0
+            
+        self.spinBoxFrameNumber.setValue(new_frame)
+        logging.debug(f"Stepped forward to frame {new_frame}")
         
     def _stop_playback(self):
         """Stop any active playback."""
@@ -1708,35 +1936,52 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     def _initialize_histogram_worker(self):
         """Initialize the background histogram computation worker."""
         if self._histogram_worker is None:
-            self._histogram_worker = HistogramComputeWorker(self)
+            self._histogram_worker = HistogramComputationManager(self)
             self._histogram_worker.computation_complete.connect(self._on_histograms_computed)
             self._histogram_worker.computation_failed.connect(self._on_histogram_computation_failed)
+            self._histogram_worker.computation_started.connect(self._on_computation_started)
+            self._histogram_worker.progress_update.connect(self._on_computation_progress)
     
     def compute_histograms_background(self, histogram_params: dict, weights: Optional[np.ndarray] = None):
         """Compute histograms in background thread if enabled, otherwise compute immediately."""
-        if not self._background_computation_enabled or not hasattr(self.parent, 'data_source'):
-            # Fall back to immediate computation
+        logging.info(f"compute_histograms_background called, enabled={self._background_computation_enabled}")
+        if not self._background_computation_enabled:
+            logging.debug("Background computation disabled, using immediate computation")
             return self._compute_histograms_immediate(histogram_params, weights)
-        
-        self._initialize_histogram_worker()
-        
-        # Check cache first
-        cached_result = self._histogram_cache.get(histogram_params, weights)
-        if cached_result is not None:
-            logging.debug("Using cached histogram data")
-            self._on_histograms_computed(cached_result)
+            
+        if not hasattr(self.parent, 'data_source'):
+            logging.warning("No data source available, cannot compute histograms")
             return
         
+        # Check if computation is already pending
+        if self._background_computation_pending:
+            logging.info("Background computation already pending, skipping duplicate request")
+            return
+        
+        # Initialize worker if needed
+        self._initialize_histogram_worker()
+        
+        # Always do live computation (no caching)
         # Schedule background computation
         try:
+            logging.info("Starting background histogram computation")
+            logging.info(f"  data_source: {self.parent.data_source}")
+            logging.info(f"  histogram_params keys: {list(histogram_params.keys())}")
+            logging.info(f"  weights shape: {weights.shape if weights is not None else None}")
+            logging.info(f"  BIN SETTINGS: x_bins_2d={histogram_params.get('x_bins_2d')}, y_bins_2d={histogram_params.get('y_bins_2d')}")
+            logging.info(f"  BIN ARRAYS: x_bins_2d_arr length={len(histogram_params.get('x_bins_2d_arr', []))}, y_bins_2d_arr length={len(histogram_params.get('y_bins_2d_arr', []))}")
+            # Set flag to prevent immediate computation fallback
+            self._background_computation_pending = True
             self._histogram_worker.compute_histograms(
                 self.parent.data_source,
                 histogram_params,
                 weights
             )
-            logging.debug("Scheduled background histogram computation")
+            logging.info("Background computation scheduled successfully")
         except Exception as e:
-            logging.error(f"Failed to schedule histogram computation: {e}")
+            logging.error(f"Failed to schedule background histogram computation: {e}")
+            logging.info("Falling back to immediate computation")
+            self._background_computation_pending = False
             self._compute_histograms_immediate(histogram_params, weights)
     
     def _compute_histograms_immediate(self, histogram_params: dict, weights: Optional[np.ndarray] = None):
@@ -1758,27 +2003,66 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     def _on_histograms_computed(self, histogram_data: dict):
         """Handle completion of histogram computation (background or immediate)."""
         try:
-            # Cache the result
-            if '_params' in histogram_data:
-                self._histogram_cache.put(
-                    histogram_data['_params'],
-                    histogram_data,
-                    # We'll need to extract weights from the parent context
-                )
+            logging.info(f"[UI HANDLER] _on_histograms_computed called with {len(histogram_data)} items")
+            logging.info("Background histogram computation completed - updating UI")
+            
+            # Log 2D histogram shape from background
+            if '2d' in histogram_data:
+                hist_2d = histogram_data['2d']
+                if isinstance(hist_2d, tuple) and len(hist_2d) == 3:
+                    H, x_edges, y_edges = hist_2d
+                    logging.info(f"[UI] Received 2D histogram from background: H shape={H.shape}, x_edges={len(x_edges)}, y_edges={len(y_edges)}")
+                    logging.info(f"[UI] H dtype={H.dtype}, contiguous={H.flags['C_CONTIGUOUS']}, min={np.min(H)}, max={np.max(H)}, sum={np.sum(H)}")
+            
+            # Clear background computation pending flag
+            self._background_computation_pending = False
             
             # Update the parent's histogram data
             self.parent._histogram = histogram_data
+            logging.info(f"[UI] Stored histogram in parent._histogram")
             
             # Update the UI
             if '_count' in histogram_data:
                 self.parent.lineEditCountCurrent.setText(str(histogram_data['_count']))
             
-            # Update histogram displays
-            self._update_histogram_displays_from_data(histogram_data)
+            # Clear progress indicator
+            if hasattr(self.parent, 'statusBar') and self.parent.statusBar():
+                self.parent.statusBar().showMessage("Ready", 2000)
+
+            # Update 2D plot and apply auto-contrast
+            if hasattr(self.parent, 'update_2d_plot'):
+                logging.info("[UI] Calling update_2d_plot to display histogram")
+                self.parent.update_2d_plot()
             
-            # Cache for frame if we're in frame mode
-            if hasattr(self, '_frame_param') and self._frame_param and not self.checkBoxStackFrames.isChecked():
-                self.cache_current_frame_histogram(histogram_data)
+            if hasattr(self.parent, 'on_auto_contrast'):
+                logging.info("[UI] Applying auto-contrast")
+                self.parent.on_auto_contrast()
+            
+            # Ensure plots repaint immediately (background path otherwise may only refresh on resize)
+            try:
+                from . import plot_update_helpers
+
+                if 'x' in histogram_data and hasattr(self.parent, 'g_xplot'):
+                    x_edges, x_counts = histogram_data['x']
+                    plot_update_helpers._autoscale_horizontal_hist(self.parent.g_xplot, x_edges, x_counts)
+                if 'y' in histogram_data and hasattr(self.parent, 'g_yplot'):
+                    y_edges, y_counts = histogram_data['y']
+                    plot_update_helpers._autoscale_vertical_hist(self.parent.g_yplot, y_edges, y_counts)
+                if 'z' in histogram_data and hasattr(self.parent, 'g_zplot'):
+                    z_edges, z_counts = histogram_data['z']
+                    plot_update_helpers._autoscale_horizontal_hist(self.parent.g_zplot, z_edges, z_counts)
+
+                # Refresh 2D image and replot all
+                self.parent.update_2d_plot()
+                self.parent.g_xplot.replot()
+                self.parent.g_yplot.replot()
+                if hasattr(self.parent, 'g_zplot'):
+                    self.parent.g_zplot.replot()
+                self.parent.g_2dplot.replot()
+            except Exception as exc:
+                logging.debug("Could not force replot after histogram computation: %s", exc)
+            
+            # No frame caching - always compute live
             
             logging.debug(f"Updated histogram displays (computation time: {histogram_data.get('_computation_time', 'N/A'):.3f}s)")
             
@@ -1788,120 +2072,80 @@ class SurfacePlotWidget(QtWidgets.QWidget):
     def _on_histogram_computation_failed(self, error_message: str):
         """Handle failure of histogram computation."""
         logging.error(f"Histogram computation failed: {error_message}")
-        # Could show user notification here
+        # Clear progress indicator
+        if hasattr(self.parent, 'statusBar') and self.parent.statusBar():
+            self.parent.statusBar().clearMessage()
+    
+    def _on_computation_started(self):
+        """Handle start of background computation."""
+        if hasattr(self.parent, 'statusBar') and self.parent.statusBar():
+            self.parent.statusBar().showMessage("Computing histograms...")
+    
+    def _on_computation_progress(self, message: str):
+        """Handle progress update from background computation."""
+        if hasattr(self.parent, 'statusBar') and self.parent.statusBar():
+            self.parent.statusBar().showMessage(message)
     
     def _update_histogram_displays_from_data(self, histogram_data: dict):
         """Update histogram plot widgets from computed data."""
         try:
+            # Update 2D histogram
+            if '2d' in histogram_data:
+                logging.info("[UI] Updating 2D histogram display from background computation")
+                # The 2D histogram is already stored in parent._histogram by _on_histograms_computed
+                # Call update_2d_plot to properly render it
+                if hasattr(self.parent, 'update_2d_plot'):
+                    try:
+                        self.parent.update_2d_plot()
+                        logging.info("[UI] Called update_2d_plot to render 2D histogram")
+                    except Exception as e:
+                        logging.debug(f"Could not update 2D plot: {e}")
+                
+                # Also replot the 2D plot to ensure it's displayed
+                if hasattr(self.parent, 'g_2dplot'):
+                    try:
+                        self.parent.g_2dplot.replot()
+                        logging.info("[UI] Replotted 2D histogram")
+                    except Exception as e:
+                        logging.debug(f"Could not replot 2D histogram: {e}")
+            
             # Update X histogram
             if 'x' in histogram_data and hasattr(self.parent, 'g_xhist_m'):
                 x_bin_edges, x_counts = histogram_data['x']
-                self.parent.g_xhist_m.set_data(x_bin_edges[1:], x_counts)
+                x_edges_for_plot = x_bin_edges[1:]
+                self.parent.g_xhist_m.set_data(x_edges_for_plot, x_counts)
+                if hasattr(self.parent, 'g_xplot'):
+                    self.parent.g_xplot.replot()
             
             # Update Y histogram
             if 'y' in histogram_data and hasattr(self.parent, 'g_yhist_m'):
                 y_bin_edges, y_counts = histogram_data['y']
-                self.parent.g_yhist_m.set_data(y_counts, y_bin_edges[1:])
+                y_edges_for_plot = y_bin_edges[1:]
+                # For Y marginal: counts on X-axis (horizontal), edges on Y-axis (vertical)
+                self.parent.g_yhist_m.set_data(y_counts, y_edges_for_plot)
+                if hasattr(self.parent, 'g_yplot'):
+                    self.parent.g_yplot.replot()
             
             # Update Z histogram
             if ('z' in histogram_data and hasattr(self.parent, 'g_zhist_m') and 
-                hasattr(self.parent, 'checkBoxEnableZ') and self.parent.checkBoxEnableZ.isChecked()):
+                hasattr(self.parent, 'groupBox_3') and self.parent.groupBox_3.isChecked()):
                 z_bin_edges, z_counts = histogram_data['z']
-                self.parent.g_zhist_m.set_data(z_bin_edges[1:], z_counts)
+                z_edges_for_plot = z_bin_edges[1:]
+                self.parent.g_zhist_m.set_data(z_edges_for_plot, z_counts)
+                if hasattr(self.parent, 'g_zplot'):
+                    self.parent.g_zplot.replot()
                 
         except Exception as e:
             logging.error(f"Failed to update histogram displays: {e}")
-    
-    def get_cache_stats(self) -> dict:
-        """Get histogram cache statistics for debugging."""
-        return self._histogram_cache.get_stats()
-    
-    def clear_histogram_cache(self):
-        """Clear the histogram cache."""
-        self._histogram_cache.clear()
-        logging.info("Cleared histogram cache")
-    
-    # ==================== Frame Histogram Caching ====================
-    
-    def cache_current_frame_histogram(self, histogram_data: dict):
-        """
-        Cache the histogram data for the current frame.
-        
-        Args:
-            histogram_data: Dictionary containing histogram data (x, y, z, 2d)
-        """
-        if not hasattr(self, '_frame_histogram_cache'):
-            self._frame_histogram_cache = {}
-            
-        if self.checkBoxStackFrames.isChecked():
-            return  # Don't cache in stacked mode
-            
-        frame_num = self.spinBoxFrameNumber.value()
-        # Deep copy the histogram data to avoid reference issues
-        import copy
-        self._frame_histogram_cache[frame_num] = copy.deepcopy(histogram_data)
-        logging.debug(f"Cached histogram for frame {frame_num}")
-        
-    def get_cached_frame_histogram(self, frame_num: int) -> dict:
-        """
-        Get cached histogram data for a specific frame.
-        
-        Args:
-            frame_num: Frame number to retrieve
-            
-        Returns:
-            Cached histogram dict or None if not cached
-        """
-        if not hasattr(self, '_frame_histogram_cache'):
-            return None
-        return self._frame_histogram_cache.get(frame_num)
-        
-    def _use_cached_frame_histogram(self, frame_num: int) -> bool:
-        """
-        Try to use cached histogram for the given frame.
-        
-        Returns:
-            True if cache was used and plots updated, False otherwise
-        """
-        cached = self.get_cached_frame_histogram(frame_num)
-        if cached is None:
-            return False
-            
-        try:
-            # Update parent's histogram data directly from cache
-            self.parent._histogram = cached
-            # Trigger plot update without recomputing histograms
-            from . import plot_update_helpers
-            # Update the plots using cached data
-            self.parent.lineEditCountCurrent.setText(str(cached.get('_count', '?')))
-            
-            # Update histogram displays
-            if 'x' in cached:
-                x_bin_edges, x_counts = cached['x']
-                self.parent.g_xhist_m.set_data(x_bin_edges[1:], x_counts)
-            if 'y' in cached:
-                y_bin_edges, y_counts = cached['y']
-                self.parent.g_yhist_m.set_data(y_counts, y_bin_edges[1:])
-            if 'z' in cached and hasattr(self.parent, 'checkBoxEnableZ') and self.parent.checkBoxEnableZ.isChecked():
-                z_bin_edges, z_counts = cached['z']
-                self.parent.g_zhist_m.set_data(z_bin_edges[1:], z_counts)
-                
-            # Update 2D plot
-            self.parent.update_2d_plot()
-            
-            # Replot all
-            self.parent.g_xplot.replot()
-            self.parent.g_yplot.replot()
-            self.parent.g_zplot.replot()
-            self.parent.g_2dplot.replot()
-            
-            logging.debug(f"Used cached histogram for frame {frame_num}")
-            return True
-        except Exception as e:
-            logging.warning(f"Failed to use cached histogram: {e}")
-            return False
-            
+
     def clear_frame_histogram_cache(self):
-        """Clear all cached frame histograms."""
-        self._frame_histogram_cache = {}
-        logging.debug("Cleared frame histogram cache")
+        """Clear the frame-specific histogram cache."""
+        if hasattr(self, '_frame_histogram_cache'):
+            self._frame_histogram_cache.clear()
+            logging.debug("Cleared frame histogram cache")
+
+    def clear_histogram_cache(self):
+        """Clear the main histogram cache."""
+        if hasattr(self, '_histogram_cache') and self._histogram_cache is not None:
+            self._histogram_cache.clear()
+            logging.debug("Cleared main histogram cache")
