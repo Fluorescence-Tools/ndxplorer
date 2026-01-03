@@ -30,18 +30,30 @@ def open_files(
     )
 
 
-def open_csv(ndxplorer, filenames: Optional[List[str]] = None, append: bool = False, merge_mode: str = "columns"):
-    logging.debug("open_csv")
+def _open_with_merge_dialog(
+    ndxplorer,
+    filenames: Optional[List[str]],
+    file_type: str,
+    dialog_title: str,
+    append: bool = False,
+    merge_mode: str = "columns",
+):
+    """Helper to consolidate merge dialog logic for file opening functions."""
+    logging.debug(f"_open_with_merge_dialog: {file_type}")
     if (
         filenames is None
         and getattr(ndxplorer, "_data_source", None) is not None
         and not ndxplorer._data_source.empty
     ):
-        result = show_merge_dialog(ndxplorer, "Open CSV Files")
+        result = show_merge_dialog(ndxplorer, dialog_title)
         if result is None:
             return
         append, merge_mode = result
-    open_files(ndxplorer, file_handles=filenames, file_type="csv", append=append, merge_mode=merge_mode)
+    open_files(ndxplorer, file_handles=filenames, file_type=file_type, append=append, merge_mode=merge_mode)
+
+
+def open_csv(ndxplorer, filenames: Optional[List[str]] = None, append: bool = False, merge_mode: str = "columns"):
+    _open_with_merge_dialog(ndxplorer, filenames, "csv", "Open CSV Files", append, merge_mode)
 
 
 def open_chisurf_sampling(
@@ -50,17 +62,7 @@ def open_chisurf_sampling(
     append: bool = False,
     merge_mode: str = "columns",
 ):
-    logging.debug("open_chisurf_sampling")
-    if (
-        filenames is None
-        and getattr(ndxplorer, "_data_source", None) is not None
-        and not ndxplorer._data_source.empty
-    ):
-        result = show_merge_dialog(ndxplorer, "Open ChiSurf Sampling Files")
-        if result is None:
-            return
-        append, merge_mode = result
-    open_files(ndxplorer, file_handles=filenames, file_type="cs_sampling", append=append, merge_mode=merge_mode)
+    _open_with_merge_dialog(ndxplorer, filenames, "cs_sampling", "Open ChiSurf Sampling Files", append, merge_mode)
 
 
 def open_mfd_hdf5(
@@ -69,17 +71,7 @@ def open_mfd_hdf5(
     append: bool = False,
     merge_mode: str = "columns",
 ):
-    logging.debug("open_mfd_hdf5")
-    if (
-        filenames is None
-        and getattr(ndxplorer, "_data_source", None) is not None
-        and not ndxplorer._data_source.empty
-    ):
-        result = show_merge_dialog(ndxplorer, "Open MFD HDF5 Files")
-        if result is None:
-            return
-        append, merge_mode = result
-    open_files(ndxplorer, file_handles=filenames, file_type="mfd_hdf5", append=append, merge_mode=merge_mode)
+    _open_with_merge_dialog(ndxplorer, filenames, "mfd_hdf5", "Open MFD HDF5 Files", append, merge_mode)
 
 
 def open_smfret(ndxplorer, merge_mode: str = "columns"):
