@@ -537,6 +537,27 @@ class Gaussian2DSelection(DataSelection):
         self.name = name
         self.log_x = bool(log_x)
         self.log_y = bool(log_y)
+        # Deterministic ID for cache stability
+        self.selection_id = f"g2d_{self.parameter_idx1}_{self.parameter_idx2}_{self.mu.tolist()}_{self.sigma}_{self.invert}_{self.enabled}"
+
+    def __eq__(self, other):
+        if not isinstance(other, Gaussian2DSelection):
+            return False
+        # Fast path check using selection_id if available
+        if hasattr(self, 'selection_id') and hasattr(other, 'selection_id'):
+            if self.selection_id == other.selection_id:
+                # If IDs match, check if properties changed (e.g. enabled/invert)
+                return (self.enabled == other.enabled and self.invert == other.invert)
+        
+        return (self.parameter_idx1 == other.parameter_idx1 and
+                self.parameter_idx2 == other.parameter_idx2 and
+                np.allclose(self.mu, other.mu) and
+                np.allclose(self.cov, other.cov) and
+                np.allclose(self.sigma, other.sigma) and
+                self.invert == other.invert and
+                self.enabled == other.enabled and
+                self.log_x == other.log_x and
+                self.log_y == other.log_y)
 
     def get_mask(self, data: np.ndarray) -> np.ndarray:
         n_param, n_pts = data.shape
@@ -602,6 +623,22 @@ class RectangularDataSelection(DataSelection):
         self.invert = bool(invert)
         self.enabled = bool(enabled)
         self.name = name
+        # Deterministic ID for cache stability when reconstructed from UI
+        self.selection_id = f"rect_{self.parameter_idx}_{self.lower:.6f}_{self.upper:.6f}_{self.invert}_{self.enabled}"
+
+    def __eq__(self, other):
+        if not isinstance(other, RectangularDataSelection):
+            return False
+        # Fast path check using selection_id
+        if hasattr(self, 'selection_id') and hasattr(other, 'selection_id'):
+            if self.selection_id == other.selection_id:
+                return (self.enabled == other.enabled and self.invert == other.invert)
+                
+        return (self.parameter_idx == other.parameter_idx and
+                np.allclose(self.lower, other.lower) and
+                np.allclose(self.upper, other.upper) and
+                self.invert == other.invert and
+                self.enabled == other.enabled)
 
     def __str__(self) -> str:  # pragma: no cover
         return (f"RectangularDataSelection:\nBounds: {self.lower}, {self.upper}\n"
@@ -623,6 +660,171 @@ class RectangularDataSelection(DataSelection):
             bad = (vals < self.lower) | (vals > self.upper)  # mask outside
         mask[:, bad] = True
         return mask
+
+
+class MaskDataSelection(DataSelection):
+    """
+    Selection based on a 2D bitmap mask applied to two parameters.
+    """
+
+    def __init__(
+        self,
+        idx1: int,
+        idx2: int,
+        mask: np.ndarray,
+        edges1: np.ndarray,
+        edges2: np.ndarray,
+        invert: bool = False,
+        enabled: bool = True,
+        name: Optional[str] = None,
+    ):
+        import uuid
+        self.selection_id = str(uuid.uuid4())
+        self.idx1 = int(idx1)
+        self.idx2 = int(idx2)
+        self.mask = mask  # The 2D bitmap (H, W) or (ny, nx)
+        self.edges1 = edges1  # x-edges
+        self.edges2 = edges2  # y-edges
+        self.invert = bool(invert)
+        self.enabled = bool(enabled)
+        self.name = name
+
+    def __eq__(self, other):
+        if not isinstance(other, MaskDataSelection):
+            return False
+        # Fast path check using selection_id
+        if hasattr(self, 'selection_id') and hasattr(other, 'selection_id'):
+            if self.selection_id == other.selection_id:
+                # If IDs match, only check binary properties
+                return (self.enabled == other.enabled and self.invert == other.invert)
+        
+        # Slow path (fallback)
+        return (self.idx1 == other.idx1 and
+                self.idx2 == other.idx2 and
+                self.invert == other.invert and
+                self.enabled == other.enabled and
+                np.array_equal(self.mask, other.mask) and
+                np.array_equal(self.edges1, other.edges1) and
+                np.array_equal(self.edges2, other.edges2))
+
+    def get_mask(self, data: np.ndarray) -> np.ndarray:
+        from ..logging_config import logging
+        logging.info(f"=== MaskDataSelection.get_mask called for '{self.name}' ===")
+        n_param, n_pts = data.shape
+        logging.info(f"  Data shape: ({n_param}, {n_pts})")
+        logging.info(f"  Enabled: {self.enabled}, Invert: {self.invert}")
+        
+        bool_mask = np.zeros((n_param, n_pts), dtype=bool)
+        if not self.enabled:
+            logging.warning(f"  Selection is DISABLED - returning empty mask")
+            return bool_mask
+        
+        if self.idx1 >= n_param or self.idx2 >= n_param:
+            logging.warning(f"MaskDataSelection indices {self.idx1}, {self.idx2} out of bounds for data with {n_param} parameters")
+            return bool_mask
+
+        x_vals = data[self.idx1, :]
+        y_vals = data[self.idx2, :]
+        
+        # Log mask and edges dimensions for debugging
+        logging.info(f"  Mask shape: {self.mask.shape}, edges1_len={len(self.edges1)}, edges2_len={len(self.edges2)}")
+        
+        # The mask is stored in TRANSPOSED form to match the displayed image
+        # Display uses img = H.T, so mask has shape (ny_bins, nx_bins)
+        # where ny_bins = len(edges2)-1 and nx_bins = len(edges1)-1
+        logging.info(f"  Expected TRANSPOSED mask: mask.shape[0] should match len(edges2)-1={len(self.edges2)-1}, mask.shape[1] should match len(edges1)-1={len(self.edges1)-1}")
+        logging.info(f"  Mask has {np.count_nonzero(self.mask)} non-zero pixels out of {self.mask.size} total")
+        
+        # Handle mask shape mismatch by resizing if needed (off-by-one errors in histogram computation)
+        # Expected shape is TRANSPOSED: (ny_bins, nx_bins)
+        expected_shape = (len(self.edges2) - 1, len(self.edges1) - 1)
+        if self.mask.shape != expected_shape:
+            logging.warning(f"  Mask shape {self.mask.shape} doesn't match expected TRANSPOSED shape {expected_shape}, attempting to resize")
+            # Pad or trim the mask to match expected shape
+            new_mask = np.zeros(expected_shape, dtype=self.mask.dtype)
+            min_ny = min(self.mask.shape[0], expected_shape[0])
+            min_nx = min(self.mask.shape[1], expected_shape[1])
+            new_mask[:min_ny, :min_nx] = self.mask[:min_ny, :min_nx]
+            self.mask = new_mask
+            logging.info(f"  Resized mask to {self.mask.shape}")
+
+        # Find bin indices for all data points
+        # Use side='right' to ensure edges[i] <= x < edges[i+1] maps to i
+        ix = np.searchsorted(self.edges1, x_vals, side='right') - 1
+        iy = np.searchsorted(self.edges2, y_vals, side='right') - 1
+
+        # Clip points exactly on the upper boundary to the last bin
+        # (Since bins are usually [e_i, e_i+1), the very last bin is [e_n-1, e_n])
+        # Note: mask should have shape (len(edges2)-1, len(edges1)-1) = (ny, nx)
+        # where mask[iy, ix] accesses the bin for point (x_vals, y_vals)
+        ix = np.where(x_vals == self.edges1[-1], len(self.edges1) - 2, ix)
+        iy = np.where(y_vals == self.edges2[-1], len(self.edges2) - 2, iy)
+
+        # Check which points fall within the histogram range
+        # Use edges to determine valid range, not mask.shape which may be transposed
+        nx_bins = len(self.edges1) - 1
+        ny_bins = len(self.edges2) - 1
+        valid = (ix >= 0) & (ix < nx_bins) & \
+                (iy >= 0) & (iy < ny_bins)
+        
+        logging.info(f"  Bin index ranges: ix=[{np.min(ix[valid]) if np.any(valid) else 'N/A'}, {np.max(ix[valid]) if np.any(valid) else 'N/A'}], iy=[{np.min(iy[valid]) if np.any(valid) else 'N/A'}, {np.max(iy[valid]) if np.any(valid) else 'N/A'}]")
+        
+        # If invert=False: mask points OUTSIDE the orange area (keep inside)
+        # If invert=True: mask points INSIDE the orange area (exclude inside)
+        
+        # Start with all points masked out (excluded)
+        bad = np.ones(n_pts, dtype=bool)
+        
+        if np.any(valid):
+            # For points within histogram range, check the mask
+            # points are bad if mask value is 0 (not selected)
+            in_selection = np.zeros(n_pts, dtype=bool)
+            
+            # The mask is stored in TRANSPOSED form: (ny_bins, nx_bins)
+            # This matches the displayed image which is H.T
+            # So we use mask[iy, ix] indexing to access the correct bins
+            if self.mask.shape[0] == ny_bins and self.mask.shape[1] == nx_bins:
+                # Mask is in transposed form (matches display): mask[iy, ix]
+                in_selection[valid] = self.mask[iy[valid], ix[valid]] > 0
+                logging.info(f"  Using mask[iy, ix] indexing (TRANSPOSED form, matches display)")
+            elif self.mask.shape[0] == nx_bins and self.mask.shape[1] == ny_bins:
+                # Mask is in original histogram2d form: mask[ix, iy]
+                in_selection[valid] = self.mask[ix[valid], iy[valid]] > 0
+                logging.warning(f"  Mask in original histogram2d form! Using mask[ix, iy] indexing")
+            else:
+                logging.error(f"  Mask shape {self.mask.shape} doesn't match expected bins (ny={ny_bins}, nx={nx_bins})")
+                return bool_mask
+            
+            if not self.invert:
+                # Keep points in selection, mask everything else
+                bad = ~in_selection
+            else:
+                # Mask points in selection, keep everything else
+                bad = in_selection
+            
+            # Diagnostic statistics
+            n_valid = np.count_nonzero(valid)
+            n_kept = np.count_nonzero(~bad)
+            x_min, x_max = np.min(x_vals), np.max(x_vals)
+            y_min, y_max = np.min(y_vals), np.max(y_vals)
+            logging.info(f"MaskDataSelection '{self.name}': {n_valid}/{n_pts} points in range, {n_kept} points kept (invert={self.invert})")
+            logging.info(f"  Data Range: X=[{x_min:.2f}, {x_max:.2f}], Y=[{y_min:.2f}, {y_max:.2f}]")
+            logging.info(f"  Edges Range: X=[{self.edges1[0]:.2f}, {self.edges1[-1]:.2f}], Y=[{self.edges2[0]:.2f}, {self.edges2[-1]:.2f}]")
+        else:
+            # No points in range, if invert=False, everything is bad
+            if self.invert:
+                bad = np.zeros(n_pts, dtype=bool)
+            else:
+                bad = np.ones(n_pts, dtype=bool)
+            
+            x_min, x_max = (np.min(x_vals), np.max(x_vals)) if n_pts > 0 else (0, 0)
+            y_min, y_max = (np.min(y_vals), np.max(y_vals)) if n_pts > 0 else (0, 0)
+            logging.info(f"MaskDataSelection '{self.name}': NO valid points in range. {np.count_nonzero(~bad)} points kept (invert={self.invert})")
+            logging.info(f"  Data Range: X=[{x_min:.2f}, {x_max:.2f}], Y=[{y_min:.2f}, {y_max:.2f}]")
+            logging.info(f"  Edges Range: X=[{self.edges1[0]:.2f}, {self.edges1[-1]:.2f}], Y=[{self.edges2[0]:.2f}, {self.edges2[-1]:.2f}]")
+
+        bool_mask[:, bad] = True
+        return bool_mask
 
 
 # ---------------------------
@@ -741,6 +943,7 @@ class DataSource:
         mask : np.ndarray (bool), shape (n_parameters, n_points)
             True → masked/excluded.
         """
+        from ..logging_config import logging
         idxs = idxs or []
         d = self.values
         n_param, n_pts = d.shape
@@ -757,10 +960,13 @@ class DataSource:
             try:
                 m = sel.get_mask(d)
                 if isinstance(m, np.ndarray) and m.shape == mask.shape:
+                    count_before = np.count_nonzero(np.any(mask, axis=0))
                     # Use in-place OR operation for better performance
                     mask |= m
+                    count_after = np.count_nonzero(np.any(mask, axis=0))
+                    logging.info(f"Applied selection '{getattr(sel, 'name', 'unnamed')}': points masked {count_before} -> {count_after}/{n_pts}")
             except Exception as e:
-                print(f"[DataSource.get_mask] Selection error ({getattr(sel, 'name', 'unnamed')}): {e}", file=sys.stderr)
+                logging.error(f"[DataSource.get_mask] Selection error ({getattr(sel, 'name', 'unnamed')}): {e}")
 
         # Vectorized NaN/Inf filtering for selected indices
         if idxs:
@@ -980,6 +1186,21 @@ class DataSource:
                             mask |= d2 <= (sel.sigma * sel.sigma)
                         else:
                             mask |= d2 > (sel.sigma * sel.sigma)
+                            
+                elif isinstance(sel, MaskDataSelection):
+                    # For MaskDataSelection, we need to call get_mask on the full dataset
+                    # because it uses 2D histogram binning that requires all data
+                    new_idx1 = index_map.get(sel.idx1)
+                    new_idx2 = index_map.get(sel.idx2)
+                    if new_idx1 is None or new_idx2 is None:
+                        continue
+                    
+                    # Get the full mask from the selection (it operates on full data)
+                    full_mask_2d = sel.get_mask(self.values)
+                    # Extract the 1D mask for all points (OR across all parameters)
+                    full_mask_1d = np.any(full_mask_2d, axis=0)
+                    mask |= full_mask_1d
+                    
             except Exception as e:
                 logging.warning("Selection mask error (%s): %s", getattr(sel, 'name', 'unnamed'), e)
 
