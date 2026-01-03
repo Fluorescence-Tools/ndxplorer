@@ -16,5 +16,19 @@
     "enable_background_computation": true,
     "cache_size_mb": 100,
     "cache_max_entries": 500
+  },
+  "environment": {
+    "NDXPLORER_ENABLE_BACKGROUND_WORKER": null,
+    "NDXPLORER_USE_BOOST_HISTOGRAM": null,
+    "NDXPLORER_USE_BITFIELD": null,
+    "NDXPLORER_USE_HISTOGRAM_CACHE": null,
+    "NDXPLORER_USE_NUMBA": null,
+    "NDXPLORER_USE_FAST_HISTOGRAM": null,
+    "NDXPLORER_PARALLEL_HISTOGRAM": null,
+    "NDXPLORER_AGGRESSIVE_CACHING": null,
+    "NDXPLORER_HISTOGRAM_CACHE_MB": null,
+    "NDXPLORER_GENERAL_CACHE_MB": null,
+    "NDXPLORER_BITFIELD_THRESHOLD": null,
+    "NDXPLORER_HISTOGRAM_THREADS": null
   }
 }
