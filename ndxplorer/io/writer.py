@@ -5,26 +5,10 @@ from ..logging_config import logging
 import numpy as np
 import json
 import pandas as pd
-from qtpy.QtWidgets import QDialog, QVBoxLayout, QProgressBar, QLabel, QApplication
-from qtpy.QtCore import Qt, QCoreApplication
+from qtpy.QtWidgets import QApplication
+from qtpy.QtCore import QCoreApplication
 from ..core.data_source import DataSource, DataSelection
-
-
-class ProgressWindow(QDialog):
-    def __init__(self, title="Progress", message="Processing...", max_value=100, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setWindowModality(Qt.WindowModal)
-        self.layout = QVBoxLayout()
-        self.label = QLabel(message)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, max_value)
-        self.layout.addWidget(self.label)
-        self.layout.addWidget(self.progress_bar)
-        self.setLayout(self.layout)
-
-    def set_value(self, value: int):
-        self.progress_bar.setValue(value)
+from ..ui.progress_window import ProgressWindow
 
 
 def save_burst_ids(
