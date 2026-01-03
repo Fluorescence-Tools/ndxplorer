@@ -36,50 +36,128 @@ def compute_histograms_sync(
         x_data = data_source.values[histogram_params['x_idx'], :]
         y_data = data_source.values[histogram_params['y_idx'], :]
         z_data = data_source.values[histogram_params['z_idx'], :] if histogram_params.get('z_idx') is not None else None
+
+        valid_indices = histogram_params.get('valid_indices')
+        if valid_indices is not None:
+            x_data = x_data[valid_indices]
+            y_data = y_data[valid_indices]
+            if z_data is not None:
+                z_data = z_data[valid_indices]
+            if weights is not None:
+                weights = weights[valid_indices]
         
         result = {}
         
-        # Compute 1D histograms
-        x_hist, x_edges = np.histogram(
-            x_data, 
-            bins=histogram_params['x_bins'], 
-            range=histogram_params['x_range'],
-            weights=weights
-        )
-        result['x'] = (x_hist, x_edges)
+        # Check performance configuration for histogram backend
+        from .performance_config import get_performance_config
+        config = get_performance_config()
         
-        y_hist, y_edges = np.histogram(
-            y_data,
-            bins=histogram_params['y_bins'],
-            range=histogram_params['y_range'], 
-            weights=weights
-        )
-        result['y'] = (y_hist, y_edges)
+        if config.use_boost_histogram:
+            # Use boost-histogram for maximum performance
+            try:
+                import boost_histogram as bh
+                
+                # Compute 1D histograms using boost-histogram
+                x_hist = bh.Histogram(bh.axis.Regular(histogram_params['x_bins'], *histogram_params['x_range']))
+                if weights is not None:
+                    x_hist.fill(x_data, weight=weights)
+                else:
+                    x_hist.fill(x_data)
+                result['x'] = (x_hist.axes[0].edges, x_hist.values())
+                
+                y_hist = bh.Histogram(bh.axis.Regular(histogram_params['y_bins'], *histogram_params['y_range']))
+                if weights is not None:
+                    y_hist.fill(y_data, weight=weights)
+                else:
+                    y_hist.fill(y_data)
+                result['y'] = (y_hist.axes[0].edges, y_hist.values())
+                
+                # Compute Z histogram if available
+                if z_data is not None:
+                    z_hist = bh.Histogram(bh.axis.Regular(histogram_params['z_bins'], *histogram_params['z_range']))
+                    if weights is not None:
+                        z_hist.fill(z_data, weight=weights)
+                    else:
+                        z_hist.fill(z_data)
+                    result['z'] = (z_hist.axes[0].edges, z_hist.values())
+                
+                # Compute 2D histogram using boost-histogram
+                h2d = bh.Histogram(
+                    bh.axis.Regular(histogram_params['x_bins_2d'], *histogram_params['x_range']),
+                    bh.axis.Regular(histogram_params['y_bins_2d'], *histogram_params['y_range'])
+                )
+                if weights is not None:
+                    h2d.fill(x_data, y_data, weight=weights)
+                else:
+                    h2d.fill(x_data, y_data)
+                result['2d'] = (h2d.values(), h2d.axes[0].edges, h2d.axes[1].edges)
+                
+            except ImportError:
+                logging.warning("boost-histogram not available, falling back to numpy")
+                config.use_boost_histogram = False
         
-        # Compute Z histogram if available
-        if z_data is not None:
-            z_hist, z_edges = np.histogram(
-                z_data,
-                bins=histogram_params['z_bins'],
-                range=histogram_params['z_range'],
+        if not config.use_boost_histogram:
+            # Use numpy histogram (fallback/default)
+            logging.debug("Using numpy histogram computation")
+            
+            # Compute 1D histograms using numpy
+            x_range = histogram_params['x_range']
+            y_range = histogram_params['y_range']
+            
+            # Handle zero range data for 1D histograms
+            if x_range[0] == x_range[1]:
+                x_range = (x_range[0] - 0.5, x_range[1] + 0.5)
+                logging.debug(f"Zero range in X for 1D histogram, expanding to {x_range}")
+            
+            if y_range[0] == y_range[1]:
+                y_range = (y_range[0] - 0.5, y_range[1] + 0.5)
+                logging.debug(f"Zero range in Y for 1D histogram, expanding to {y_range}")
+            
+            x_hist, x_edges = np.histogram(x_data, bins=histogram_params['x_bins'], range=x_range, weights=weights)
+            result['x'] = (x_edges, x_hist)  # Store as (edges, counts)
+            
+            y_hist, y_edges = np.histogram(y_data, bins=histogram_params['y_bins'], range=y_range, weights=weights)
+            result['y'] = (y_edges, y_hist)  # Store as (edges, counts)
+            
+            # Compute Z histogram if available
+            if z_data is not None:
+                z_range = histogram_params['z_range']
+                if z_range[0] == z_range[1]:
+                    z_range = (z_range[0] - 0.5, z_range[1] + 0.5)
+                    logging.debug(f"Zero range in Z for 1D histogram, expanding to {z_range}")
+                
+                z_hist, z_edges = np.histogram(z_data, bins=histogram_params['z_bins'], range=z_range, weights=weights)
+                result['z'] = (z_edges, z_hist)  # Store as (edges, counts)
+            
+            # Compute 2D histogram using numpy
+            x_range = histogram_params['x_range']
+            y_range = histogram_params['y_range']
+            
+            # Handle zero range data
+            if x_range[0] == x_range[1]:
+                x_range = (x_range[0] - 0.5, x_range[1] + 0.5)
+                logging.debug(f"Zero range in X for background histogram, expanding to {x_range}")
+            
+            if y_range[0] == y_range[1]:
+                y_range = (y_range[0] - 0.5, y_range[1] + 0.5)
+                logging.debug(f"Zero range in Y for background histogram, expanding to {y_range}")
+            
+            H, x_edges, y_edges = np.histogram2d(
+                x_data, y_data, 
+                bins=[histogram_params['x_bins_2d'], histogram_params['y_bins_2d']],
+                range=[x_range, y_range],
                 weights=weights
             )
-            result['z'] = (z_hist, z_edges)
-        
-        # Compute 2D histogram
-        h2d, x_edges_2d, y_edges_2d = np.histogram2d(
-            x_data,
-            y_data,
-            bins=[histogram_params['x_bins_2d'], histogram_params['y_bins_2d']],
-            range=[histogram_params['x_range'], histogram_params['y_range']],
-            weights=weights
-        )
-        result['2d'] = (h2d, x_edges_2d, y_edges_2d)
+            # CRITICAL: np.histogram2d returns H with shape (nx, ny) but Histogram2D expects (ny, nx)
+            result['2d'] = (H.T, x_edges, y_edges)
         
         # Add metadata
         result['_count'] = len(x_data)
         result['_computation_time'] = time.time() - start_time
-        result['_params'] = histogram_params.copy()
+        params_copy = histogram_params.copy()
+        # Do not persist large index arrays inside cache metadata
+        params_copy.pop('valid_indices', None)
+        result['_params'] = params_copy
         if weights is not None:
             result['_has_weights'] = True
         
@@ -144,8 +222,14 @@ def should_recompute_histograms(plot_control, current_params: Dict[str, Any]) ->
             cached_params = plot_control.parent._histogram.get('_params', {})
             
             # Compare key parameters
-            key_params = ['x_idx', 'y_idx', 'z_idx', 'x_bins', 'y_bins', 'z_bins', 
-                         'x_bins_2d', 'y_bins_2d', 'x_range', 'y_range', 'z_range']
+            key_params = [
+                'x_idx', 'y_idx', 'z_idx',
+                'x_bins', 'y_bins', 'z_bins',
+                'x_bins_2d', 'y_bins_2d',
+                'x_range', 'y_range', 'z_range',
+                # Filtering/selections (may be injected by caller)
+                'valid_idx_hash', 'valid_idx_count', 'selection_hash',
+            ]
             
             for param in key_params:
                 if cached_params.get(param) != current_params.get(param):

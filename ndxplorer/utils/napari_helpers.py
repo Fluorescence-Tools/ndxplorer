@@ -136,8 +136,9 @@ def send_to_napari(ndxplorer: "NDXplorer") -> None:
     if not hasattr(ndxplorer, "_histogram") or "2d" not in ndxplorer._histogram:
         logging.warning("No 2D histogram data available to send to napari")
         return
-
-    hist_data = ndxplorer._histogram["2d"][0].T
+    
+    H, x_edges, y_edges = ndxplorer._histogram["2d"]
+    hist_data = H.T
     x_label = getattr(ndxplorer.plot_control, "x_label", "X")
     y_label = getattr(ndxplorer.plot_control, "y_label", "Y")
     weight_label = ndxplorer.plot_control.weight_parameter

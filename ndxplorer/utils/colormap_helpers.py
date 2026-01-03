@@ -35,7 +35,15 @@ def update_cmap(ndxplorer: "NDXplorer", cmap_name: str | None = None) -> None:
     if cmap_name is None:
         cmap_name = current_cmap(ndxplorer)
         logging.debug("Using current colormap: %s", cmap_name)
-    ndxplorer.cax.set_color_map(cmap_name)
+    
+    # Handle both backends
+    if getattr(ndxplorer, '_use_simple_backend', True):
+        # SimpleImageWidget uses set_colormap
+        ndxplorer.cax.set_colormap(cmap_name, ndxplorer.vmin, ndxplorer.vmax)
+    else:
+        # guiqwt uses set_color_map
+        ndxplorer.cax.set_color_map(cmap_name)
+    
     ndxplorer.g_2dplot.replot()
     logging.debug("Colormap updated to %s", cmap_name)
 
@@ -48,6 +56,14 @@ def set_default_colormap(ndxplorer: "NDXplorer", default_cmap: str) -> None:
         return
     ndxplorer.comboBoxCmap.setCurrentIndex(index)
     if getattr(ndxplorer, "_deferred_init_done", False) and ndxplorer.cax is not None:
-        ndxplorer.cax.set_color_map(default_cmap)
+        # Handle both backends
+        if getattr(ndxplorer, '_use_simple_backend', True):
+            # SimpleImageWidget uses set_colormap
+            vmin = getattr(ndxplorer, 'vmin', 0.0)
+            vmax = getattr(ndxplorer, 'vmax', 1.0)
+            ndxplorer.cax.set_colormap(default_cmap, vmin, vmax)
+        else:
+            # guiqwt uses set_color_map
+            ndxplorer.cax.set_color_map(default_cmap)
         ndxplorer.g_2dplot.replot()
     logging.info("Default colormap set to %s", default_cmap)

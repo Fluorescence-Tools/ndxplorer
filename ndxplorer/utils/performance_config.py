@@ -11,8 +11,10 @@ Provides centralized control over performance features:
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import dataclass
 from typing import Optional
+from pathlib import Path
 
 from ..logging_config import logging
 
@@ -46,6 +48,8 @@ class PerformanceConfig:
         Enable aggressive caching for all operations (default: True)
     histogram_threads : int
         Number of threads for boost-histogram (-1 for auto-detect, 0 or 1 for single-threaded, default: -1)
+    plot_backend : str
+        Plotting backend to use ('guiqwt', 'matplotlib', 'pyqtgraph', default: 'guiqwt')
     """
     
     use_bitfield_masks: bool = True
@@ -59,22 +63,24 @@ class PerformanceConfig:
     parallel_histogram: bool = True
     aggressive_caching: bool = True
     histogram_threads: int = -1
+    plot_backend: str = "guiqwt"
     
     @classmethod
     def from_environment(cls) -> "PerformanceConfig":
-        """Create configuration from environment variables."""
+        """Create configuration from environment variables with settings file overrides."""
         return cls(
-            use_bitfield_masks=_get_bool_env("NDXPLORER_USE_BITFIELD", True),
-            use_histogram_cache=_get_bool_env("NDXPLORER_USE_HISTOGRAM_CACHE", True),
-            use_boost_histogram=_get_bool_env("NDXPLORER_USE_BOOST_HISTOGRAM", True),
-            use_numba=_get_bool_env("NDXPLORER_USE_NUMBA", True),
-            use_fast_histogram=_get_bool_env("NDXPLORER_USE_FAST_HISTOGRAM", True),
-            histogram_cache_memory_mb=_get_float_env("NDXPLORER_HISTOGRAM_CACHE_MB", 200.0),
-            general_cache_memory_mb=_get_float_env("NDXPLORER_GENERAL_CACHE_MB", 50.0),
-            bitfield_threshold=_get_int_env("NDXPLORER_BITFIELD_THRESHOLD", 100000),
-            parallel_histogram=_get_bool_env("NDXPLORER_PARALLEL_HISTOGRAM", True),
-            aggressive_caching=_get_bool_env("NDXPLORER_AGGRESSIVE_CACHING", True),
-            histogram_threads=_get_int_env("NDXPLORER_HISTOGRAM_THREADS", -1),
+            use_bitfield_masks=_get_env_with_settings_override("NDXPLORER_USE_BITFIELD", True),
+            use_histogram_cache=_get_env_with_settings_override("NDXPLORER_USE_HISTOGRAM_CACHE", True),
+            use_boost_histogram=_get_env_with_settings_override("NDXPLORER_USE_BOOST_HISTOGRAM", True),
+            use_numba=_get_env_with_settings_override("NDXPLORER_USE_NUMBA", True),
+            use_fast_histogram=_get_env_with_settings_override("NDXPLORER_USE_FAST_HISTOGRAM", True),
+            histogram_cache_memory_mb=_get_float_env_with_settings_override("NDXPLORER_HISTOGRAM_CACHE_MB", 200.0),
+            general_cache_memory_mb=_get_float_env_with_settings_override("NDXPLORER_GENERAL_CACHE_MB", 50.0),
+            bitfield_threshold=_get_int_env_with_settings_override("NDXPLORER_BITFIELD_THRESHOLD", 100000),
+            parallel_histogram=_get_env_with_settings_override("NDXPLORER_PARALLEL_HISTOGRAM", True),
+            aggressive_caching=_get_env_with_settings_override("NDXPLORER_AGGRESSIVE_CACHING", True),
+            histogram_threads=_get_int_env_with_settings_override("NDXPLORER_HISTOGRAM_THREADS", -1),
+            plot_backend=_get_str_env_with_settings_override("NDXPLORER_PLOT_BACKEND", "guiqwt"),
         )
     
     @classmethod
@@ -92,6 +98,7 @@ class PerformanceConfig:
             parallel_histogram=True,
             aggressive_caching=True,
             histogram_threads=-1,
+            plot_backend="guiqwt",
         )
     
     @classmethod
@@ -105,10 +112,11 @@ class PerformanceConfig:
             use_fast_histogram=True,
             histogram_cache_memory_mb=50.0,
             general_cache_memory_mb=20.0,
-            bitfield_threshold=100000,
+            bitfield_threshold=200000,
             parallel_histogram=False,
             aggressive_caching=False,
             histogram_threads=1,
+            plot_backend="guiqwt",
         )
     
     @classmethod
@@ -126,6 +134,110 @@ class PerformanceConfig:
         logging.info(f"  Fast histogram: {self.use_fast_histogram}")
         logging.info(f"  Parallel histogram: {self.parallel_histogram}")
         logging.info(f"  Aggressive caching: {self.aggressive_caching}")
+        logging.info(f"  Plot backend: {self.plot_backend}")
+
+
+def _get_env_with_settings_override(key: str, default: bool) -> bool:
+    """Get boolean from environment variable with settings file override."""
+    # First check if there's a settings file override
+    settings_env = _get_environment_overrides()
+    if key in settings_env and settings_env[key] is not None:
+        value = str(settings_env[key]).lower()
+        if value in ("1", "true", "yes", "on"):
+            return True
+        elif value in ("0", "false", "no", "off"):
+            return False
+        else:
+            logging.warning(f"Invalid boolean value for {key} in settings: {settings_env[key]}")
+    
+    # Fall back to environment variable
+    return _get_bool_env(key, default)
+
+
+def _get_float_env_with_settings_override(key: str, default: float) -> float:
+    """Get float from environment variable with settings file override."""
+    # First check if there's a settings file override
+    settings_env = _get_environment_overrides()
+    if key in settings_env and settings_env[key] is not None:
+        try:
+            return float(settings_env[key])
+        except (ValueError, TypeError):
+            logging.warning(f"Invalid float value for {key} in settings: {settings_env[key]}")
+    
+    # Fall back to environment variable
+    return _get_float_env(key, default)
+
+
+def _get_int_env_with_settings_override(key: str, default: int) -> int:
+    """Get integer from environment variable with settings file override."""
+    # First check if there's a settings file override
+    settings_env = _get_environment_overrides()
+    if key in settings_env and settings_env[key] is not None:
+        try:
+            return int(settings_env[key])
+        except (ValueError, TypeError):
+            logging.warning(f"Invalid integer value for {key} in settings: {settings_env[key]}")
+    
+    # Fall back to environment variable
+    return _get_int_env(key, default)
+
+
+def _get_str_env_with_settings_override(key: str, default: str) -> str:
+    """Get string from environment variable with settings file override."""
+    # First check if there's a settings file override
+    settings_env = _get_environment_overrides()
+    if key in settings_env and settings_env[key] is not None:
+        value = str(settings_env[key]).strip()
+        if value:  # Check if not empty
+            return value
+        else:
+            logging.warning(f"Empty string value for {key} in settings")
+    
+    # Fall back to environment variable
+    return os.environ.get(key, default)
+
+
+def _get_environment_overrides() -> dict:
+    """Load environment variable overrides from settings file."""
+    global _environment_overrides_cache
+    if _environment_overrides_cache is not None:
+        return _environment_overrides_cache
+    
+    overrides = {}
+    try:
+        # Try to find and load the settings file
+        settings_paths = [
+            # User settings directory
+            Path.home() / ".chisurf" / "ndxplorer" / "mfd.settings.json",
+            # Module settings directory
+            Path(__file__).parent.parent / "settings" / "mfd.settings.json",
+            # Current directory
+            Path.cwd() / "mfd.settings.json",
+        ]
+        
+        for settings_path in settings_paths:
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings_data = json.load(f)
+                
+                if 'environment' in settings_data:
+                    overrides = settings_data['environment']
+                    logging.debug(f"Loaded {len(overrides)} environment overrides from {settings_path}")
+                    break
+        
+        if not overrides:
+            logging.debug("No environment overrides found in settings files")
+            
+    except Exception as e:
+        logging.warning(f"Failed to load environment overrides from settings: {e}")
+        overrides = {}
+    
+    _environment_overrides_cache = overrides
+    return overrides
+
+
+# Global cache for environment overrides
+_environment_overrides_cache: Optional[dict] = None
 
 
 def _get_bool_env(key: str, default: bool) -> bool:
@@ -182,8 +294,9 @@ def set_performance_config(config: PerformanceConfig) -> None:
 
 def reset_performance_config() -> None:
     """Reset to default configuration."""
-    global _global_config
+    global _global_config, _environment_overrides_cache
     _global_config = None
+    _environment_overrides_cache = None
 
 
 # Convenience functions for common configurations

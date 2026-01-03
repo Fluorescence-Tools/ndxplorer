@@ -199,7 +199,7 @@ def compute_histogram_1d_optimized(
         # Fallback to numpy
         with np.errstate(divide='ignore', invalid='ignore'):
             counts, edges = np.histogram(data, bins=bins, weights=weights, density=density)
-        return counts, edges
+        return edges, counts
 
 
 def compute_histogram_2d_optimized(

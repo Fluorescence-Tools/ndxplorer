@@ -129,7 +129,7 @@ class MouseEventFilter(QtCore.QObject):
 
         try:
             # Get the 2D histogram data and edges
-            _, x_edges, y_edges = self.parent._histogram["2d"]
+            H, x_edges, y_edges = self.parent._histogram["2d"]
 
             # Convert normalized coordinates to bin indices
             x1_bin = int(x1_norm * (len(x_edges) - 1))

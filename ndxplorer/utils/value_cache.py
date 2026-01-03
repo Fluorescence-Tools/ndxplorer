@@ -91,6 +91,12 @@ def get_value_mask(ndxplorer: "NDXplorer", use_bitfield: bool = False) -> np.nda
         return ndxplorer._cached_values
 
     logging.debug("Cache invalid, computing fresh data using column-filtered mask")
+    logging.info(f"get_value_mask: Retrieved {len(selections)} selections from plot_control")
+    for i, sel in enumerate(selections):
+        sel_type = type(sel).__name__
+        sel_name = getattr(sel, 'name', 'unnamed')
+        sel_enabled = getattr(sel, 'enabled', True)
+        logging.info(f"  Selection {i}: {sel_type} '{sel_name}' (enabled={sel_enabled})")
     
     # Use optimized column-filtered mask computation
     axis_indices = [p13[0], p13[1], p13[2]]
