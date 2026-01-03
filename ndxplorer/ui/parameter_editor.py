@@ -157,8 +157,21 @@ class ParameterEditor(QtWidgets.QWidget):
 
     @json_file.setter
     def json_file(self, v):
-        with open(v, 'r') as fp:
-            self._dict = json.load(fp, object_pairs_hook=OrderedDict)
+        import pathlib
+        import logging
+        if v is not None and pathlib.Path(v).exists():
+            with open(v, 'r') as fp:
+                self._dict = json.load(fp, object_pairs_hook=OrderedDict)
+        else:
+            logging.warning(f"Parameter file not found: {v}")
+            # Fallback to packaged defaults if possible
+            try:
+                default_v = pathlib.Path(__file__).parent.parent / "settings" / "mfd.constants.json"
+                if default_v.exists():
+                    with open(default_v, 'r') as fp:
+                        self._dict = json.load(fp, object_pairs_hook=OrderedDict)
+            except Exception as e:
+                logging.error(f"Failed to load default parameters: {e}")
         self._json_file = v
 
 
