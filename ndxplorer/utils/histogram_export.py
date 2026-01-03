@@ -77,6 +77,12 @@ def copy_2d_hist_csv(ndxplorer: "NDXplorer") -> None:
         logging.error("No 2D histogram data available: %s", exc)
         return
 
+    # Check if H is 2D, if not, we have a problem
+    if not hasattr(H, 'shape') or len(H.shape) != 2:
+        logging.error("H is not 2D! Shape: %s, Type: %s", 
+                     getattr(H, 'shape', 'no shape'), type(H))
+        return
+
     x_centers = (x_edges[:-1] + x_edges[1:]) / 2
     y_centers = (y_edges[:-1] + y_edges[1:]) / 2
 

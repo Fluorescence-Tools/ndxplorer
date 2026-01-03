@@ -1,11 +1,15 @@
-"""Histogram-related helper routines extracted from plot_main."""
+"""
+Histogram helpers for ndxplorer.
+
+Provides utilities for histogram computation, caching, and parameter management.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Tuple
-
+import hashlib
+import logging
 import numpy as np
+from typing import Dict, Any, Optional, Tuple
 
 from ..logging_config import logging
 from ..utils.performance_optimizations import (
@@ -17,23 +21,6 @@ from ..utils.performance_optimizations import (
 
 if False:  # pragma: no cover - type checking hints without runtime import
     from ..core.plot_main import NDXplorer
-
-
-@dataclass
-class HistogramParams:
-    p1_idx: int
-    p2_idx: int
-    p3_idx: int
-    use_weights: bool
-    weight_param: str
-    z_enabled: bool
-    mask_id: Optional[int]
-    normed_x: bool
-    normed_y: bool
-    normed_z: bool
-    x_bins_1d: str
-    y_bins_1d: str
-    z_bins_1d: Optional[str]
 
 
 def get_bins(plot_control, arange, scale, n_1d, n_2d):
@@ -74,8 +61,21 @@ def sanitize_bins(
     bins,
     data: np.ndarray,
     default_count: int = 50,
+    scale: str = "linear",
 ) -> np.ndarray:
-    """Ensure bins are a strictly increasing 1D array."""
+    """Ensure bins are a strictly increasing 1D array.
+    
+    Parameters
+    ----------
+    bins : array-like
+        Bin edges to validate
+    data : np.ndarray
+        Data array to generate fallback bins from
+    default_count : int
+        Number of bins to generate in fallback
+    scale : str
+        'linear' or 'log' - determines spacing of fallback bins
+    """
     try:
         if are_bins_valid(bins):
             return np.asarray(bins)
@@ -92,7 +92,16 @@ def sanitize_bins(
                 vmin -= eps
                 vmax += eps
             n = int(default_count) if default_count and default_count > 0 else 50
-            return np.linspace(vmin, vmax, n + 1)
+            
+            # Generate log-spaced or linear-spaced bins based on scale
+            if scale == "log":
+                if vmin <= 0:
+                    vmin = 1e-6
+                if vmax <= 0:
+                    vmax = 1e-6
+                return np.logspace(np.log10(vmin), np.log10(vmax), n + 1)
+            else:
+                return np.linspace(vmin, vmax, n + 1)
         return np.array([0.0, 1.0])
     except Exception:
         return np.array([0.0, 1.0])
@@ -101,9 +110,11 @@ def sanitize_bins(
 def is_data_ready(ndxplorer: "NDXplorer") -> bool:
     """Return True if data and axis selections are ready for histogram computation."""
     try:
-        if ndxplorer._data_source is None or ndxplorer._data_source.empty:
+        # Use data_source property instead of _data_source
+        data_source = ndxplorer.data_source
+        if data_source is None or data_source.empty:
             return False
-        values = ndxplorer._data_source.values
+        values = data_source.values
         if values is None or not hasattr(values, "shape"):
             return False
         if values.shape[0] < 3:
@@ -124,88 +135,164 @@ def is_data_ready(ndxplorer: "NDXplorer") -> bool:
 
 def extract_histogram_params(ndxplorer: "NDXplorer") -> HistogramParams:
     """Collect parameters that determine histogram cache validity."""
-    p1_idx = ndxplorer.plot_control.p1[0]
-    p2_idx = ndxplorer.plot_control.p2[0]
-    p3_idx = ndxplorer.plot_control.p3[0]
+    from .histogram_manager import HistogramParams
+    
+    # Get parameter names from data source
+    x_param = ndxplorer.plot_control.x_label
+    y_param = ndxplorer.plot_control.y_label
+    z_param = ndxplorer.plot_control.z_label if hasattr(ndxplorer.plot_control, 'z_label') else ""
+    
+    # Get parameter indices for compatibility with background histogram system
+    p1_idx = getattr(ndxplorer.plot_control, 'p1', (0, ""))[0]
+    p2_idx = getattr(ndxplorer.plot_control, 'p2', (1, ""))[0]
+    p3_idx = getattr(ndxplorer.plot_control, 'p3', (2, ""))[0]
+    
     use_weights = hasattr(ndxplorer, "checkBoxWeight") and ndxplorer.checkBoxWeight.isChecked()
     weight_param = (
         ndxplorer.comboBoxWeight.currentText()
         if use_weights and hasattr(ndxplorer, "comboBoxWeight")
         else ""
     )
-    z_enabled = hasattr(ndxplorer, "checkBoxEnableZ") and ndxplorer.checkBoxEnableZ.isChecked()
+    z_enabled = hasattr(ndxplorer, "groupBox_3") and ndxplorer.groupBox_3.isChecked()
     mask_id = getattr(ndxplorer, "_cached_values_mask_id", None)
-    x_bins_1d = str(ndxplorer.get_x_bins()[0])
-    y_bins_1d = str(ndxplorer.get_y_bins()[0])
-    z_bins_1d = str(ndxplorer.get_z_bins()[0]) if z_enabled else None
-    return HistogramParams(
-        p1_idx=p1_idx,
-        p2_idx=p2_idx,
-        p3_idx=p3_idx,
+    
+    # Get density settings
+    normed_x = getattr(ndxplorer.plot_control, 'normed_hist_x', False)
+    normed_y = getattr(ndxplorer.plot_control, 'normed_hist_y', False)
+    normed_z = getattr(ndxplorer.plot_control, 'normed_hist_z', False)
+    
+    # Get bins as arrays (preserve actual values for computation)
+    x_bins_1d_arr, x_bins_2d_arr = ndxplorer.get_x_bins()
+    y_bins_1d_arr, y_bins_2d_arr = ndxplorer.get_y_bins()
+    z_bins_1d_arr, _ = ndxplorer.get_z_bins()
+    
+    # Convert bins to strings only for cache key consistency
+    x_bins_1d = str(x_bins_1d_arr)
+    y_bins_1d = str(y_bins_1d_arr)
+    z_bins_1d = str(z_bins_1d_arr) if z_enabled else None
+    x_bins_2d = str(x_bins_2d_arr)
+    y_bins_2d = str(y_bins_2d_arr)
+    
+    # Compute data hash for cache invalidation
+    data_hash = None
+    try:
+        if hasattr(ndxplorer, 'values') and ndxplorer.values is not None:
+            # Hash the data shape and first/last few elements for quick change detection
+            data = ndxplorer.values
+            if len(data) > 0:
+                sample_data = np.concatenate([
+                    data[:min(5, len(data))],
+                    data[-min(5, len(data)):]
+                ])
+                data_hash = hashlib.md5(f"{data.shape}_{sample_data.tobytes()}".encode()).hexdigest()[:8]
+    except Exception:
+        pass
+    
+    params = HistogramParams(
+        x_param=x_param,
+        y_param=y_param,
+        z_param=z_param if z_enabled else None,
+        x_bins_1d=x_bins_1d,
+        y_bins_1d=y_bins_1d,
+        z_bins_1d=z_bins_1d,
+        x_bins_2d=x_bins_2d,
+        y_bins_2d=y_bins_2d,
         use_weights=use_weights,
         weight_param=weight_param,
         z_enabled=z_enabled,
         mask_id=mask_id,
-        normed_x=ndxplorer.plot_control.normed_hist_x,
-        normed_y=ndxplorer.plot_control.normed_hist_y,
-        normed_z=ndxplorer.plot_control.normed_hist_z,
-        x_bins_1d=x_bins_1d,
-        y_bins_1d=y_bins_1d,
-        z_bins_1d=z_bins_1d,
+        data_hash=data_hash,
+        normed_x=normed_x,
+        normed_y=normed_y,
+        normed_z=normed_z
     )
+    
+    # Add index parameters for background histogram compatibility
+    params_dict = params.to_dict()
+    params_dict['x_idx'] = p1_idx
+    params_dict['y_idx'] = p2_idx
+    params_dict['z_idx'] = p3_idx
+    
+    # Add actual bin arrays for computation
+    params_dict['x_bins_1d_arr'] = x_bins_1d_arr
+    params_dict['x_bins_2d_arr'] = x_bins_2d_arr
+    params_dict['y_bins_1d_arr'] = y_bins_1d_arr
+    params_dict['y_bins_2d_arr'] = y_bins_2d_arr
+    params_dict['z_bins_1d_arr'] = z_bins_1d_arr
+    
+    # Add old-style bin parameters for background histogram compatibility
+    try:
+        # Convert string bins back to integers for background system
+        x_bins_1d_int = int(x_bins_1d) if x_bins_1d.isdigit() else 50
+        y_bins_1d_int = int(y_bins_1d) if y_bins_1d.isdigit() else 50
+        x_bins_2d_int = int(x_bins_2d) if x_bins_2d.isdigit() else 50
+        y_bins_2d_int = int(y_bins_2d) if y_bins_2d.isdigit() else 50
+        
+        params_dict['x_bins'] = x_bins_1d_int
+        params_dict['y_bins'] = y_bins_1d_int
+        params_dict['z_bins'] = int(z_bins_1d) if z_bins_1d and z_bins_1d.isdigit() else 50
+        params_dict['x_bins_2d'] = x_bins_2d_int
+        params_dict['y_bins_2d'] = y_bins_2d_int
+        
+        # Add range parameters
+        if hasattr(ndxplorer.plot_control, 'xmin') and hasattr(ndxplorer.plot_control, 'xmax'):
+            params_dict['x_range'] = (ndxplorer.plot_control.xmin, ndxplorer.plot_control.xmax)
+        else:
+            params_dict['x_range'] = (0, 256)
+            
+        if hasattr(ndxplorer.plot_control, 'ymin') and hasattr(ndxplorer.plot_control, 'ymax'):
+            params_dict['y_range'] = (ndxplorer.plot_control.ymin, ndxplorer.plot_control.ymax)
+        else:
+            params_dict['y_range'] = (0, 256)
+            
+        params_dict['z_range'] = (0, 50)  # Default range for Z
+        
+    except Exception as e:
+        logging.warning(f"Error setting old-style parameters: {e}")
+        # Fallback values
+        params_dict['x_bins'] = 50
+        params_dict['y_bins'] = 50
+        params_dict['z_bins'] = 50
+        params_dict['x_bins_2d'] = 50
+        params_dict['y_bins_2d'] = 50
+        params_dict['x_range'] = (0, 256)
+        params_dict['y_range'] = (0, 256)
+        params_dict['z_range'] = (0, 50)
+    
+    return params, params_dict
 
 
-def should_recompute(ndxplorer: "NDXplorer", params: HistogramParams) -> bool:
+def should_recompute(ndxplorer: "NDXplorer", params) -> bool:
     """Return True when cached histograms no longer match current parameters."""
+    from .histogram_manager import HistogramParams
+    
     cached = getattr(ndxplorer, "_cached_hist_params", None)
     if cached is None:
         return True
-    if cached.get("p1_idx") != params.p1_idx:
-        return True
-    if cached.get("p2_idx") != params.p2_idx:
-        return True
-    if cached.get("p3_idx") != params.p3_idx:
-        return True
-    if cached.get("use_weights") != params.use_weights:
-        return True
-    if cached.get("weight_param") != params.weight_param:
-        return True
-    if cached.get("z_enabled") != params.z_enabled:
-        return True
-    if cached.get("mask_id") != params.mask_id:
-        return True
-    if cached.get("normed_x") != params.normed_x:
-        return True
-    if cached.get("normed_y") != params.normed_y:
-        return True
-    if cached.get("normed_z") != params.normed_z:
-        return True
-    if cached.get("x_bins_1d") != params.x_bins_1d:
-        return True
-    if cached.get("y_bins_1d") != params.y_bins_1d:
-        return True
-    if params.z_enabled and cached.get("z_bins_1d") != params.z_bins_1d:
-        return True
+    
+    # Convert to dict for comparison
+    current_dict = params.to_dict() if hasattr(params, 'to_dict') else params.__dict__
+    cached_dict = cached if isinstance(cached, dict) else cached.__dict__
+    
+    # Compare key parameters
+    keys_to_check = ['x_param', 'y_param', 'z_param', 'use_weights', 'weight_param', 
+                    'z_enabled', 'mask_id', 'x_bins_1d', 'y_bins_1d', 'z_bins_1d',
+                    'x_bins_2d', 'y_bins_2d', 'data_hash', 'normed_x', 'normed_y', 'normed_z']
+    
+    for key in keys_to_check:
+        if current_dict.get(key) != cached_dict.get(key):
+            return True
+    
     return False
 
 
-def save_cache(ndxplorer: "NDXplorer", params: HistogramParams) -> None:
+def save_cache(ndxplorer: "NDXplorer", params) -> None:
     """Store histogram parameters for cache comparisons."""
-    ndxplorer._cached_hist_params = {
-        "p1_idx": params.p1_idx,
-        "p2_idx": params.p2_idx,
-        "p3_idx": params.p3_idx,
-        "use_weights": params.use_weights,
-        "weight_param": params.weight_param,
-        "z_enabled": params.z_enabled,
-        "mask_id": params.mask_id,
-        "normed_x": params.normed_x,
-        "normed_y": params.normed_y,
-        "normed_z": params.normed_z,
-        "x_bins_1d": params.x_bins_1d,
-        "y_bins_1d": params.y_bins_1d,
-        "z_bins_1d": params.z_bins_1d,
-    }
+    # Store as dict for easy comparison
+    if hasattr(params, 'to_dict'):
+        ndxplorer._cached_hist_params = params.to_dict()
+    else:
+        ndxplorer._cached_hist_params = params.__dict__.copy()
 
 
 def resolve_weights(ndxplorer: "NDXplorer", use_weights: bool, d1) -> Optional[np.ndarray]:
@@ -221,8 +308,20 @@ def resolve_weights(ndxplorer: "NDXplorer", use_weights: bool, d1) -> Optional[n
     if weight_idx < 0:
         logging.warning("Weight parameter '%s' not found in data source. Disabling weights.", weight_param)
         return None
-    # Use float32 for memory efficiency - sufficient precision for weights
-    weight_values = ndxplorer.values[weight_idx].astype(np.float32)
+    
+    # Use the same data source as x_values and y_values to ensure consistency
+    if hasattr(ndxplorer, 'data_manager'):
+        # Use data_manager to get filtered weight values (same as x_values/y_values)
+        try:
+            weight_values = ndxplorer.data_manager.get_axis_values('x', weight_idx, use_filtered=True)
+            weight_values = weight_values.astype(np.float32)
+        except Exception as e:
+            logging.warning("Failed to get filtered weights from data manager: %s", e)
+            return None
+    else:
+        # Fallback: use ndxplorer.values (should be same filtered data)
+        weight_values = ndxplorer.values[weight_idx].astype(np.float32)
+    
     if len(weight_values) != len(d1):
         logging.warning(
             "Weights array shape (%d) doesn't match data array shape (%d). Disabling weights.",
@@ -233,153 +332,5 @@ def resolve_weights(ndxplorer: "NDXplorer", use_weights: bool, d1) -> Optional[n
     return weight_values
 
 
-def histogram_with_fallback(data, bins, normed, weights=None):
-    """Compute histogram with automatic fallback bin generation.
-    
-    Uses Numba-accelerated computation for large datasets when available.
-    Optimized to avoid unnecessary dtype conversions for float32 data.
-    """
-    try:
-        # Avoid copy if data is already contiguous float32/float64
-        data_arr = np.asarray(data)
-        if data_arr.dtype not in (np.float32, np.float64):
-            data_arr = data_arr.astype(np.float64, copy=False)
-        
-        bins_arr = np.asarray(bins)
-        if bins_arr.dtype != np.float64:
-            bins_arr = bins_arr.astype(np.float64, copy=False)
-        
-        # Use optimized adaptive histogram for large datasets
-        result = compute_histogram1d_adaptive(
-            data_arr if data_arr.dtype == np.float64 else data_arr.astype(np.float64),
-            bins_arr,
-            weights=weights,
-            density=normed,
-        )
-        return (result.edges, result.counts)
-    except (ValueError, TypeError) as exc:
-        logging.warning("Could not compute histogram: %s", exc)
-        try:
-            if len(data) > 0 and np.isfinite(data).any():
-                valid_data = data[np.isfinite(data)]
-                if len(valid_data) > 1:
-                    if bins is not None and len(bins) > 1:
-                        n = len(bins) - 1
-                    else:
-                        n = 50
-                    auto_bins = np.linspace(
-                        np.min(valid_data),
-                        np.max(valid_data),
-                        int(max(2, n)) + 1,
-                    )
-                    result = compute_histogram1d_adaptive(
-                        valid_data.astype(np.float64),
-                        auto_bins,
-                        density=normed,
-                    )
-                    return (result.edges, result.counts)
-                else:
-                    return (np.array([0, 1]), np.array([1]))
-            return (np.array([0, 1]), np.array([0]))
-        except Exception as nested:
-            logging.error("Failed to compute histogram with fallback: %s", nested)
-            return (np.array([0, 1]), np.array([0]))
 
 
-def update_histograms(ndxplorer: "NDXplorer") -> None:
-    """Main entry point to recompute histograms, updating UI as needed."""
-    logging.debug("update_histograms")
-    if not is_data_ready(ndxplorer):
-        logging.info("Skipping update_histograms: data/axes not ready")
-        return
-
-    params = extract_histogram_params(ndxplorer)
-    if not should_recompute(ndxplorer, params) and getattr(ndxplorer, "_histogram", None):
-        ndxplorer.lineEditCountCurrent.setText(str(len(ndxplorer.x_values)))
-        logging.info("Using cached histograms")
-        return
-
-    perf = get_performance_monitor()
-    perf.start_timer("ndx_histogram_update")
-
-    d1 = ndxplorer.x_values
-    d2 = ndxplorer.y_values
-    d3 = ndxplorer.z_values
-    ndxplorer.lineEditCountCurrent.setText(str(len(d1)))
-
-    x_bins_1d, x_bins_2d = ndxplorer.get_x_bins()
-    y_bins_1d, y_bins_2d = ndxplorer.get_y_bins()
-    z_bins_1d, _ = ndxplorer.get_z_bins()
-
-    x_bins_1d = sanitize_bins(
-        x_bins_1d,
-        d1,
-        default_count=getattr(ndxplorer.plot_control, "n_xhist_1d", 50),
-    )
-    y_bins_1d = sanitize_bins(
-        y_bins_1d,
-        d2,
-        default_count=getattr(ndxplorer.plot_control, "n_yhist_1d", 50),
-    )
-    z_bins_1d = sanitize_bins(
-        z_bins_1d,
-        d3,
-        default_count=getattr(ndxplorer.plot_control, "n_zhist_1d", 50),
-    )
-    x_bins_2d = sanitize_bins(
-        x_bins_2d,
-        d1,
-        default_count=getattr(ndxplorer.plot_control, "n_xhist_2d", 50),
-    )
-    y_bins_2d = sanitize_bins(
-        y_bins_2d,
-        d2,
-        default_count=getattr(ndxplorer.plot_control, "n_yhist_2d", 50),
-    )
-
-    weights = resolve_weights(ndxplorer, params.use_weights, d1)
-    ndxplorer._histogram["x"] = histogram_with_fallback(
-        d1, x_bins_1d, ndxplorer.plot_control.normed_hist_x, weights=weights
-    )
-    ndxplorer._histogram["y"] = histogram_with_fallback(
-        d2, y_bins_1d, ndxplorer.plot_control.normed_hist_y, weights=weights
-    )
-
-    if params.z_enabled:
-        z_weights = None
-        if weights is not None:
-            weight_param = ndxplorer.comboBoxWeight.currentText()
-            z_param = ndxplorer.plot_control.z_label
-            if weight_param != z_param:
-                z_weights = weights
-        ndxplorer._histogram["z"] = histogram_with_fallback(
-            d3,
-            z_bins_1d,
-            ndxplorer.plot_control.normed_hist_z,
-            weights=z_weights,
-        )
-    else:
-        ndxplorer._histogram.pop("z", None)
-
-    hist2d = compute_histogram2d_adaptive(
-        d1,
-        d2,
-        x_bins_2d,
-        y_bins_2d,
-        weights=weights,
-    )
-    ndxplorer._histogram["2d"] = hist2d.data
-    ndxplorer._histogram_metadata = {
-        "chunked": hist2d.chunked,
-        "total_points": hist2d.n_points,
-        "threshold": len(d1),
-    }
-    if hist2d.chunked:
-        logging.info(
-            "Histogram update used chunked accumulation for %d points",
-            hist2d.n_points,
-        )
-
-    save_cache(ndxplorer, params)
-    perf.log_memory_usage("ndx_histogram_update")
-    perf.end_timer("ndx_histogram_update")

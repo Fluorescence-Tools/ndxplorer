@@ -10,11 +10,10 @@ from ..logging_config import logging
 
 
 def install_working_path_drop(ndxplorer) -> None:
-    """Enable drag/drop on the working path line edit for dirs/HDF5/CSV."""
+    """Enable drag/drop on the main window for dirs/HDF5/CSV."""
     logging.debug("_install_working_path_drop")
-    line_edit = ndxplorer.lineEditWorkingPath
     try:
-        line_edit.setAcceptDrops(True)
+        ndxplorer.setAcceptDrops(True)
     except Exception:
         pass
 
@@ -32,6 +31,10 @@ def install_working_path_drop(ndxplorer) -> None:
         except Exception as exc:
             logging.debug("dragEnterEvent error: %s", exc)
             event.ignore()
+
+    def dragMoveEvent(event):
+        """Need to override dragMoveEvent to accept drops on the main window."""
+        event.acceptProposedAction()
 
     def dropEvent(event):
         try:
@@ -79,5 +82,6 @@ def install_working_path_drop(ndxplorer) -> None:
             logging.debug("dropEvent error: %s", exc)
             event.ignore()
 
-    line_edit.dragEnterEvent = dragEnterEvent
-    line_edit.dropEvent = dropEvent
+    ndxplorer.dragEnterEvent = dragEnterEvent
+    ndxplorer.dragMoveEvent = dragMoveEvent
+    ndxplorer.dropEvent = dropEvent
