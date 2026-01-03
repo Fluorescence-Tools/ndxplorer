@@ -517,7 +517,7 @@ class GaussianFit(QtCore.QObject):
 
         # Keep only points within the currently visible histogram range (value space)
         try:
-            _, x_edges, y_edges = m._histogram["2d"]
+            H, x_edges, y_edges = m._histogram["2d"]
             x_min_vis = float(x_edges[0]); x_max_vis = float(x_edges[-1])
             y_min_vis = float(y_edges[0]); y_max_vis = float(y_edges[-1])
         except Exception:
@@ -900,7 +900,7 @@ class GaussianFit(QtCore.QObject):
             return
         # Ensure overlay axes match histogram
         try:
-            _, x_edges, y_edges = m._histogram["2d"]
+            H, x_edges, y_edges = m._histogram["2d"]
             m.overlay_plot.setAxisScale(QwtPlot.xBottom, 0, len(x_edges) - 1)
             m.overlay_plot.setAxisScale(QwtPlot.yLeft, 0, len(y_edges) - 1)
         except Exception:
