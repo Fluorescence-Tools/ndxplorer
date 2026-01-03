@@ -50,15 +50,56 @@ from ..plotting import api as plotting_api
 from ..plotting import histograms as plot_histograms
 from ..plotting import scatter as plot_scatter
 from ..plotting import colormaps as plot_colormaps
-from guiqwt.colormap import get_colormap_list
 from ..analysis.umap_progress import UMAPProgressDialog
+
+# Defer guiqwt imports to reduce startup time
+_guiqwt_signals = None
+_guiqwt_plot = None
+_guiqwt_image = None
+_guiqwt_curve = None
+_guiqwt_styles = None
+_guiqwt_colormap_list = None
+_CurveDialog = None
+_make = None
+_DataFrameEditor = None
+_QwtPlot = None
+_QwtPlotCanvas = None
+
+def _ensure_guiqwt():
+    """Lazy-load guiqwt modules on first use."""
+    global _guiqwt_signals, _guiqwt_plot, _guiqwt_image, _guiqwt_curve, _guiqwt_styles
+    global _guiqwt_colormap_list, _CurveDialog, _make, _DataFrameEditor, _QwtPlot, _QwtPlotCanvas
+    if _guiqwt_signals is None:
+        import guiqwt.signals
+        import guiqwt.plot
+        import guiqwt.image
+        import guiqwt.curve
+        import guiqwt.styles
+        from guiqwt.colormap import get_colormap_list
+        from guiqwt.plot import CurveDialog
+        from guiqwt.builder import make
+        from guidata.widgets.dataframeeditor import DataFrameEditor
+        from qwt.plot import QwtPlot
+        from qwt.plot_canvas import QwtPlotCanvas
+        _guiqwt_signals = guiqwt.signals
+        _guiqwt_plot = guiqwt.plot
+        _guiqwt_image = guiqwt.image
+        _guiqwt_curve = guiqwt.curve
+        _guiqwt_styles = guiqwt.styles
+        _guiqwt_colormap_list = get_colormap_list
+        _CurveDialog = CurveDialog
+        _make = make
+        _DataFrameEditor = DataFrameEditor
+        _QwtPlot = QwtPlot
+        _QwtPlotCanvas = QwtPlotCanvas
 
 try:
     from chisurf.plugins.misc.code_editor import CodeEditor
 except ImportError:
     from ndxplorer.widgets.code_editor import CodeEditor
 
-from .data_source import DataSource
+from .data_source import DataSource, RectangularDataSelection, MaskDataSelection
+from .data import DataManager
 
 try:
     from chisurf.gui import QtGui, QtCore, uic, QtWidgets
@@ -68,17 +109,6 @@ except ImportError:
     from qtpy import QtGui, QtWidgets
     from qtpy.QtGui import QFont, QImage
 
-import guiqwt.signals
-import guiqwt.plot
-import guiqwt.image
-import guiqwt.curve
-import guiqwt.styles
-
-from guiqwt.plot import CurveDialog
-from guiqwt.builder import make
-from guidata.widgets.dataframeeditor import DataFrameEditor
-from qwt.plot import QwtPlot
-from qwt.plot_canvas import QwtPlotCanvas
 from ..plotting.image_items import FixedImageItem
 from ..plotting.plot_helpers import (
     configure_dynamic_selection_controls,
@@ -104,6 +134,7 @@ from ..io.file_open_helpers import (
     show_merge_dialog,
 )
 from ..plotting import plot_update_helpers
+from ..utils.mask_drawing_integration import MaskDrawingIntegration
 
 
 class NDXplorer(QtWidgets.QMainWindow):
@@ -114,47 +145,56 @@ class NDXplorer(QtWidgets.QMainWindow):
         changes that would invalidate the mask or the data.
         """
         logging.debug("Invalidating values cache")
+        # New architecture: use data_manager
+        if hasattr(self, 'data_manager'):
+            self.data_manager.cache.invalidate_all()
+        
+        # Backward compatibility: keep old cache variables
         self._cached_values = None
         self._cached_values_selections = None
         self._cached_values_p13 = None
         self._cached_values_mask_inf = None
         self._cached_values_mask_nan = None
-        # Clear the new cache variables
         self._cached_filtered_values = None
         self._cached_values_mask_id = None
-        # Clear axis cache variables
         self._cached_x_values = None
         self._cached_x_param_idx = None
         self._cached_y_values = None
         self._cached_y_param_idx = None
         self._cached_z_values = None
         self._cached_z_param_idx = None
-        # Clear histogram cache
         self._cached_hist_params = None
 
     @property
     def data_source(self) -> DataSource:
         logging.debug("Getting data_source")
-        if self._data_source.empty:
-            values = self._default_data_source
-            logging.debug("Using default data source")
-        else:
-            values = self._data_source
-            logging.debug(f"Using actual data source with {self._data_source.values.shape[1] if not self._data_source.empty else 0} data points")
-        return values
+        # New architecture: use data_manager
+        if hasattr(self, 'data_manager'):
+            return self.data_manager.data_source
+        # Fallback for initialization
+        if self._data_source.empty and self._default_data_source is not None:
+            return self._default_data_source
+        return self._data_source
 
     @data_source.setter
     def data_source(self, v: DataSource) -> None:
         logging.info(f"Setting data_source with {v.values.shape[1] if not v.empty else 0} data points")
-        self._data_source = v
-        # Whenever the underlying DataSource changes, invalidate the cached 'values'
-        self.invalidate_values_cache()
-        logging.debug("Computing columns with equations and constants")
-        self._data_source.compute_columns(
-            constants=self.constants,
-            equations=self.equations
-        )
-        self._set_data_loaded(not self._data_source.empty)
+        
+        # New architecture: use data_manager
+        if hasattr(self, 'data_manager'):
+            self.data_manager.constants = self.constants
+            self.data_manager.equations = self.equations
+            self.data_manager.data_source = v
+        else:
+            # Fallback during initialization
+            self._data_source = v
+            self.invalidate_values_cache()
+            self._data_source.compute_columns(
+                constants=self.constants,
+                equations=self.equations
+            )
+        
+        self._set_data_loaded(not v.empty)
 
     def _set_data_loaded(self, has_data: bool) -> None:
         has_data = bool(has_data)
@@ -183,9 +223,13 @@ class NDXplorer(QtWidgets.QMainWindow):
     def x_values(self) -> np.ndarray:
         """Get x-axis values, using cache when valid."""
         p1_idx = self.plot_control.p1[0]
-        mask_id = getattr(self, '_cached_values_mask_id', None)
         
-        # Fast path: check cache validity without recomputing mask
+        # New architecture: use data_manager
+        if hasattr(self, 'data_manager'):
+            return self.data_manager.get_axis_values('x', p1_idx, use_filtered=True)
+        
+        # Fallback: old implementation
+        mask_id = getattr(self, '_cached_values_mask_id', None)
         if (
             getattr(self, '_cached_x_values', None) is not None
             and getattr(self, '_cached_x_param_idx', None) == p1_idx
@@ -193,11 +237,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         ):
             return self._cached_x_values
 
-        # Get filtered values (this handles mask caching internally)
         values = self.values
         x_values = values[p1_idx]
-
-        # Cache result
         self._cached_x_values = x_values
         self._cached_x_param_idx = p1_idx
         return x_values
@@ -206,9 +247,13 @@ class NDXplorer(QtWidgets.QMainWindow):
     def y_values(self) -> np.ndarray:
         """Get y-axis values, using cache when valid."""
         p2_idx = self.plot_control.p2[0]
-        mask_id = getattr(self, '_cached_values_mask_id', None)
         
-        # Fast path: check cache validity without recomputing mask
+        # New architecture: use data_manager
+        if hasattr(self, 'data_manager'):
+            return self.data_manager.get_axis_values('y', p2_idx, use_filtered=True)
+        
+        # Fallback: old implementation
+        mask_id = getattr(self, '_cached_values_mask_id', None)
         if (
             getattr(self, '_cached_y_values', None) is not None
             and getattr(self, '_cached_y_param_idx', None) == p2_idx
@@ -216,11 +261,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         ):
             return self._cached_y_values
 
-        # Get filtered values (this handles mask caching internally)
         values = self.values
         y_values = values[p2_idx]
-
-        # Cache result
         self._cached_y_values = y_values
         self._cached_y_param_idx = p2_idx
         return y_values
@@ -229,9 +271,13 @@ class NDXplorer(QtWidgets.QMainWindow):
     def z_values(self) -> np.ndarray:
         """Get z-axis values, using cache when valid."""
         p3_idx = self.plot_control.p3[0]
-        mask_id = getattr(self, '_cached_values_mask_id', None)
         
-        # Fast path: check cache validity without recomputing mask
+        # New architecture: use data_manager
+        if hasattr(self, 'data_manager'):
+            return self.data_manager.get_axis_values('z', p3_idx, use_filtered=True)
+        
+        # Fallback: old implementation
+        mask_id = getattr(self, '_cached_values_mask_id', None)
         if (
             getattr(self, '_cached_z_values', None) is not None
             and getattr(self, '_cached_z_param_idx', None) == p3_idx
@@ -239,11 +285,8 @@ class NDXplorer(QtWidgets.QMainWindow):
         ):
             return self._cached_z_values
 
-        # Get filtered values (this handles mask caching internally)
         values = self.values
         z_values = values[p3_idx]
-
-        # Cache result
         self._cached_z_values = z_values
         self._cached_z_param_idx = p3_idx
         return z_values
@@ -480,11 +523,15 @@ class NDXplorer(QtWidgets.QMainWindow):
             cmap: str = 'gist_earth'
     ) -> None:
         super(NDXplorer, self).__init__(parent=parent)
+        
 
         # Store init params for deferred initialization
         self._init_cmap = cmap
         self._init_settings_json_fn = settings_json_fn
         self._deferred_init_done = False
+
+        # Initialize data manager (new architecture)
+        self.data_manager = DataManager()
 
         self.settings = dict()  # type: Dict
         self.equations = list()  # type: List[Dict[str, str]]
@@ -495,30 +542,24 @@ class NDXplorer(QtWidgets.QMainWindow):
             "z": (),
             "2d": ()
         }
+        
+        # Backward compatibility: delegate to data_manager
         self._mask_inf = True  # type: bool
         self._mask_nan = True  # type: bool
         self._dynamic_selection = False  # type: bool
+        
         self._preserve_contrast = False  # type: bool
         self._has_real_data = False
         self._plot_stack_widget = None
         self._background_label = None
         self._plot_container = None
+        
+        # Backward compatibility: old data source properties
         self._data_source = DataSource()
+        self._default_data_source = None  # Now handled by data_manager
+        
         if isinstance(data_source, DataSource):
             self.data_source = data_source
-        self._default_data_source = DataSource(
-            ["Tau (green)", "Proximity ratio", "r Experimental (green)"],
-            np.vstack(
-                [
-                    np.random.multivariate_normal(
-                        [4.1, 0.0, 0.05], [[0.1, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]], size=500
-                    ),
-                    np.random.multivariate_normal(
-                        [2.0, 0.5, 0.15], [[0.1, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]], size=500
-                    )
-                ]
-            )
-        )
 
         # Clustering settings
         self._use_clustering = False
@@ -531,7 +572,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         # Create clustering dialog early to use its parameters
         self.clustering_dialog = ClusteringDialog(parent=self)
 
-        # Initialize the cache variables to None
+        # Initialize the cache variables to None (backward compatibility)
         self._cached_values = None
         self._cached_values_selections = None
         self._cached_values_p13 = None
@@ -649,9 +690,9 @@ class NDXplorer(QtWidgets.QMainWindow):
         from ..analysis.gaussian_fit import GaussianFit
         self.gaussian_fit = GaussianFit(self)
 
-        self.g_xplot.setMaximumHeight(150)
-        self.g_yplot.setMaximumWidth(150)
-        self.g_zplot.setMaximumHeight(150)
+        self.g_xplot.setMinimumHeight(40)
+        self.g_yplot.setMinimumWidth(40)
+        self.g_zplot.setMinimumHeight(100)
 
         # Load settings
         ###############
@@ -699,6 +740,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.actionLoad_settings.triggered.connect(self.onLoad_settings)
         self.actionSave_axis_settings.triggered.connect(self.onSaveAxisSettings)
         self.actionSet_default_axis.triggered.connect(self.onSetDefaultAxis)
+        self.actionPerformanceSettings.triggered.connect(self.onPerformanceSettings)
         # GUI updates
         self.actionUpdate_plot.triggered.connect(lambda: self.update_plots())
         self.actionClear_plot.triggered.connect(self.clear_plots)
@@ -728,12 +770,242 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.plot_control.comboBoxSelZ.currentIndexChanged.connect(self.update_spinbox_limits)
 
         # Connections for spin boxes are already set up above
+        
+        # Initialize mask drawing integration
+        self._setup_mask_drawing()
 
         # Initialize UI enabled state based on current dataset
         try:
             self.update_ui_enabled_state()
         except Exception:
             pass
+        
+        # After deferred init completes, render any pending histograms
+        # This handles the case where file loading computed histograms before plot objects existed
+        try:
+            if self._histogram and any(self._histogram.values()):
+                from ..plotting.plot_update_helpers import _update_marginal_plots_from_cache
+                _update_marginal_plots_from_cache(self)
+                logging.info("Rendered pending histograms after deferred init completion")
+        except Exception as e:
+            logging.debug(f"Could not render pending histograms: {e}")
+        
+    def _setup_mask_drawing(self):
+        """Setup mask drawing integration with the 2D plot."""
+        logging.debug("Starting mask drawing setup...")
+        try:
+            # Initialize mask drawing integration
+            logging.debug("Creating MaskDrawingIntegration instance...")
+            self.mask_drawing = MaskDrawingIntegration(self)
+            logging.debug("MaskDrawingIntegration instance created")
+            
+            # Connect mask widget signals
+            logging.debug("Getting mask widget...")
+            mask_widget = self.plot_control.mask_widget
+            logging.debug(f"Mask widget: {mask_widget}")
+            
+            logging.debug("Connecting mask_changed signal...")
+            mask_widget.mask_changed.connect(self._on_mask_changed)
+            logging.debug("Signal connected")
+            
+            # Setup mask overlay on 2D plot
+            logging.debug("Setting up mask overlay...")
+            self.mask_drawing.setup_mask_overlay()
+            logging.debug("Mask overlay setup complete")
+            
+            logging.info("Mask drawing integration initialized successfully")
+        except Exception as e:
+            logging.error(f"Could not setup mask drawing: {e}", exc_info=True)
+            # Still set mask_drawing to None so we know it failed
+            self.mask_drawing = None
+    
+    def _on_mask_changed(self, mask):
+        """Handle mask changes from the mask widget."""
+        try:
+            # Update the mask overlay visualization
+            if hasattr(self, 'mask_drawing'):
+                self.mask_drawing.update_mask_overlay(mask)
+            
+            # Invalidate histogram cache when mask changes
+            # This ensures background worker recomputes histograms with new mask
+            if (hasattr(self.plot_control, '_histogram_cache') and 
+                self.plot_control._histogram_cache is not None):
+                self.plot_control.clear_histogram_cache()
+                logging.debug("Cleared histogram cache due to mask change")
+            
+            # Clear frame histogram cache when mask changes
+            # This is critical for movies/stacks - otherwise cached frame histograms persist
+            if hasattr(self.plot_control, 'clear_frame_histogram_cache'):
+                self.plot_control.clear_frame_histogram_cache()
+                logging.debug("Cleared frame histogram cache due to mask change")
+            
+            # Request plot update to recompute histograms with new mask
+            # Use skip_clustering=True for faster response (mask changes don't affect clustering)
+            self.request_plot_update(skip_clustering=True)
+            
+        except Exception as e:
+            logging.warning(f"Error handling mask change: {e}")
+    
+    def apply_mask_to_selection(self, category: Optional[int] = None):
+        """
+        Apply the current mask to create a selection.
+        
+        Parameters
+        ----------
+        category : Optional[int]
+            If specified, only select pixels with this category.
+            If None, select all non-zero pixels.
+        """
+        try:
+            from ..utils import mask_helpers
+            
+            mask = self.plot_control.mask_widget.get_mask()
+            if mask is None:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "No Mask",
+                    "No mask to apply. Draw or load a mask first."
+                )
+                return
+            
+            # Get current histogram bounds
+            if not hasattr(self, '_histogram') or self._histogram is None:
+                return
+            
+            hist_data = self._histogram.get('2d')
+            if hist_data is None:
+                return
+            
+            H, xedges, yedges = hist_data
+            
+            # Get parameter names
+            x_param = self.plot_control.comboBoxSelX.currentText()
+            y_param = self.plot_control.comboBoxSelY.currentText()
+
+            # Get parameter indices
+            x_idx_param = -1
+            y_idx_param = -1
+            
+            for i, name in enumerate(self._data_source.parameter_names):
+                if name == x_param:
+                    x_idx_param = i
+                if name == y_param:
+                    y_idx_param = i
+            
+            if x_idx_param == -1 or y_idx_param == -1:
+                logging.error(f"Could not find parameter indices for {x_param} or {y_param}")
+                return
+
+            # Extract the specific category if requested
+            if category is not None:
+                binary_mask = (mask == category)
+            else:
+                binary_mask = (mask > 0)
+
+            if not np.any(binary_mask):
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Empty Selection",
+                    "The mask does not contain any pixels for the specified category."
+                )
+                return
+            
+            # Log mask and histogram details
+            logging.info(f"Applying mask to selection:")
+            logging.info(f"  Mask shape: {mask.shape}, binary_mask shape: {binary_mask.shape}")
+            logging.info(f"  Histogram H shape: {H.shape}")
+            logging.info(f"  X edges: len={len(xedges)}, range=[{xedges[0]:.2f}, {xedges[-1]:.2f}]")
+            logging.info(f"  Y edges: len={len(yedges)}, range=[{yedges[0]:.2f}, {yedges[-1]:.2f}]")
+            logging.info(f"  X param: {x_param} (idx={x_idx_param})")
+            logging.info(f"  Y param: {y_param} (idx={y_idx_param})")
+            logging.info(f"  Mask pixels set: {np.count_nonzero(binary_mask)}/{binary_mask.size}")
+
+            # Remove any existing mask selections for the same parameters to avoid conflicts
+            # This prevents old masks from accumulating and interfering with new ones
+            existing_mask_selections = []
+            for i, sel in enumerate(self.plot_control._selections):
+                if isinstance(sel, MaskDataSelection) and sel.idx1 == x_idx_param and sel.idx2 == y_idx_param:
+                    existing_mask_selections.append(i)
+            
+            # Remove from internal list (in reverse to maintain indices)
+            for idx in reversed(existing_mask_selections):
+                removed = self.plot_control._selections.pop(idx)
+                logging.info(f"  Removed existing mask selection: {removed.name} (id={removed.selection_id})")
+            
+            # Remove from UI table
+            table = self.plot_control.tableWidget
+            rows_to_remove = []
+            for row in range(table.rowCount()):
+                item0 = table.item(row, 0)
+                if item0:
+                    # Check if this is a mask selection by metadata or text
+                    meta = None
+                    try:
+                        for role in [QtCore.Qt.UserRole, 32, QtCore.Qt.UserRole + 10]:
+                            meta_raw = item0.data(role)
+                            if meta_raw:
+                                try:
+                                    if isinstance(meta_raw, dict):
+                                        meta = meta_raw
+                                    else:
+                                        meta = json.loads(str(meta_raw))
+                                    if meta and isinstance(meta, dict) and "type" in meta:
+                                        break
+                                except Exception:
+                                    continue
+                    except Exception:
+                        pass
+                    
+                    is_mask = False
+                    if meta and meta.get("type") == "Mask":
+                        is_mask = True
+                    elif "Bitmap" in table.item(row, 1).text() if table.item(row, 1) else False:
+                        is_mask = True
+                    
+                    if is_mask:
+                        rows_to_remove.append(row)
+            
+            # Remove rows in reverse order
+            for row in reversed(rows_to_remove):
+                table.removeRow(row)
+                logging.info(f"  Removed mask selection UI row {row}")
+
+            # 1. Create the actual selection object first
+            selection = MaskDataSelection(
+                idx1=x_idx_param,
+                idx2=y_idx_param,
+                mask=binary_mask,
+                edges1=xedges,
+                edges2=yedges,
+                name=f"Mask ({x_param}, {y_param})"
+            )
+            
+            logging.info(f"  Created MaskDataSelection with id={selection.selection_id}")
+            
+            # 2. Add it to the internal selections list
+            self.plot_control._selections.append(selection)
+            
+            # 3. Add the UI representation (which triggers the update)
+            self.plot_control.addMaskSelection(
+                name=selection.name,
+                mask=binary_mask,
+                edges1=xedges,
+                edges2=yedges,
+                idx1=x_idx_param,
+                idx2=y_idx_param,
+                selection_id=selection.selection_id
+            )
+            
+            # Request update
+            self.request_plot_update()
+            
+        except Exception as e:
+            logging.error(f"Error applying mask to selection: {e}")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to apply mask: {str(e)}"
+            )
 
     def show_dataframe_editor(self):
         """
@@ -746,7 +1018,8 @@ class NDXplorer(QtWidgets.QMainWindow):
             )
             return
 
-        dlg = DataFrameEditor(self)
+        _ensure_guiqwt()
+        dlg = _DataFrameEditor(self)
         # Set up the editor on the current DataFrame
         if not dlg.setup_and_check(self._data_source.data, title="Data Source"):
             return
@@ -831,14 +1104,24 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # 4. Force combo box indices to match the default columns.
         #    Example: we want [ "Tau (green)", "Proximity ratio", "r Experimental (green)" ]
-        default_names = self._default_data_source.parameter_names
-        ix_tau = default_names.index("Tau (green)")
-        ix_prox = default_names.index("Proximity ratio")
-        ix_r = default_names.index("r Experimental (green)")
+        if hasattr(self, 'data_manager') and self.data_manager is not None:
+            default_data = self.data_manager.data_source
+            if default_data is not None and not default_data.empty:
+                default_names = default_data.parameter_names
+                try:
+                    ix_tau = default_names.index("Tau (green)")
+                    ix_prox = default_names.index("Proximity ratio")
+                    ix_r = default_names.index("r Experimental (green)")
 
-        self.plot_control.comboBoxSelX.setCurrentIndex(ix_tau)
-        self.plot_control.comboBoxSelY.setCurrentIndex(ix_prox)
-        self.plot_control.comboBoxSelZ.setCurrentIndex(ix_r)
+                    self.plot_control.comboBoxSelX.setCurrentIndex(ix_tau)
+                    self.plot_control.comboBoxSelY.setCurrentIndex(ix_prox)
+                    self.plot_control.comboBoxSelZ.setCurrentIndex(ix_r)
+                except ValueError as e:
+                    logging.warning(f"Could not set default combo box indices: {e}")
+            else:
+                logging.warning("Default data source is empty or None")
+        else:
+            logging.warning("Data manager not available, cannot set default combo box indices")
 
         # 5. Directly call update_plots to ensure all graphs are cleared
         self.update_plots()
@@ -985,8 +1268,22 @@ class NDXplorer(QtWidgets.QMainWindow):
     def onLoad_settings(
             self,
             settings_json_fn=None  # type: str
-    ):
+    ) -> None:
         settings_helpers.load_settings(self, settings_json_fn=settings_json_fn)
+
+    def onPerformanceSettings(self) -> None:
+        """Show the performance settings dialog."""
+        try:
+            from ..ui.performance_settings_dialog import PerformanceSettingsDialog
+            dlg = PerformanceSettingsDialog(parent=self)
+            dlg.exec_()
+        except Exception as e:
+            logging.error(f"Failed to open performance settings dialog: {e}")
+            QtWidgets.QMessageBox.critical(
+                self, 
+                "Error", 
+                f"Failed to open performance settings dialog: {e}"
+            )
 
     def open_files(
         self,
@@ -1110,7 +1407,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             "toolButton_parameter_save",
             "comboBoxWeight",
             "checkBoxWeight",
-            "checkBoxEnableZ",
+            "groupBox_3",
         ]:
             try:
                 w = getattr(self, w_name, None)
@@ -1170,8 +1467,8 @@ class NDXplorer(QtWidgets.QMainWindow):
     def are_bins_valid(self, bins) -> bool:
         return histogram_helpers.are_bins_valid(bins)
 
-    def sanitize_bins(self, bins, data: np.ndarray, default_count: int = 50) -> np.ndarray:
-        return histogram_helpers.sanitize_bins(bins, data, default_count)
+    def sanitize_bins(self, bins, data: np.ndarray, default_count: int = 50, scale: str = "linear") -> np.ndarray:
+        return histogram_helpers.sanitize_bins(bins, data, default_count, scale)
 
     def update_histograms(self):
         """Update histograms using new histograms module."""
@@ -1262,7 +1559,16 @@ class NDXplorer(QtWidgets.QMainWindow):
         # 1) Recompute the 2D histogram
         self.update_histograms()
         try:
-            H, *_ = self._histogram["2d"]
+            hist_2d = self._histogram["2d"]
+            # Extract data from 2D histogram (handle both old tuple and new clean formats)
+            if hasattr(hist_2d, 'H'):
+                # New clean Histogram2D object
+                H = hist_2d.H
+            elif isinstance(hist_2d, tuple) and len(hist_2d) == 3:
+                # Old tuple format (H, x_edges, y_edges)
+                H, *_ = hist_2d
+            else:
+                return
         except Exception:
             return
 
@@ -1533,14 +1839,19 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def on_enable_z_changed(self, state):
         """
-        Handle changes to the enable Z checkbox.
+        Handle changes to the Z-axis groupbox toggle.
 
         Args:
-            state: The new state of the checkbox (Qt.Checked or Qt.Unchecked)
+            state: The new state of the groupbox (True for checked, False for unchecked)
         """
         logging.debug(f"on_enable_z_changed(state={state})")
         # Show or hide the z-axis plot based on the checkbox state
         self.g_zplot.setVisible(bool(state))
+        
+        # Enable/disable the Z axis update button based on the checkbox state
+        if hasattr(self, 'plot_control') and hasattr(self.plot_control, 'toolButtonSetZAxis'):
+            self.plot_control.toolButtonSetZAxis.setEnabled(bool(state))
+            logging.debug(f"Z axis update button enabled: {bool(state)}")
 
         # Update histograms and plots to reflect the new state
         # This will skip z-axis histogram computation if disabled
@@ -1740,15 +2051,37 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def update_2d_plot(self):
         """
-        Update the 2D histogram image deterministically:
-        - Always map the image to physical bin-edge coordinates
-        - Apply optional log transform on a copy
-        - Set contrast and replot once
+        Update the 2D histogram plot using clean histogram objects.
         """
-        logging.debug("update_2d_plot()")
+        logging.info("[DISPLAY] update_2d_plot() called")
         try:
-            H, x_edges, y_edges = self._histogram["2d"]
-        except (ValueError, KeyError):
+            hist_2d = self._histogram.get("2d")
+            if hist_2d is None:
+                logging.debug("[DISPLAY] No 2D histogram available yet")
+                return
+            
+            logging.info(f"[DISPLAY] Retrieved hist_2d type={type(hist_2d)}, has H attr={hasattr(hist_2d, 'H')}")
+            
+            # Extract data from 2D histogram (handle both old tuple and new clean formats)
+            if hasattr(hist_2d, 'H'):
+                # New clean Histogram2D object
+                H = hist_2d.H
+                x_edges = hist_2d.x_edges
+                y_edges = hist_2d.y_edges
+                logging.info(f"[DISPLAY] Extracted from Histogram2D: H shape={H.shape}, dtype={H.dtype}")
+                logging.info(f"[DISPLAY] H contiguous={H.flags['C_CONTIGUOUS']}, min={np.min(H)}, max={np.max(H)}, sum={np.sum(H)}")
+            elif isinstance(hist_2d, tuple) and len(hist_2d) == 3:
+                # Old tuple format (H, x_edges, y_edges)
+                H, x_edges, y_edges = hist_2d
+                logging.info(f"[DISPLAY] Extracted from tuple: H shape={H.shape}, dtype={H.dtype}")
+                logging.info(f"[DISPLAY] H contiguous={H.flags['C_CONTIGUOUS']}, min={np.min(H)}, max={np.max(H)}, sum={np.sum(H)}")
+                logging.info(f"[DISPLAY] x_edges length={len(x_edges)}, y_edges length={len(y_edges)}")
+            else:
+                logging.error("[DISPLAY] Invalid 2D histogram format")
+                return
+                
+        except (ValueError, TypeError) as e:
+            logging.warning(f"No 2D histogram data available: {e}")
             return
 
         # Guard for empty/invalid
@@ -1757,6 +2090,16 @@ class NDXplorer(QtWidgets.QMainWindow):
             x_edges = np.array([0.0, 1.0])
             y_edges = np.array([0.0, 1.0])
 
+        # Initialize mask shape when histogram is updated
+        if hasattr(self, 'plot_control') and hasattr(self.plot_control, 'mask_widget'):
+            # Calculate bin counts from edges
+            nx_bins = len(x_edges) - 1
+            ny_bins = len(y_edges) - 1
+            # Set mask shape to match TRANSPOSED/DISPLAYED image: (ny_bins, nx_bins)
+            mask_shape = (ny_bins, nx_bins)
+            self.plot_control.mask_widget.set_mask_shape(mask_shape)
+            logging.info(f"Set mask shape to {mask_shape} (ny={ny_bins}, nx={nx_bins}) for TRANSPOSED display, histogram shape {H.shape}, edges: x={len(x_edges)}, y={len(y_edges)}")
+        
         # Optional log counts (safe for zeros)
         data = H.copy()
         if self.checkBoxLogCounts.isChecked():
@@ -1768,20 +2111,74 @@ class NDXplorer(QtWidgets.QMainWindow):
             data = np.log10(data)
             data = np.nan_to_num(data)
 
-        # guiqwt expects rows=y, cols=x → transpose; ensure contiguous
-        img = np.ascontiguousarray(data.T)
+        # H is already in (ny, nx) shape, no transpose needed for display
+        img = np.ascontiguousarray(data)
+        
+        logging.info(f"[DISPLAY] Final image data before set_data():")
+        logging.info(f"[DISPLAY]   Original H shape: {H.shape}, data shape: {data.shape}, img shape: {img.shape}")
+        logging.info(f"[DISPLAY]   Expected img shape: ({len(y_edges)-1}, {len(x_edges)-1})")
+        logging.info(f"[DISPLAY]   Shape match: {img.shape == (len(y_edges)-1, len(x_edges)-1)}")
+        logging.info(f"[DISPLAY]   img dtype: {img.dtype}, contiguous: {img.flags['C_CONTIGUOUS']}")
+        logging.debug(f"update_2d_plot: H min={np.min(H)}, max={np.max(H)}, data min={np.min(data)}, max={np.max(data)}")
         try:
             self.cax.set_data(img)
-        except Exception:
+            logging.info(f"[DISPLAY] Successfully set image data to cax widget")
+        except Exception as e:
             # Fallback to a trivial image if anything goes wrong
+            logging.error(f"[DISPLAY] Failed to set image data: {e}")
             self.cax.set_data(np.zeros((1, 1)))
 
-        # Apply contrast from UI
-        self.cax.set_lut_range([self.vmin, self.vmax])
+        # Apply colormap/contrast - handle both backends
+        if getattr(self, '_use_simple_backend', True):
+            # SimpleImageWidget uses set_colormap
+            try:
+                self.cax.set_colormap(self.cax._colormap_name, self.vmin, self.vmax)
+            except Exception:
+                pass
+        else:
+            # guiqwt uses set_lut_range
+            try:
+                self.cax.set_lut_range([self.vmin, self.vmax])
+            except Exception:
+                pass
 
-        # Redraw once
-        self.g_2dplot.setAxisScale(QwtPlot.xBottom, 0, len(x_edges)-1)
-        self.g_2dplot.setAxisScale(QwtPlot.yLeft, 0, len(y_edges)-1)
+        # Set axis scales - handle both backends
+        if getattr(self, '_use_simple_backend', True):
+            self.g_2dplot.set_axis_scale('xBottom', 0, len(x_edges)-1)
+            self.g_2dplot.set_axis_scale('yLeft', 0, len(y_edges)-1)
+            
+            # Synchronize overlay plot axis scales with SimpleImageWidget
+            if hasattr(self, 'overlay_plot') and self.overlay_plot is not None:
+                self.overlay_plot.setAxisScale(0, 0, len(x_edges)-1)  # xBottom
+                self.overlay_plot.setAxisScale(1, 0, len(y_edges)-1)  # yLeft
+                
+                # Update margins to match SimpleImageWidget
+                margin_left = 50 if self.g_2dplot.axis_enabled('yLeft') else 0
+                margin_right = 50 if self.g_2dplot.axis_enabled('yRight') else 0
+                margin_top = 30 if self.g_2dplot.axis_enabled('xTop') else 0
+                margin_bottom = 30 if self.g_2dplot.axis_enabled('xBottom') else 0
+                self.overlay_plot.set_margins(margin_left, margin_right, margin_top, margin_bottom)
+                
+                self.overlay_plot.replot()
+        else:
+            _ensure_guiqwt()
+            self.g_2dplot.setAxisScale(_QwtPlot.xBottom, 0, len(x_edges)-1)
+            self.g_2dplot.setAxisScale(_QwtPlot.yLeft, 0, len(y_edges)-1)
+
+        # Replot
+        if getattr(self, '_use_simple_backend', True):
+            logging.info(f"[DISPLAY] Calling g_2dplot.replot() (simple backend)")
+            self.g_2dplot.replot()
+            # Ensure widget is visible and updated
+            if hasattr(self.g_2dplot, 'show'):
+                self.g_2dplot.show()
+            if hasattr(self.g_2dplot, 'update'):
+                self.g_2dplot.update()
+        else:
+            logging.info(f"[DISPLAY] Calling g_2dplot.replot() (guiqwt backend)")
+            self.g_2dplot.replot()
+        
+        logging.info(f"[DISPLAY] Completed 2D plot update: H shape={H.shape}, edges: x={len(x_edges)}, y={len(y_edges)}")
 
     def bin_to_value(self, bin_idx, edges):
         """Convert a bin index to a value (center of the bin).
@@ -1847,11 +2244,27 @@ class NDXplorer(QtWidgets.QMainWindow):
             # Initialize histogram metadata cache
             self._histogram_metadata = {}
 
-            # Get the 2D histogram data and edges
-            histogram_data = self._histogram["2d"]
+            # Get the 2D histogram data and edges (handle both old tuple and new clean formats)
+            hist_2d = self._histogram.get("2d")
+            if hist_2d is None:
+                logging.debug("No 2D histogram available yet for curve overlays")
+                return
+            if hasattr(hist_2d, 'H'):
+                # New clean Histogram2D object
+                H = hist_2d.H
+                x_edges = hist_2d.x_edges
+                y_edges = hist_2d.y_edges
+            elif isinstance(hist_2d, tuple) and len(hist_2d) == 3:
+                # Old tuple format (H, x_edges, y_edges)
+                H, x_edges, y_edges = hist_2d
+            else:
+                logging.error("Invalid 2D histogram format in curve overlays")
+                return
+                
+            histogram_data = (H, x_edges, y_edges)
             
             # Check if histogram data is valid
-            if histogram_data is None or len(histogram_data) < 3 or histogram_data[0].size == 0:
+            if H is None or H.size == 0:
                 logging.debug("Empty histogram data, skipping curve overlay update")
                 return
                 
