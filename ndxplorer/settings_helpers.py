@@ -208,6 +208,14 @@ def load_settings(
     except Exception:
         ndxplorer._settings_json_path = None
 
+    if not pathlib.Path(settings_json_fn).exists():
+        logging.warning(f"Settings file not found: {settings_json_fn}. Falling back to defaults.")
+        default_settings_dir = pathlib.Path(__file__).parent / "settings"
+        settings_json_fn = default_settings_dir / "mfd.settings.json"
+        if not settings_json_fn.exists():
+            logging.error(f"Default settings file not found: {settings_json_fn}")
+            return
+
     with open(settings_json_fn, "r", encoding="utf-8") as handle:
         data = json.load(handle)
         ndxplorer.settings.update(data)
@@ -221,9 +229,13 @@ def load_settings(
     fn_axis = settings_dir / ndxplorer.settings["axis"]
     if not fn_axis.exists():
         fn_axis = default_settings_dir / ndxplorer.settings["axis"]
-    with open(str(fn_axis), "r") as handle:
-        axis_data = json.load(handle)
-        ndxplorer.plot_control.axis_settings.update(axis_data)
+    
+    if fn_axis.exists():
+        with open(str(fn_axis), "r") as handle:
+            axis_data = json.load(handle)
+            ndxplorer.plot_control.axis_settings.update(axis_data)
+    else:
+        logging.warning(f"Axis settings file not found: {fn_axis}")
 
     if "axis_labels" in ndxplorer.settings:
         fn_axis_labels = settings_dir / ndxplorer.settings["axis_labels"]
@@ -268,13 +280,21 @@ def load_settings(
     fn_equations = settings_dir / ndxplorer.settings["equations"]
     if not fn_equations.exists():
         fn_equations = default_settings_dir / ndxplorer.settings["equations"]
-    with open(str(fn_equations), "r") as handle:
-        ndxplorer.equations = yaml.load(handle, Loader=yaml.FullLoader)
+    
+    if fn_equations.exists():
+        with open(str(fn_equations), "r") as handle:
+            ndxplorer.equations = yaml.load(handle, Loader=yaml.FullLoader)
+    else:
+        logging.warning(f"Equations file not found: {fn_equations}")
 
     fn_constants = settings_dir / ndxplorer.settings["constants"]
     if not fn_constants.exists():
         fn_constants = default_settings_dir / ndxplorer.settings["constants"]
-    with open(str(fn_constants), "r") as handle:
-        ndxplorer.constants.update(json.load(handle))
+    
+    if fn_constants.exists():
+        with open(str(fn_constants), "r") as handle:
+            ndxplorer.constants.update(json.load(handle))
+    else:
+        logging.warning(f"Constants file not found: {fn_constants}")
 
     ndxplorer.equation_editor.load_file(str(fn_equations))
