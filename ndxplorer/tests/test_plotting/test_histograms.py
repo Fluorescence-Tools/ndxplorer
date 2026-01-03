@@ -28,23 +28,23 @@ class TestHistograms:
         """Test 1D histogram plotting."""
         ndxplorer = Mock()
         ndxplorer._histogram = {
-            "x": (np.array([5, 10, 15]), np.array([0, 1, 2, 3]))
+            "x": (np.array([0, 1, 2, 3]), np.array([5, 10, 15]))
         }
         
-        counts, bin_edges = histograms.plot_histogram(ndxplorer, "x")
+        bin_edges, counts = histograms.plot_histogram(ndxplorer, "x")
         
-        assert np.array_equal(counts, np.array([5, 10, 15]))
         assert np.array_equal(bin_edges, np.array([0, 1, 2, 3]))
+        assert np.array_equal(counts, np.array([5, 10, 15]))
 
     def test_plot_histogram_invalid_dimension(self):
         """Test histogram plotting with invalid dimension."""
         ndxplorer = Mock()
         ndxplorer._histogram = {}
         
-        counts, bin_edges = histograms.plot_histogram(ndxplorer, "invalid")
+        bin_edges, counts = histograms.plot_histogram(ndxplorer, "invalid")
         
-        assert np.array_equal(counts, np.array([0]))
         assert np.array_equal(bin_edges, np.array([0, 1]))
+        assert np.array_equal(counts, np.array([0]))
 
     def test_compute_2d_histogram_basic(self):
         """Test basic 2D histogram computation."""
@@ -79,7 +79,7 @@ class TestHistograms:
         ndxplorer = Mock()
         data = np.array([1, 2, 3, 4, 5])
         
-        counts, bin_edges = histograms.compute_1d_histogram(
+        bin_edges, counts = histograms.compute_1d_histogram(
             ndxplorer, data, 5
         )
         
@@ -93,7 +93,7 @@ class TestHistograms:
         data = np.array([1, 2, 3, 4, 5])
         weights = np.array([1, 2, 1, 2, 1])
         
-        counts, bin_edges = histograms.compute_1d_histogram(
+        bin_edges, counts = histograms.compute_1d_histogram(
             ndxplorer, data, 5, weights=weights
         )
         
