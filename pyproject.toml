@@ -68,4 +68,6 @@ include = ["ndxplorer*"]
     "*.txt"
 ]
 "ndxplorer.plotting" = ["*.ui"]
-"ndxplorer.ui" = ["*.ui", "*.qrc"]
+"ndxplorer.ui" = ["*.ui", "*.qrc", "*.png", "*.svg"]
+"ndxplorer.settings" = ["*.json", "*.yaml"]
+"ndxplorer.settings.templates" = ["*"]
