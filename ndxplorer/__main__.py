@@ -1,6 +1,6 @@
 import sys
 import os
-import argparse
+import click
 from pathlib import Path
 
 # Add the ndxplorer module to Python path for direct execution
@@ -72,61 +72,49 @@ def open_path_like_drop(ndxplorer, path_str):
         logging.error(f"Path is neither file nor directory: {path}")
 
 
-def parse_arguments():
-    """Parse command line arguments for NDxplorer."""
-    parser = argparse.ArgumentParser(
-        description='NDXplorer - Fluorescence Data Explorer',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Open with specific folder
-  python ndxplorer/__main__.py --folder "E:\\eGFP_bad_background\\pxl_eGFP_bad_background"
-  
-  # Open with specific file
-  python ndxplorer/__main__.py --file "data.bur"
-  
-  # Use default test data
-  python ndxplorer/__main__.py --test-data
-  
-  # Open empty application
-  python ndxplorer/__main__.py
-        """
-    )
+class MutuallyExclusiveOption(click.Option):
+    """Custom option class to enforce mutual exclusivity"""
     
-    # File/folder options
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        '--file', '-f',
-        type=str,
-        help='Open specific file (.bur, .csv, etc.)'
-    )
-    group.add_argument(
-        '--folder', '-d',
-        type=str,
-        help='Open folder containing data files'
-    )
-    group.add_argument(
-        '--test-data', '-t',
-        action='store_true',
-        help='Open with default test data path (E:\\eGFP_bad_background\\pxl_eGFP_bad_background)'
-    )
-    
-    # Additional options
-    parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='Enable debug logging'
-    )
-    
-    return parser.parse_args()
+    def __init__(self, *args, **kwargs):
+        self.mutually_exclusive = set(kwargs.pop('mutually_exclusive', []))
+        super().__init__(*args, **kwargs)
+
+    def handle_parse_result(self, ctx, opts, args):
+        if self.mutually_exclusive:
+            for other_name in self.mutually_exclusive:
+                if other_name in opts and opts[other_name] is not None and self.name in opts and opts[self.name] is not None:
+                    raise click.ClickException(f"Option --{self.name} is mutually exclusive with --{other_name}.")
+        return super().handle_parse_result(ctx, opts, args)
 
 
-def main():
-    """Main entry point for NDxplorer CLI."""
-    args = parse_arguments()
+@click.command()
+@click.option('--file', '-f', type=click.Path(exists=True), cls=MutuallyExclusiveOption, 
+              mutually_exclusive=['folder', 'test_data'], help='Open specific file (.bur, .csv, etc.)')
+@click.option('--folder', '-d', type=click.Path(exists=True, file_okay=False, dir_okay=True), 
+              cls=MutuallyExclusiveOption, mutually_exclusive=['file', 'test_data'], 
+              help='Open folder containing data files')
+@click.option('--test-data', '-t', is_flag=True, cls=MutuallyExclusiveOption, 
+              mutually_exclusive=['file', 'folder'], 
+              help='Open with default test data path (E:\\eGFP_bad_background\\pxl_eGFP_bad_background)')
+@click.option('--debug', is_flag=True, help='Enable debug logging')
+def main(file, folder, test_data, debug):
+    """NDXplorer - Fluorescence Data Explorer
     
+    Examples:
+      # Open with specific folder
+      ndxplorer --folder "E:\\eGFP_bad_background\\pxl_eGFP_bad_background"
+      
+      # Open with specific file
+      ndxplorer --file "data.bur"
+      
+      # Use default test data
+      ndxplorer --test-data
+      
+      # Open empty application
+      ndxplorer
+    """
     # Set up logging level
-    if args.debug:
+    if debug:
         logging.getLogger().setLevel(logging.DEBUG)
         logging.debug("Debug logging enabled")
     
@@ -142,7 +130,7 @@ def main():
     win.show()
     
     # Handle file/folder arguments using the same logic as file drops
-    if args.test_data:
+    if test_data:
         # Try multiple possible test data paths
         test_paths = [
             r"E:\eGFP_bad_background\pxl_eGFP_bad_background",
@@ -165,18 +153,12 @@ def main():
             for path in test_paths:
                 logging.warning(f"  - {path}")
             logging.info("Opening empty application instead")
-    elif args.file:
-        logging.info(f"Opening file: {args.file}")
-        if os.path.exists(args.file):
-            open_path_like_drop(win, args.file)
-        else:
-            logging.error(f"File not found: {args.file}")
-    elif args.folder:
-        logging.info(f"Opening folder: {args.folder}")
-        if os.path.exists(args.folder):
-            open_path_like_drop(win, args.folder)
-        else:
-            logging.error(f"Folder not found: {args.folder}")
+    elif file:
+        logging.info(f"Opening file: {file}")
+        open_path_like_drop(win, file)
+    elif folder:
+        logging.info(f"Opening folder: {folder}")
+        open_path_like_drop(win, folder)
     else:
         logging.info("Opening empty application")
     
