@@ -20,7 +20,7 @@ jobs:
         python-version: ["3.10"]
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: "Set SDK on MacOS (if needed)"
         if: startsWith(matrix.os, 'macos')
@@ -37,6 +37,7 @@ jobs:
 
       - name: Display Conda Settings
         shell: bash -el {0}
+        if: runner.os != 'Windows'
         run: |
           conda info
           conda list
@@ -44,8 +45,19 @@ jobs:
           conda config --show
           printenv | sort
 
+      - name: Display Conda Settings (Windows)
+        shell: pwsh
+        if: runner.os == 'Windows'
+        run: |
+          conda info
+          conda list
+          conda config --show-sources
+          conda config --show
+          Get-ChildItem env: | Sort-Object Name
+
       - name: Build and Upload Conda Package
-        uses: aganders3/headless-gui@v1
+        if: runner.os != 'Windows'
+        uses: aganders3/headless-gui@v2
         with:
           shell: bash -el {0}
           run: |
@@ -53,3 +65,12 @@ jobs:
             cd conda-recipe
             conda mambabuild . --output-folder conda-bld -c tpeulen
             anaconda -t ${{ secrets.ANACONDA_TOKEN }} upload -u tpeulen --force conda-bld/**/*.tar.bz2
+
+      - name: Build and Upload Conda Package (Windows)
+        shell: pwsh
+        if: runner.os == 'Windows'
+        run: |
+          mamba install conda-build boa anaconda-client
+          cd conda-recipe
+          conda mambabuild . --output-folder conda-bld -c tpeulen
+          anaconda -t ${{ secrets.ANACONDA_TOKEN }} upload -u tpeulen --force conda-bld/**/*.tar.bz2
