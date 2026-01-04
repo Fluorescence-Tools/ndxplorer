@@ -459,7 +459,14 @@ def _apply_axes_and_refresh(ndxplorer: "NDXplorer") -> None:
             logging.info("Cleared _loading_data flag - histogram computation now enabled")
         
         # Trigger histogram update after file loading completes
+        # Ensure deferred initialization is complete first
         try:
+            # Make sure deferred init is done before updating histograms
+            if not getattr(ndxplorer, "_deferred_init_done", False):
+                if hasattr(ndxplorer, '_deferred_init'):
+                    ndxplorer._deferred_init()
+                    logging.info("Triggered deferred init before histogram update")
+            
             from ..plotting.plot_update_helpers import update_histograms
             update_histograms(ndxplorer)
             logging.info("Triggered automatic histogram update after file loading")
