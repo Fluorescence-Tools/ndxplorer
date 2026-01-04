@@ -39,6 +39,10 @@ from qtpy.QtWidgets import QApplication, QMessageBox
 from qtpy.QtCore import QCoreApplication, QThread
 from ..ui.progress_window import ProgressWindow
 
+# Import async loading components
+from .async_loader import DataLoadTask, DataLoadWorker, DataLoadResult, run_task_inline
+from .file_metadata_cache import get_metadata_cache
+
 
 """
 NDXplorer Reader Module (fixed)
@@ -360,6 +364,58 @@ def read_burst_analysis(
     )
 
 
+def start_read_burst_analysis_async(
+    base_path: Union[str, pathlib.Path],
+    skip_nth_row: int = 2,
+    additional_endings: Optional[List[str]] = None,
+    drop_last_column: bool = True,
+    on_success: Callable[["DataSource"], None] = None,
+    on_error: Optional[Callable[[str], None]] = None,
+) -> None:
+    """
+    Start asynchronous loading of burst analysis data.
+    
+    In GUI mode, runs in background thread to prevent UI blocking.
+    In CLI mode, runs synchronously.
+    
+    Parameters
+    ----------
+    base_path : Union[str, pathlib.Path]
+        Path to burst analysis directory or zip.
+    skip_nth_row : int, optional
+        Skip every Nth row, by default 2.
+    additional_endings : Optional[List[str]], optional
+        Extra file endings to process, by default None (uses settings).
+    drop_last_column : bool, optional
+        Drop last column from .bur files, by default True.
+    on_success : Callable[[DataSource], None], optional
+        Callback when loading succeeds, by default None.
+    on_error : Optional[Callable[[str], None]], optional
+        Callback when loading fails, by default None.
+    """
+    if on_success is None:
+        on_success = lambda ds: None
+    if on_error is None:
+        on_error = lambda msg: logging.error("Async load failed: %s", msg)
+    
+    task = DataLoadTask(
+        description=f"Loading burst analysis from {base_path}",
+        load_callable=lambda: read_burst_analysis(
+            base_path, skip_nth_row, additional_endings, drop_last_column
+        ),
+        on_success=on_success,
+        on_error=on_error,
+    )
+    
+    if _in_gui_thread():
+        worker = DataLoadWorker(task)
+        worker.finished.connect(lambda result: on_success(result.data_source))
+        worker.error.connect(on_error)
+        worker.start()
+    else:
+        run_task_inline(task)
+
+
 def _process_burst_analysis_dir(
     base_path: pathlib.Path,
     skip_nth_row: int = 2,
@@ -402,6 +458,7 @@ def _process_burst_analysis_dir(
             title="File Processing",
             message=f"Processing {n_files} burst files...",
             max_value=n_files,
+            cancelable=True,
         )
         progress.show()
 
@@ -415,6 +472,12 @@ def _process_burst_analysis_dir(
     extra_format_cache: Dict[str, Dict] = {}  # ending -> kwargs
 
     for i, bur in enumerate(bur_files, start=1):
+        # Check for cancellation
+        if progress is not None and progress.was_cancelled():
+            logging.info("Data loading cancelled by user")
+            if progress is not None:
+                progress.close()
+            return DataSource()  # Return empty data source
         # Detect format from first file, reuse for rest
         if bur_format_cache is None:
             bur_format_cache = _detect_format(bur)
@@ -479,11 +542,22 @@ def _process_burst_analysis_dir(
     t1 = _time.perf_counter()
     logging.info("Read %d files in %.2fs, concatenating...", n_files, t1 - t0)
 
-    final_df = (
-        pd.concat(pieces, ignore_index=True)
-        if any(len(df) for df in pieces)
-        else pieces[0].iloc[0:0]
-    )
+    # Optimize memory usage during concatenation
+    if pieces:
+        # Pre-allocate list with estimated size to reduce memory reallocations
+        total_rows = sum(len(df) for df in pieces if not df.empty)
+        logging.info("Estimated total rows: %d", total_rows)
+        
+        # Use ignore_index=True and optimize dtypes before concatenation
+        for i, df in enumerate(pieces):
+            if not df.empty:
+                # Downcast numeric columns to save memory
+                pieces[i] = df.apply(pd.to_numeric, errors='coerce').convert_dtypes(convert_integer=False, convert_floating=True)
+        
+        # Concatenate with optimized memory settings
+        final_df = pd.concat(pieces, ignore_index=True, copy=False)
+    else:
+        final_df = pieces[0].iloc[0:0] if pieces else pd.DataFrame()
 
     t2 = _time.perf_counter()
     logging.info("Burst load complete: %d rows, %.2fs total (concat %.2fs)",
@@ -648,6 +722,47 @@ def read_csv(filenames: List[str]) -> DataSource:
     dfn = combined.select_dtypes(include=["number"])
     dfn = _fill_missing(dfn, FILL_MISSING_VALUE)
     return DataSource(data=dfn)
+
+
+def start_read_csv_async(
+    filenames: List[str],
+    on_success: Callable[["DataSource"], None] = None,
+    on_error: Optional[Callable[[str], None]] = None,
+) -> None:
+    """
+    Start asynchronous loading of CSV data.
+    
+    In GUI mode, runs in background thread to prevent UI blocking.
+    In CLI mode, runs synchronously.
+    
+    Parameters
+    ----------
+    filenames : List[str]
+        List of CSV file paths to read.
+    on_success : Callable[[DataSource], None], optional
+        Callback when loading succeeds, by default None.
+    on_error : Optional[Callable[[str], None]], optional
+        Callback when loading fails, by default None.
+    """
+    if on_success is None:
+        on_success = lambda ds: None
+    if on_error is None:
+        on_error = lambda msg: logging.error("Async load failed: %s", msg)
+    
+    task = DataLoadTask(
+        description=f"Loading CSV files: {filenames}",
+        load_callable=lambda: read_csv(filenames),
+        on_success=on_success,
+        on_error=on_error,
+    )
+    
+    if _in_gui_thread():
+        worker = DataLoadWorker(task)
+        worker.finished.connect(lambda result: on_success(result.data_source))
+        worker.error.connect(on_error)
+        worker.start()
+    else:
+        run_task_inline(task)
 
 
 # ----------------------------- helpers ---------------------------------------
@@ -850,27 +965,37 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
 
     engine = kwargs.get("engine", "c")
     
-    # For pyarrow, convert object columns to numeric if possible
+    # For pyarrow, convert object columns to numeric if possible - OPTIMIZED
     if engine == "pyarrow":
         object_cols_before = df.select_dtypes(include=['object']).columns
         if len(object_cols_before) > 0:
             logging.info("[read] PyArrow left %d object columns, attempting conversion", len(object_cols_before))
-            # Skip filename columns that clearly contain strings
-            filename_cols = [col for col in object_cols_before 
-                           if any(keyword in col.lower() for keyword in ['file', 'path', 'name', 'directory'])]
-            if filename_cols:
-                logging.info("[read] Skipping filename columns: %s", filename_cols)
             
-            # Convert only non-filename columns
+            # Pre-filter filename columns faster with vectorized operations
+            filename_cols = []
+            if len(object_cols_before) > 0:
+                # Vectorized check for filename keywords
+                col_names_lower = np.array([str(col).lower() for col in object_cols_before])
+                filename_mask = np.array([any(keyword in name for keyword in ['file', 'path', 'name', 'directory']) for name in col_names_lower])
+                filename_cols = list(object_cols_before[filename_mask])
+                if filename_cols:
+                    logging.info("[read] Skipping filename columns: %s", filename_cols)
+            
+            # Convert only non-filename columns in batch for better performance
             cols_to_convert = [col for col in object_cols_before if col not in filename_cols]
             if cols_to_convert:
-                # Log which columns need conversion and sample data
-                for col in cols_to_convert:
-                    sample_data = df[col].head(5).tolist()
-                    logging.info("[read] Converting column '%s': sample=%s", col, sample_data[:3])
-                # Fast in-place conversion: convert each column directly
-                for col in cols_to_convert:
-                    df[col] = pd.to_numeric(df[col], errors='coerce', downcast='float')
+                # Use pandas' built-in convert_dtypes for faster batch conversion
+                try:
+                    # First try pandas' optimized conversion
+                    df[cols_to_convert] = df[cols_to_convert].convert_dtypes(convert_integer=False, convert_floating=True, convert_string=False)
+                    # Then force numeric conversion for remaining object columns
+                    for col in cols_to_convert:
+                        if df[col].dtype == 'object':
+                            df[col] = pd.to_numeric(df[col], errors='coerce', downcast='float')
+                except Exception:
+                    # Fallback to individual conversion
+                    for col in cols_to_convert:
+                        df[col] = pd.to_numeric(df[col], errors='coerce', downcast='float')
     t1_post_convert = _time.perf_counter()
     
     object_cols = df.select_dtypes(include=['object']).columns
@@ -905,11 +1030,22 @@ def _read_text_table_auto(path: pathlib.Path, cached_kwargs: Optional[Dict] = No
 def _detect_format(path: pathlib.Path) -> Dict:
     """
     Detect file format and return kwargs for pd.read_csv.
-    Can be cached and reused for files with the same format.
+    Uses cache to avoid re-detection on subsequent loads.
     """
+    # Try to get cached format first
+    cache = get_metadata_cache()
+    cached_format = cache.get_cached_format(path)
+    if cached_format is not None:
+        return cached_format
+    
+    # Detect format and cache it
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         head = _read_head_lines(f)
-        return _detect_and_build_kwargs(head)
+        format_kwargs = _detect_and_build_kwargs(head)
+    
+    # Cache the detected format
+    cache.cache_format(path, format_kwargs)
+    return format_kwargs
 
 
 def _normalize_msvc_tokens(df: pd.DataFrame) -> pd.DataFrame:
