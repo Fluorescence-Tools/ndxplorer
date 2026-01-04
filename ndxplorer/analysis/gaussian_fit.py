@@ -377,6 +377,9 @@ class GaussianFit(QtCore.QObject):
 
         # Update line widths
         for i, it in enumerate(items):
+            # Skip tuple placeholders from simple backend - they don't have pen() method
+            if isinstance(it, tuple):
+                continue
             pen = it.pen()
             pen.setWidth(8 if i in sel else 2)
             it.setPen(pen)
@@ -772,13 +775,23 @@ class GaussianFit(QtCore.QObject):
     def on_clear_gaussians(self):
         """Remove all Gaussian overlays and clear the table and marginals."""
         m = self.main
-        if hasattr(m, 'gaussian_items'):
-            for item in m.gaussian_items:
-                try:
-                    m.overlay_plot.del_item(item)
-                except Exception:
-                    pass
-            m.gaussian_items.clear()
+        
+        # Handle simple backend (DrawingOverlayWidget)
+        if hasattr(m, '_use_simple_backend') and m._use_simple_backend:
+            try:
+                m.overlay_plot.clear_curves()
+            except Exception:
+                pass
+        else:
+            # Original guiqwt backend
+            if hasattr(m, 'gaussian_items'):
+                for item in m.gaussian_items:
+                    try:
+                        m.overlay_plot.del_item(item)
+                    except Exception:
+                        pass
+                m.gaussian_items.clear()
+        
         # Clear marginal items too
         try:
             self._clear_gaussian_marginal_items()
@@ -792,7 +805,15 @@ class GaussianFit(QtCore.QObject):
                 pass
             finally:
                 m._updating_gaussian_table = False
-        m.overlay_plot.replot()
+        
+        # Update display
+        try:
+            if hasattr(m, '_use_simple_backend') and m._use_simple_backend:
+                m.overlay_plot.update()
+            else:
+                m.overlay_plot.replot()
+        except Exception:
+            pass
 
     # ---------------------------- Helpers -------------------------------
     def _transform_params_for_axes(self, mu: Tuple[float, float], cov: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -893,6 +914,12 @@ class GaussianFit(QtCore.QObject):
         """
         m = self.main
         try:
+            # Check if we're using simple backend (DrawingOverlayWidget)
+            if hasattr(m, '_use_simple_backend') and m._use_simple_backend:
+                self._add_gaussian_overlay_simple(mu, cov, label, color)
+                return
+            
+            # Original guiqwt implementation for full backend
             from qwt.plot import QwtPlot
             import guiqwt.styles
             import guiqwt.curve
@@ -913,58 +940,160 @@ class GaussianFit(QtCore.QObject):
         cov = np.asarray(cov, dtype=float).reshape(2, 2)
         # Transform parameters to the construction space (log for log-axes)
         mu_s, cov_s = self._transform_params_for_axes((mx, my), cov)
-        # Build ellipse points in construction space for c=1 contour
+        # Build ellipse points in construction space for multiple contour levels (1σ, 2σ, 3σ)
         vals, vecs = np.linalg.eigh(cov_s)
         vals = np.maximum(vals, 1e-12)
+        sigma_levels = [1.0, 2.0, 3.0]  # 1σ, 2σ, 3σ contours
         t = np.linspace(0, 2*np.pi, 200)
         circ = np.vstack([np.cos(t), np.sin(t)])  # 2 x N
-        L = np.diag(np.sqrt(vals))
-        pts = (vecs @ L @ circ)
-        xs_s = pts[0, :] + mu_s[0]
-        ys_s = pts[1, :] + mu_s[1]
-        # Map construction-space points back to value space for bin conversion
-        xs_v = np.array(xs_s, dtype=float)
-        ys_v = np.array(ys_s, dtype=float)
-        if is_log_x:
-            xs_v = np.exp(xs_v)
-        if is_log_y:
-            ys_v = np.exp(ys_v)
-        # Map to bin coordinates
-        x_coords = []
-        y_coords = []
-        for xv, yv in zip(xs_v, ys_v):
-            xb = m.value_to_bin(xv, x_edges)
-            yb = m.value_to_bin(yv, y_edges)
-            if xb is None or yb is None:
+        
+        for sigma_idx, sigma_level in enumerate(sigma_levels):
+            L = np.diag(np.sqrt(vals) * sigma_level)
+            pts = (vecs @ L @ circ)
+            xs_s = pts[0, :] + mu_s[0]
+            ys_s = pts[1, :] + mu_s[1]
+            # Map construction-space points back to value space for bin conversion
+            xs_v = np.array(xs_s, dtype=float)
+            ys_v = np.array(ys_s, dtype=float)
+            if is_log_x:
+                xs_v = np.exp(xs_v)
+            if is_log_y:
+                ys_v = np.exp(ys_v)
+            # Map to bin coordinates
+            x_coords = []
+            y_coords = []
+            for xv, yv in zip(xs_v, ys_v):
+                xb = m.value_to_bin(xv, x_edges)
+                yb = m.value_to_bin(yv, y_edges)
+                if xb is None or yb is None:
+                    continue
+                x_coords.append(xb)
+                y_coords.append(yb)
+            if not x_coords:
                 continue
-            x_coords.append(xb)
-            y_coords.append(yb)
-        if not x_coords:
-            return
-        # Determine color
-        if color is None:
-            try:
-                color = next(m._gaussian_color_cycle)
-            except Exception:
-                palette = getattr(m, '_gaussian_palette', ["#ff0000", "#00aa00", "#0000ff", "#aa00aa", "#00aaaa", "#ffaa00"])
-                m._gaussian_color_cycle = iter(palette)
-                color = next(m._gaussian_color_cycle)
-        # If collecting colors for marginals, store this color in order
+            
+            # Determine color (only once for the first sigma level)
+            if sigma_idx == 0:
+                if color is None:
+                    try:
+                        color = next(m._gaussian_color_cycle)
+                    except Exception:
+                        palette = getattr(m, '_gaussian_palette', ["#ff0000", "#00aa00", "#0000ff", "#aa00aa", "#00aaaa", "#ffaa00"])
+                        m._gaussian_color_cycle = iter(palette)
+                        color = next(m._gaussian_color_cycle)
+                # If collecting colors for marginals, store this color in order
+                try:
+                    if getattr(m, '_collect_gaussian_colors', False):
+                        if not hasattr(m, '_last_gaussian_draw_colors'):
+                            m._last_gaussian_draw_colors = []
+                        m._last_gaussian_draw_colors.append(color)
+                except Exception:
+                    pass
+            
+            # Create curve with different width for each sigma level
+            curveparam = guiqwt.styles.CurveParam()
+            curveparam.line.color = color
+            # Make 1σ thickest, 2σ medium, 3σ thinnest
+            line_width = 4.0 - sigma_idx  # 4.0, 3.0, 2.0 for 1σ, 2σ, 3σ
+            curveparam.line.width = max(1.0, line_width)
+            curveparam.line.style = "SolidLine"
+            curveparam.shadow = 0
+            curveparam.symbol = guiqwt.styles.SymbolParam()
+            curveparam.symbol.marker = 'NoSymbol'
+            curve_item = guiqwt.curve.CurveItem(curveparam=curveparam)
+            curve_item.set_data(x_coords, y_coords)
+            m.overlay_plot.add_item(curve_item)
+            m.gaussian_items.append(curve_item)
+        
+        m.overlay_plot.replot()
+
+    def _add_gaussian_overlay_simple(self, mu: Tuple[float, float], cov: np.ndarray, label: str = "", color: Optional[str] = None):
+        """Add Gaussian ellipse overlay for simple backend using DrawingOverlayWidget."""
+        m = self.main
         try:
-            if getattr(m, '_collect_gaussian_colors', False):
-                if not hasattr(m, '_last_gaussian_draw_colors'):
-                    m._last_gaussian_draw_colors = []
-                m._last_gaussian_draw_colors.append(color)
+            from qtpy.QtGui import QColor
+        except Exception:
+            return
+        
+        # Get histogram data for coordinate conversion
+        try:
+            H, x_edges, y_edges = m._histogram["2d"]
+        except Exception:
+            return
+        
+        # Detect log axes
+        is_log_x = self.is_log_x
+        is_log_y = self.is_log_y
+        
+        # Transform parameters to the construction space (log for log-axes)
+        mx, my = float(mu[0]), float(mu[1])
+        cov = np.asarray(cov, dtype=float).reshape(2, 2)
+        mu_s, cov_s = self._transform_params_for_axes((mx, my), cov)
+        
+        # Build ellipse points in construction space for multiple contour levels (1σ, 2σ, 3σ)
+        vals, vecs = np.linalg.eigh(cov_s)
+        vals = np.maximum(vals, 1e-12)
+        sigma_levels = [1.0, 2.0, 3.0]  # 1σ, 2σ, 3σ contours
+        t = np.linspace(0, 2*np.pi, 200)
+        circ = np.vstack([np.cos(t), np.sin(t)])  # 2 x N
+        
+        for sigma_idx, sigma_level in enumerate(sigma_levels):
+            L = np.diag(np.sqrt(vals) * sigma_level)
+            pts = (vecs @ L @ circ)
+            xs_s = pts[0, :] + mu_s[0]
+            ys_s = pts[1, :] + mu_s[1]
+            
+            # Map construction-space points back to value space for bin conversion
+            xs_v = np.array(xs_s, dtype=float)
+            ys_v = np.array(ys_s, dtype=float)
+            if is_log_x:
+                xs_v = np.exp(xs_v)
+            if is_log_y:
+                ys_v = np.exp(ys_v)
+            
+            # Determine color (only once for the first sigma level)
+            if sigma_idx == 0:
+                if color is None:
+                    try:
+                        color = next(m._gaussian_color_cycle)
+                    except Exception:
+                        palette = getattr(m, '_gaussian_palette', ["#ff0000", "#00aa00", "#0000ff", "#aa00aa", "#00aaaa", "#ffaa00"])
+                        m._gaussian_color_cycle = iter(palette)
+                        color = next(m._gaussian_color_cycle)
+                # If collecting colors for marginals, store this color in order
+                try:
+                    if getattr(m, '_collect_gaussian_colors', False):
+                        if not hasattr(m, '_last_gaussian_draw_colors'):
+                            m._last_gaussian_draw_colors = []
+                        m._last_gaussian_draw_colors.append(color)
+                except Exception:
+                    pass
+            
+            # Convert color string to QColor
+            if isinstance(color, str):
+                qcolor = QColor(color)
+            else:
+                qcolor = color
+            
+            # Make 1σ thickest, 2σ medium, 3σ thinnest
+            line_width = int(4.0 - sigma_idx)  # 4, 3, 2 for 1σ, 2σ, 3σ
+            line_width = max(1, line_width)
+            
+            # Add curve to overlay widget
+            try:
+                m.overlay_plot.add_curve(xs_v, ys_v, color=qcolor, width=line_width)
+                # Store a reference for compatibility with existing code
+                if not hasattr(m, 'gaussian_items'):
+                    m.gaussian_items = []
+                m.gaussian_items.append(('curve', len(xs_v), len(ys_v)))  # Simple placeholder
+            except Exception:
+                pass
+        
+        # Trigger overlay update
+        try:
+            m.overlay_plot.update()
         except Exception:
             pass
-        curveparam = guiqwt.styles.CurveParam()
-        curveparam.line.color = color
-        curveparam.line.width = 2.0
-        curve_item = guiqwt.curve.CurveItem(curveparam=curveparam)
-        curve_item.set_data(x_coords, y_coords)
-        m.overlay_plot.add_item(curve_item)
-        m.gaussian_items.append(curve_item)
-        m.overlay_plot.replot()
 
     def _append_gaussian_row(self, mu, cov, w: float = 1.0,
                              fix_x=False, fix_y=False, fix_cxx=False, fix_cxy=False, fix_cyy=False):
@@ -1143,14 +1272,23 @@ class GaussianFit(QtCore.QObject):
     def _redraw_gaussian_overlays_from_table(self):
         """Clear and redraw Gaussian overlays from the current table rows."""
         m = self.main
+        
         # Clear current overlays
-        if hasattr(m, 'gaussian_items'):
-            for item in m.gaussian_items:
-                try:
-                    m.overlay_plot.del_item(item)
-                except Exception:
-                    pass
-            m.gaussian_items.clear()
+        if hasattr(m, '_use_simple_backend') and m._use_simple_backend:
+            # Simple backend - clear curves
+            try:
+                m.overlay_plot.clear_curves()
+            except Exception:
+                pass
+        else:
+            # Original guiqwt backend
+            if hasattr(m, 'gaussian_items'):
+                for item in m.gaussian_items:
+                    try:
+                        m.overlay_plot.del_item(item)
+                    except Exception:
+                        pass
+                m.gaussian_items.clear()
         # Also clear marginals prior to redraw
         try:
             self._clear_gaussian_marginal_items()
