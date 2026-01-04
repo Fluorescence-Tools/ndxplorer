@@ -58,6 +58,11 @@ def get_value_mask(ndxplorer: "NDXplorer", use_bitfield: bool = False) -> np.nda
     )
 
     dynamic_selection = ndxplorer._dynamic_selection and hasattr(ndxplorer, "selection_z")
+    # Only apply Z-range filtering if Z axis is enabled
+    z_enabled = hasattr(ndxplorer, "groupBox_3") and ndxplorer.groupBox_3.isChecked()
+    if dynamic_selection and not z_enabled:
+        # Dynamic selection is active but Z axis is disabled - don't apply Z-range filtering
+        dynamic_selection = False
     selected_cluster = ndxplorer.plot_control.selected_cluster
     use_clustering = ndxplorer._use_clustering and selected_cluster >= 0
     
