@@ -12,8 +12,8 @@ import time
 from qtpy import QtWidgets, QtCore
 from qtpy.QtGui import QIcon, QPixmap, QColor, QBrush
 
-from . import reader
-from .plot_main import NDXplorer
+from .io import reader
+from .core.plot_main import NDXplorer
 from .settings import get_settings_path, ensure_default_settings
 
 try:

@@ -12,7 +12,7 @@
     "weight": "Number of Photons"
   },
   "playback": {
-    "frame_duration_ms": 200,
+    "frame_duration_ms": 25,
     "enable_background_computation": true,
     "cache_size_mb": 100,
     "cache_max_entries": 500
