@@ -51,6 +51,14 @@ except ImportError:
     pc = None
     _HAVE_PYARROW = False
 
+# Optional BitfieldMask for memory-efficient selection filtering
+try:
+    from ..utils.bitfield_mask import BitfieldMask
+    _HAVE_BITFIELD_MASK = True
+except ImportError:
+    BitfieldMask = None
+    _HAVE_BITFIELD_MASK = False
+
 
 # ----------------------------------------
 # Numba-accelerated mask computation
@@ -75,6 +83,25 @@ if _HAVE_NUMBA:
             else:
                 if v < lower or v > upper:
                     mask[i] = True
+    
+    def _rectangular_mask_bitfield(
+        vals: np.ndarray,
+        lower: float,
+        upper: float,
+        invert: bool,
+        mask: "BitfieldMask",
+    ) -> None:
+        """Apply rectangular selection mask to BitfieldMask."""
+        n = vals.shape[0]
+        for i in range(n):
+            v = vals[i]
+            should_mask = False
+            if invert:
+                should_mask = v > lower and v < upper
+            else:
+                should_mask = v < lower or v > upper
+            if should_mask:
+                mask.set_bit(i, True)
 
     @nb.njit(cache=True, fastmath=True)
     def _gaussian2d_mask_numba(
@@ -1094,6 +1121,7 @@ class DataSource:
         axis_indices: List[int],
         mask_nan: bool = True,
         mask_inf: bool = True,
+        use_bitfield: bool = True,
     ) -> np.ndarray:
         """
         Compute mask using only the relevant columns for better performance.
@@ -1103,6 +1131,7 @@ class DataSource:
         computation for large datasets with many columns.
         
         Uses Numba JIT compilation when available for ~10x speedup.
+        Uses BitfieldMask when available for 8x memory savings on large datasets.
 
         Parameters
         ----------
@@ -1114,6 +1143,9 @@ class DataSource:
             Whether to mask NaN values.
         mask_inf : bool
             Whether to mask Inf values.
+        use_bitfield : bool
+            If True and BitfieldMask is available, use bitfield for memory efficiency.
+            Respects performance_config.use_bitfield_masks setting.
 
         Returns
         -------
@@ -1126,7 +1158,22 @@ class DataSource:
 
         subset, index_map = self.get_values_subset(relevant_indices)
         n_pts = subset.shape[1]
-        mask = np.zeros(n_pts, dtype=bool)
+        
+        # Use BitfieldMask for large datasets to save memory (8x compression)
+        # Check performance config to respect user settings
+        from ..utils.performance_config import get_performance_config
+        perf_config = get_performance_config()
+        use_bf = (
+            use_bitfield 
+            and _HAVE_BITFIELD_MASK 
+            and perf_config.use_bitfield_masks
+            and n_pts > perf_config.bitfield_threshold
+        )
+        if use_bf:
+            mask = BitfieldMask(n_pts)
+            logging.debug(f"[get_mask_subset] Using BitfieldMask for {n_pts} points (saves {n_pts * 7 // 1024}KB)")
+        else:
+            mask = np.zeros(n_pts, dtype=bool)
 
         for sel in selections:
             if not getattr(sel, 'enabled', True):
@@ -1138,8 +1185,12 @@ class DataSource:
                         continue
                     vals = np.ascontiguousarray(subset[new_idx, :], dtype=np.float64)
                     
-                    # Use Numba if available
-                    if _HAVE_NUMBA and _rectangular_mask_numba is not None:
+                    # Use appropriate mask function based on mask type
+                    if use_bf and isinstance(mask, BitfieldMask):
+                        # Use BitfieldMask-compatible function
+                        _rectangular_mask_bitfield(vals, sel.lower, sel.upper, sel.invert, mask)
+                    elif _HAVE_NUMBA and _rectangular_mask_numba is not None:
+                        # Use Numba if available
                         _rectangular_mask_numba(vals, sel.lower, sel.upper, sel.invert, mask)
                     else:
                         if sel.invert:
@@ -1210,7 +1261,14 @@ class DataSource:
             if new_idx is None:
                 continue
             col = np.ascontiguousarray(subset[new_idx, :], dtype=np.float64)
-            if _HAVE_NUMBA and _mask_nan_inf_numba is not None:
+            
+            if use_bf and isinstance(mask, BitfieldMask):
+                # Handle BitfieldMask NaN/Inf masking
+                for i in range(len(col)):
+                    v = col[i]
+                    if (mask_nan and np.isnan(v)) or (mask_inf and np.isinf(v)):
+                        mask.set_bit(i, True)
+            elif _HAVE_NUMBA and _mask_nan_inf_numba is not None:
                 _mask_nan_inf_numba(col, mask, mask_nan, mask_inf)
             else:
                 if mask_nan:
@@ -1218,6 +1276,9 @@ class DataSource:
                 if mask_inf:
                     mask |= np.isinf(col)
 
+        # Convert BitfieldMask back to boolean array for compatibility
+        if use_bf and isinstance(mask, BitfieldMask):
+            return mask.to_boolean()
         return mask
 
     # ---- merge helpers ----
