@@ -12,6 +12,7 @@ dependencies:
   - pyqtgraph
   - pathlib2
   - typing-extensions
-  - qscintilla2
   - scipy
   - guiqwt
+  - hdbscan
+  - scikit-learn

@@ -1,0 +1,18 @@
+# Configuration for axis labels and fonts in ndxplorer
+# axis_labels: visibility of labels; fonts: sizes, weight and title color
+
+enable_all_labels: false
+axis_labels:
+  y_plot:
+    top: false
+    right: true
+  x_plot:
+    top: true
+  z_plot:
+    bottom: false
+    left: false
+fonts:
+  tick_size_pt: 8
+  title_size_pt: 10
+  title_weight: 700
+  color: '#bb3838'

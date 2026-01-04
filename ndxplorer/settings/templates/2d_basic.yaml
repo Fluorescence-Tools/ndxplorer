@@ -1,0 +1,7 @@
+# ndxplorer plot template: 2d_basic
+# Layout/style only. No data columns or ranges here.
+renderer: 2d_basic
+style:
+  cmap: viridis
+  figsize: [6, 5]
+  dpi: 150

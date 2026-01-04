@@ -13,33 +13,47 @@
         "scale": "log", 
         "min": 0.1
     }, 
-    "FRET efficiency (PIE)": {
+    "FRET efficiency(PIE)": {
+        "n_bins_1d": 81.0,
+        "max": 1.1,
+        "n_bins_2d": 31,
+        "scale": "lin",
+        "min": -0.1
+    },
+    "Proximity ratio(PIE)": {
         "n_bins_1d": 81.0,
         "max": 1.0,
         "n_bins_2d": 31,
         "scale": "lin",
         "min": 0.0
     },
-    "Proximity ratio (PIE)": {
+    "Sapp(PIE,S)": {
         "n_bins_1d": 81.0,
         "max": 1.0,
         "n_bins_2d": 31,
         "scale": "lin",
         "min": 0.0
     },
-    "Sapp (PIE)": {
+    "Sapp(PIE,F)": {
         "n_bins_1d": 81.0,
         "max": 1.0,
         "n_bins_2d": 31,
         "scale": "lin",
         "min": 0.0
+    },
+    "Stoichiometry (PIE)": {
+        "n_bins_1d": 81.0,
+        "max": 1.1,
+        "n_bins_2d": 31,
+        "scale": "lin",
+        "min": -0.1
     },
     "Red Count Rate (KHz)": {
         "n_bins_1d": 81.0, 
-        "max": 100.0, 
+        "max": 200.0,
         "scale": "log", 
-        "min": 0.1, 
-        "n_bins_2d": 31
+        "min": 1,
+        "n_bins_2d": 41
     }, 
     "FRET efficiency": {
         "n_bins_1d": 81.0, 
@@ -96,7 +110,7 @@
         "min": 0.0, 
         "n_bins_2d": 31
     }, 
-    "Tg-Tr (ms)": {
+    "Tg-Tr(ms)": {
         "n_bins_1d": 81.0,
         "max": 1.0, 
         "scale": "lin", 
@@ -104,10 +118,10 @@
     }, 
     "Green Count Rate (KHz)": {
         "n_bins_1d": 81.0, 
-        "max": 1000.0, 
+        "max": 200.0,
         "scale": "log", 
-        "min": 0.1, 
-        "n_bins_2d": 31
+        "min": 1,
+        "n_bins_2d": 41
     }, 
     "Proximity ratio": {
         "n_bins_1d": 81.0, 
@@ -115,5 +129,68 @@
         "n_bins_2d": 31, 
         "scale": "lin", 
         "min": -0.05
+    },
+    "X pixel": {
+        "n_bins_1d": 256.0,
+        "max": 256.0,
+        "n_bins_2d": 256,
+        "scale": "lin",
+        "min": 0.0
+    },
+    "Y pixel": {
+        "n_bins_1d": 256.0,
+        "max": 256.0,
+        "n_bins_2d": 256,
+        "scale": "lin",
+        "min": 0.0
+    },
+    "Total count rate green + red": {
+        "n_bins_1d": 81.0,
+        "max": 1000.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
+    },
+    "Sr/Sg": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
+    },
+    "Sg/Sr(PIE)": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
+    },
+    "Sg": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
+    },
+    "Sr": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
+    },
+    "Sg(PIE)": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
+    },
+    "Sr(PIE)": {
+        "n_bins_1d": 81.0,
+        "max": 500.0,
+        "n_bins_2d": 31,
+        "scale": "log",
+        "min": 0.1
     }
 }

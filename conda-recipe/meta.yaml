@@ -1,9 +1,12 @@
-{% set data = load_setup_py_data(setup_file='../setup.py', from_recipe_dir=True) %}
+{% set pyproject = load_file_data('../pyproject.toml', from_recipe_dir=True) %}
+{% set project = pyproject.get('project', {}) %}
+{% set scripts = project.get('scripts', {}) %}
+{% set gui_scripts = project.get('gui-scripts', {}) %}
 
 
 package:
-  name: {{ data.get('name')|lower }}
-  version: {{ data.get('version')|lower }}
+  name: {{ project.get('name')|lower }}
+  version: {{ project.get('version') }}
 
 source:
   path: ..
@@ -11,11 +14,14 @@ source:
 build:
     number: 0
     entry_points:
-      {% for entry_point_type, entry_points in data.get("entry_points", dict()).items() -%}
-      {% for entry_point in entry_points -%}
-      - {{ entry_point }}
+      {% for name, entry in scripts.items() -%}
+      - {{ name }} = {{ entry }}
+      {% endfor -%}
+      {% for name, entry in gui_scripts.items() -%}
+      - {{ name }} = {{ entry }}
       {% endfor %}
-      {% endfor %}
+    script:
+      - python -m pip install . --no-deps --ignore-installed -vv
 
 requirements:
   host:
@@ -24,6 +30,7 @@ requirements:
     - pyyaml
     - setuptools
     - numpy
+    - toml
   run:
     - python
     - pyqt
@@ -33,11 +40,13 @@ requirements:
     - pandas
     - pyqtgraph
     - typing-extensions
-    - qscintilla2
     - matplotlib
     - scipy
     - guidata 3.0.*
     - guiqwt
+    - umap-learn
+    - pyarrow
+    - boost-histogram
 
 test:
   imports:
@@ -46,13 +55,12 @@ test:
     - ndxplorer &        # [linux]
 
 about:
-  home: {{ data.get('url') }}
-  license: {{ data.get('license') }}
+  home: {{ project.get('urls', {}).get('Homepage', '') }}
+  license: {{ project.get('license', {}).get('text', '') }}
   license_file: LICENSE
-  summary:
-    {{ data.get('description') }}
+  summary: "{{ project.get('description') }}"
   description: |
-    {{ data.get('description') }}
+    {{ project.get('description') }}
 
 extra:
   recipe-maintainers:

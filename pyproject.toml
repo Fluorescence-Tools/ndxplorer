@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ndxplorer"
+version = "1.0.0"
+description = "ndXplorer: Multi-parameter fluorescence data analysis tool"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "GPL-2.1"}
+authors = [
+    {name = "Thomas-Otavio Peulen", email = "thomas@peulen.xyz"}
+]
+keywords = ["fluorescence", "single-molecule", "spectroscopy", "data-analysis"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Natural Language :: English",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "qtpy",
+    "PyQt5",
+    "pyqtgraph",
+    "tables",
+    "PyYAML",
+    "pyarrow>=10.0.0",
+    "pandas>=1.5.0",
+    "click>=8.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Fluorescence-Tools/ndxplorer"
+Repository = "https://github.com/Fluorescence-Tools/ndxplorer"
+"Bug Tracker" = "https://github.com/Fluorescence-Tools/ndxplorer/issues"
+
+[project.scripts]
+ndxplorer = "ndxplorer.__main__:main"
+
+[project.gui-scripts]
+ndxplorer-gui = "ndxplorer.__main__:main"
+
+[tool.setuptools]
+zip-safe = false
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["ndxplorer*"]
+
+[tool.setuptools.package-data]
+"ndxplorer" = [
+    "*.json", "*.yaml",
+    "*.ui", "*.css", "*.qss",
+    "*.png", "*.svg",
+    "*.csv", "*.npy", "*.dat",
+    "*.dll", "*.so", "*.pyd",
+    "*.txt"
+]
+"ndxplorer.plotting" = ["*.ui"]
+"ndxplorer.ui" = ["*.ui", "*.qrc", "*.png", "*.svg"]
+"ndxplorer.settings" = ["*.json", "*.yaml"]
+"ndxplorer.settings.templates" = ["*"]
