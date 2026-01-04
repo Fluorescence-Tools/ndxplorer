@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>899</width>
-    <height>627</height>
+    <width>900</width>
+    <height>630</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -470,7 +470,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>899</width>
+     <width>900</width>
      <height>21</height>
     </rect>
    </property>
@@ -510,7 +510,6 @@
     <property name="title">
      <string>Settings</string>
     </property>
-    <addaction name="actionPerformanceSettings"/>
     <widget class="QMenu" name="menuSave_settings">
      <property name="title">
       <string>Save settings</string>
@@ -519,6 +518,7 @@
      <addaction name="actionConstants"/>
      <addaction name="actionEquations"/>
     </widget>
+    <addaction name="actionPerformanceSettings"/>
     <addaction name="actionLoad_settings"/>
     <addaction name="menuSave_settings"/>
     <addaction name="actionSet_default_axis"/>
@@ -542,6 +542,7 @@
     </property>
     <addaction name="actionHelp"/>
     <addaction name="separator"/>
+    <addaction name="actionFix_Report_Tool"/>
     <addaction name="actionAbout"/>
     <addaction name="actionUpdate"/>
    </widget>
@@ -946,6 +947,11 @@
   <action name="actionMake_Report">
    <property name="text">
     <string>Make Report</string>
+   </property>
+  </action>
+  <action name="actionFix_Report_Tool">
+   <property name="text">
+    <string>Fix Report Tool</string>
    </property>
   </action>
   <action name="actionFit_Gaussians">
