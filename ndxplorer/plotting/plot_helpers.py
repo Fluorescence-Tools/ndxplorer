@@ -247,10 +247,13 @@ def configure_dynamic_selection_controls(ndxplorer: "NDXplorer") -> None:
 
 def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
     """Create the marginal histogram plots for X, Y and Z, replacing placeholders."""
+    logging.info("Setting up histogram plots")
+    
     if not GUIQWT_AVAILABLE:
         logging.warning("guiqwt not available, skipping histogram plot setup")
         return
     
+    logging.info("Creating Z marginal plot")
     win_z = CurveDialog()
     ndxplorer.g_zplot = win_z.get_plot()
     curveparam_z = guiqwt.styles.CurveParam("Curve", icon="curve.png")
@@ -269,6 +272,7 @@ def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
     )
     ndxplorer.g_zplot.setVisible(ndxplorer.groupBox_3.isChecked())
 
+    logging.info("Creating X marginal plot")
     win_x = CurveDialog()
     ndxplorer.g_xplot = win_x.get_plot()
     ndxplorer.g_xplot.enableAxis(QwtPlot.xBottom, False)
@@ -293,6 +297,7 @@ def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
         ndxplorer.g_xplot,
     )
 
+    logging.info("Creating Y marginal plot")
     win_y = CurveDialog()
     ndxplorer.g_yplot = win_y.get_plot()
     ndxplorer.g_yplot.enableAxis(QwtPlot.xBottom, False)
@@ -317,6 +322,7 @@ def setup_histogram_plots(ndxplorer: "NDXplorer") -> None:
         ndxplorer.g_yplot,
     )
 
+    logging.info("Configuring marginal plot canvases")
     for canvas in (
         ndxplorer.g_xplot.canvas(),
         ndxplorer.g_yplot.canvas(),
