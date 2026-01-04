@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from ndxplorer.export.api import save_selection
-from ndxplorer.utils.dataset_fixtures import (
+from ndxplorer.tests.fixtures.dataset_fixtures import (
     create_synthetic_selection_payload,
     write_fixture_bundle,
 )
