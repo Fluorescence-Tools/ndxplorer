@@ -440,6 +440,10 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self.actionClear_Selection.triggered.connect(self.onClearSelection)
         self.actionAdd_Selection.triggered.connect(self.onAddSelection)
         self.actionSave_Burst_IDs.triggered.connect(self.parent.onSaveBurstIDs)
+        
+        # Connect toolButtonClearSelection to clear selection action
+        if hasattr(self, 'toolButtonClearSelection'):
+            self.toolButtonClearSelection.clicked.connect(self.onClearSelection)
 
         # Change axis range
         if PYQTGRAPH_AVAILABLE and SpinBox is not None:
@@ -748,16 +752,22 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
 
     def _on_normalize_changed(self):
         """Handle normalization (density) checkbox changes."""
-        logging.log(0, "Normalization changed - clearing caches and recomputing histograms")
+        logging.log(0, "Normalization changed - clearing all caches and triggering full plot update")
         
-        # Clear histogram caches to force recomputation with new normalization settings
+        # Clear all caches to force fresh computation with new normalization settings
         self.clear_frame_histogram_cache()
         self.clear_histogram_cache()
         
-        # Force histogram recomputation
-        self.parent.request_plot_update(skip_clustering=True)
+        # Clear any pending background computation to ensure immediate update
+        self._background_computation_pending = False
         
-        logging.log(0, "Normalization change handled - histograms recomputed")
+        # Trigger full update like the main update button
+        self.parent.update_plots()
+        
+        # Add another update click at the end to ensure final refresh
+        QtCore.QTimer.singleShot(50, lambda: self.parent.update_plots())
+        
+        logging.log(0, "Normalization change handled - full plot update triggered with final refresh")
 
     def update_axis_scales(self):
         """Update all axis scales based on current settings and refresh plots"""
@@ -772,18 +782,24 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         # Set z-plot axes
         self.parent.g_zplot.set_axis_scale("bottom", self.scale_z)
 
-        # CRITICAL: Log scale changes require histogram recomputation
-        # because the binning and data representation changes with scale
-        logging.log(0, "Axis scales updated - forcing histogram recomputation for log scale changes")
+        # CRITICAL: Log scale changes require full plot update like the main update button
+        # because the binning, data representation, and axes all change with scale
+        logging.log(0, "Axis scales updated - clearing all caches and triggering full plot update for log scale changes")
         
-        # Clear histogram caches to force recomputation with new scale settings
+        # Clear all caches to force fresh computation with new scale settings
         self.clear_frame_histogram_cache()
         self.clear_histogram_cache()
         
-        # Force histogram recomputation
-        self.parent.request_plot_update(skip_clustering=True)
+        # Clear any pending background computation to ensure immediate update
+        self._background_computation_pending = False
         
-        logging.log(0, "Axis scales updated and histograms recomputed")
+        # Trigger full update like the main update button
+        self.parent.update_plots()
+        
+        # Add another update click at the end to ensure final refresh
+        QtCore.QTimer.singleShot(50, lambda: self.parent.update_plots())
+        
+        logging.log(0, "Axis scales updated and full plot update triggered with final refresh")
 
     # Keep the old method name for backward compatibility
     onUpdate_axis_scales = update_axis_scales
@@ -890,6 +906,19 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self.parent._preserve_contrast = True
         self.parent.request_plot_update(skip_clustering=True)
         self.parent._preserve_contrast = False
+        
+        # Add delayed marginal plot update to ensure proper rendering
+        QtCore.QTimer.singleShot(100, self._delayed_marginal_update_after_clear)
+
+    def _delayed_marginal_update_after_clear(self):
+        """Delayed update of marginal plots after clearing selections."""
+        try:
+            # Import the marginal update function
+            from .plot_update_helpers import _update_marginal_plots_from_cache
+            _update_marginal_plots_from_cache(self.parent)
+            logging.log(0, "Delayed marginal plot update completed after clear selection")
+        except Exception as e:
+            logging.warning(f"Failed to update marginal plots after clear selection: {e}")
 
     def onSave_selection(self):
         logging.log(0, "onSave_selection")
