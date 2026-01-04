@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover - optional dep
 
 hdbscan = _hdbscan
 
+from ..utils.performance import compute_percentile_range_optimized
 
 def _compute_selection_hash(selections):
     """Compute a hash of current selections for cache validation."""
@@ -61,9 +62,15 @@ def _compute_selection_hash(selections):
 def update_histograms(ndxplorer) -> None:
     logging.info("update_histograms called")
     
-    # Skip if data is being loaded - wait for image detection to complete
-    if getattr(ndxplorer.plot_control, '_loading_data', False):
-        logging.info("Skipping update_histograms: data loading in progress")
+    # Enhanced data loading check with multiple flags
+    loading_flags = [
+        getattr(ndxplorer.plot_control, '_loading_data', False),
+        getattr(ndxplorer, '_loading_data', False),
+        getattr(ndxplorer.plot_control, '_background_computation_pending', False)
+    ]
+    
+    if any(loading_flags):
+        logging.info("Skipping update_histograms: data loading or computation in progress (flags=%s)", loading_flags)
         return
     
     data_ready = ndxplorer.is_data_ready()
@@ -271,13 +278,37 @@ def _update_histograms_immediate(ndxplorer) -> None:
 
 def _update_marginal_plots_from_cache(ndxplorer) -> None:
     """Update marginal distribution plots from cached histogram data."""
+    logging.info("Starting marginal plot update")
+    
     # Check if deferred init is done and plot objects exist
     if not getattr(ndxplorer, "_deferred_init_done", False):
-        logging.debug("Skipping marginal plot update: deferred init not done yet")
+        logging.info("Skipping marginal plot update: deferred init not done yet")
+        # Try to trigger deferred init if not done
+        if hasattr(ndxplorer, '_deferred_init'):
+            try:
+                ndxplorer._deferred_init()
+                logging.info("Triggered deferred init from marginal plot update")
+                # Retry the update after init
+                if getattr(ndxplorer, "_deferred_init_done", False):
+                    logging.info("Deferred init completed, retrying marginal plot update")
+                    return _update_marginal_plots_from_cache(ndxplorer)
+            except Exception as e:
+                logging.warning(f"Failed to trigger deferred init: {e}")
         return
     
-    if not hasattr(ndxplorer, 'g_xhist_m') or ndxplorer.g_xhist_m is None:
-        logging.debug("Skipping marginal plot update: g_xhist_m not initialized")
+    # Check if marginal plot objects exist
+    has_x_plot = hasattr(ndxplorer, 'g_xplot') and ndxplorer.g_xplot is not None
+    has_y_plot = hasattr(ndxplorer, 'g_yplot') and ndxplorer.g_yplot is not None
+    has_z_plot = hasattr(ndxplorer, 'g_zplot') and ndxplorer.g_zplot is not None
+    has_x_hist = hasattr(ndxplorer, 'g_xhist_m') and ndxplorer.g_xhist_m is not None
+    has_y_hist = hasattr(ndxplorer, 'g_yhist_m') and ndxplorer.g_yhist_m is not None
+    has_z_hist = hasattr(ndxplorer, 'g_zhist_m') and ndxplorer.g_zhist_m is not None
+    
+    logging.info(f"Marginal plot objects: x_plot={has_x_plot}, y_plot={has_y_plot}, z_plot={has_z_plot}")
+    logging.info(f"Marginal hist objects: x_hist={has_x_hist}, y_hist={has_y_hist}, z_hist={has_z_hist}")
+    
+    if not has_x_hist or not has_y_hist:
+        logging.warning("Missing marginal histogram objects - cannot update marginals")
         return
     
     try:
@@ -364,6 +395,18 @@ def _update_marginal_plots_from_cache(ndxplorer) -> None:
         ndxplorer.g_yplot.replot()
         if hasattr(ndxplorer, "g_zplot"):
             ndxplorer.g_zplot.replot()
+        
+        # Ensure marginal plots are visible
+        try:
+            if hasattr(ndxplorer, 'g_xplot') and ndxplorer.g_xplot:
+                ndxplorer.g_xplot.setVisible(True)
+            if hasattr(ndxplorer, 'g_yplot') and ndxplorer.g_yplot:
+                ndxplorer.g_yplot.setVisible(True)
+            if hasattr(ndxplorer, 'g_zplot') and ndxplorer.g_zplot:
+                ndxplorer.g_zplot.setVisible(ndxplorer.groupBox_3.isChecked() if hasattr(ndxplorer, 'groupBox_3') else True)
+            logging.debug("Ensured marginal plots are visible")
+        except Exception as e:
+            logging.warning(f"Failed to ensure marginal plots visibility: {e}")
             
     except Exception as e:
         logging.warning(f"Error updating marginal plots from cache: {e}")
@@ -518,6 +561,25 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
     except Exception as e:
         logging.debug(f"Could not make plot container visible: {e}")
 
+    # Force marginal plots to be visible after data is ready
+    try:
+        if hasattr(ndxplorer, 'g_xplot') and ndxplorer.g_xplot:
+            ndxplorer.g_xplot.setVisible(True)
+            ndxplorer.g_xplot.raise_()
+            logging.info("Forced X marginal plot to be visible")
+        if hasattr(ndxplorer, 'g_yplot') and ndxplorer.g_yplot:
+            ndxplorer.g_yplot.setVisible(True)
+            ndxplorer.g_yplot.raise_()
+            logging.info("Forced Y marginal plot to be visible")
+        if hasattr(ndxplorer, 'g_zplot') and ndxplorer.g_zplot:
+            z_visible = ndxplorer.groupBox_3.isChecked() if hasattr(ndxplorer, 'groupBox_3') else True
+            ndxplorer.g_zplot.setVisible(z_visible)
+            if z_visible:
+                ndxplorer.g_zplot.raise_()
+            logging.info(f"Forced Z marginal plot visibility: {z_visible}")
+    except Exception as e:
+        logging.warning(f"Failed to force marginal plots visibility: {e}")
+
     # Check if histograms were successfully computed
     x_hist = ndxplorer._histogram.get("x")
     y_hist = ndxplorer._histogram.get("y")
@@ -579,6 +641,26 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
     ndxplorer.update_spinbox_limits()
     ndxplorer.update_2d_plot()
     ndxplorer.g_2dplot.replot()
+
+    # Final check: ensure marginal plots are still visible and updated
+    try:
+        if hasattr(ndxplorer, 'g_xplot') and ndxplorer.g_xplot:
+            ndxplorer.g_xplot.setVisible(True)
+            ndxplorer.g_xplot.raise_()
+            ndxplorer.g_xplot.replot()
+        if hasattr(ndxplorer, 'g_yplot') and ndxplorer.g_yplot:
+            ndxplorer.g_yplot.setVisible(True)
+            ndxplorer.g_yplot.raise_()
+            ndxplorer.g_yplot.replot()
+        if hasattr(ndxplorer, 'g_zplot') and ndxplorer.g_zplot:
+            z_visible = ndxplorer.groupBox_3.isChecked() if hasattr(ndxplorer, 'groupBox_3') else True
+            ndxplorer.g_zplot.setVisible(z_visible)
+            if z_visible:
+                ndxplorer.g_zplot.raise_()
+                ndxplorer.g_zplot.replot()
+        logging.info("Final marginal plot visibility and replot completed")
+    except Exception as e:
+        logging.warning(f"Failed in final marginal plot update: {e}")
 
 
 def _show_empty_plots(ndxplorer):
@@ -671,9 +753,7 @@ def auto_contrast(ndxplorer: "NDXplorer", skip_if_preserve: bool = True):
 
         non_zero_values = hist_processed[hist_processed > 0]
         if non_zero_values.size > 0:
-            vmin = np.percentile(non_zero_values, 1)
-            vmax = np.percentile(non_zero_values, 99)
-
+            vmin, vmax = compute_percentile_range_optimized(non_zero_values, 1, 99)
             if vmin == vmax:
                 vmin = 0.9 * vmin if vmin != 0 else 0
                 vmax = 1.1 * vmax if vmax != 0 else 1
@@ -735,8 +815,7 @@ def update_spinbox_limits(ndxplorer, low_pct: float = 0.1, high_pct: float = 99)
             return
         data = np.log10(data)
 
-    vmin = np.percentile(data, low_pct) if data.size >= 2 else float(np.min(data))
-    vmax = np.percentile(data, high_pct) if data.size >= 2 else float(np.max(data))
+    vmin, vmax = compute_percentile_range_optimized(data, low_pct, high_pct)
     if ndxplorer.checkBoxLogCounts.isChecked():
         vmin = 10 ** vmin
         vmax = 10 ** vmax

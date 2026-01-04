@@ -72,19 +72,19 @@ class BitfieldMask:
     def set_bit(self, index: int, value: bool = True) -> None:
         """Set bit at index to value."""
         bits_per_word = self._dtype.itemsize * 8
-        word_idx = index // bits_per_word
-        bit_idx = index % bits_per_word
+        word_idx = int(index // bits_per_word)
+        bit_idx = int(index % bits_per_word)
         if value:
-            self._data[word_idx] |= (1 << bit_idx)
+            self._data[word_idx] = int(self._data[word_idx]) | (1 << bit_idx)
         else:
-            self._data[word_idx] &= ~(1 << bit_idx)
+            self._data[word_idx] = int(self._data[word_idx]) & ~(1 << bit_idx)
     
     def get_bit(self, index: int) -> bool:
         """Get bit at index."""
         bits_per_word = self._dtype.itemsize * 8
-        word_idx = index // bits_per_word
-        bit_idx = index % bits_per_word
-        return bool((self._data[word_idx] >> bit_idx) & 1)
+        word_idx = int(index // bits_per_word)
+        bit_idx = int(index % bits_per_word)
+        return bool((int(self._data[word_idx]) >> bit_idx) & 1)
     
     def to_boolean(self) -> np.ndarray:
         """Convert to standard numpy boolean array."""
