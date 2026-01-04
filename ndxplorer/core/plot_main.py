@@ -524,6 +524,9 @@ class NDXplorer(QtWidgets.QMainWindow):
     ) -> None:
         super(NDXplorer, self).__init__(parent=parent)
         
+        # Set default window size
+        self.resize(900, 630)
+        
 
         # Store init params for deferred initialization
         self._init_cmap = cmap
@@ -553,6 +556,9 @@ class NDXplorer(QtWidgets.QMainWindow):
         self._plot_stack_widget = None
         self._background_label = None
         self._plot_container = None
+        
+        # Track active background load threads to prevent premature deletion
+        self._active_load_threads = []
         
         # Backward compatibility: old data source properties
         self._data_source = DataSource()
@@ -617,6 +623,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # Report tool
         self.actionMake_Report.triggered.connect(self.onShowReportWizard)
+        self.actionFix_Report_Tool.triggered.connect(self.onShowFixReportTool)
 
         # Enable drag & drop on working path line edit
         try:
@@ -669,17 +676,136 @@ class NDXplorer(QtWidgets.QMainWindow):
         # This makes the window appear faster
         QtCore.QTimer.singleShot(0, self._deferred_init)
 
+    def _run_data_load_task(self, description: str, load_callable, append: bool, merge_mode: str) -> None:
+        """
+        Run data loading task asynchronously using the async loader framework.
+        
+        Parameters
+        ----------
+        description : str
+            Description of the loading task for progress display.
+        load_callable : callable
+            Function that performs the actual data loading and returns a DataSource.
+        append : bool
+            Whether to append data or replace.
+        merge_mode : str
+            How to merge data if appending.
+        """
+        from ..io import file_operations
+        
+        def on_success(data_source):
+            file_operations._finalize_loaded_data(self, data_source, append, merge_mode)
+        
+        def on_error(msg):
+            logging.error(f"Async data load failed: {msg}")
+            # Could show error dialog here
+            QtWidgets.QMessageBox.critical(
+                self, "Data Load Error", 
+                f"Failed to load data: {msg}"
+            )
+        
+        # Create async task using the DataLoadTask framework
+        task = reader.DataLoadTask(
+            description=description,
+            load_callable=load_callable,
+            on_success=on_success,
+            on_error=on_error,
+        )
+        
+        # Since we're in GUI thread, use DataLoadWorker with proper threading
+        worker = reader.DataLoadWorker(task)
+        thread = QtCore.QThread()
+        worker.moveToThread(thread)
+        
+        # Store references to prevent premature deletion
+        thread_ref = {'thread': thread, 'worker': worker, 'append': append, 'merge_mode': merge_mode}
+        self._active_load_threads.append(thread_ref)
+        
+        # Connect thread and worker signals
+        thread.started.connect(worker.run)
+        
+        def on_worker_finished(result):
+            """Handle worker completion in main thread."""
+            try:
+                logging.info("Async data load completed successfully")
+                on_success(result.data_source)
+            except Exception as e:
+                logging.error(f"Error in async load success callback: {e}")
+                on_error(str(e))
+        
+        def on_worker_error(error_msg):
+            """Handle worker error in main thread."""
+            logging.error(f"Async data load failed: {error_msg}")
+            on_error(error_msg)
+        
+        # Use lambda to emit signals that will be queued to main thread
+        worker.finished.connect(lambda result: QtCore.QMetaObject.invokeMethod(
+            self, "_handle_async_load_success", 
+            QtCore.Qt.QueuedConnection,
+            QtCore.Q_ARG(object, result),
+            QtCore.Q_ARG(object, thread_ref)
+        ))
+        worker.error.connect(lambda msg: QtCore.QMetaObject.invokeMethod(
+            self, "_handle_async_load_error", 
+            QtCore.Qt.QueuedConnection,
+            QtCore.Q_ARG(str, msg)
+        ))
+        
+        def cleanup_thread():
+            """Remove from active threads and delete objects."""
+            if thread_ref in self._active_load_threads:
+                self._active_load_threads.remove(thread_ref)
+            thread.deleteLater()
+            worker.deleteLater()
+        
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(cleanup_thread)
+        
+        thread.start()
+
+    @QtCore.Slot(object, object)
+    def _handle_async_load_success(self, result, thread_ref):
+        """Handle successful async data load in main thread."""
+        try:
+            logging.info("Async data load completed successfully in main thread")
+            # The result is DataLoadResult, get the data_source
+            data_source = result.data_source
+            # Get append and merge_mode from thread_ref
+            append = thread_ref.get('append', False)
+            merge_mode = thread_ref.get('merge_mode', 'columns')
+            # Call _finalize_loaded_data with correct parameters
+            from ..io import file_operations
+            file_operations._finalize_loaded_data(self, data_source, append, merge_mode)
+        except Exception as e:
+            logging.error(f"Error handling async load success: {e}")
+
+    @QtCore.Slot(str)
+    def _handle_async_load_error(self, error_msg):
+        """Handle async data load error in main thread."""
+        logging.error(f"Async data load failed in main thread: {error_msg}")
+        QtWidgets.QMessageBox.critical(
+            self, "Data Load Error", 
+            f"Failed to load data: {error_msg}"
+        )
+
     def _deferred_init(self):
         """Deferred initialization of heavy plot widgets for faster window appearance."""
+        logging.info("Starting deferred initialization")
         if self._deferred_init_done:
+            logging.info("Deferred init already done, skipping")
             return
         self._deferred_init_done = True
+        logging.info("Set deferred_init_done = True")
 
         cmap = self._init_cmap
         settings_json_fn = self._init_settings_json_fn
 
+        logging.info("Setting up histogram plots")
         setup_histogram_plots(self)
+        logging.info("Setting up 2D histogram plot")
         setup_2d_histogram_plot(self, cmap)
+        logging.info("Setting up overlay plot")
         setup_overlay_plot(self)
         # Keep the NDxplorer splash/background visible until real data arrives
         plot_update_helpers._show_background(self)
@@ -920,64 +1046,23 @@ class NDXplorer(QtWidgets.QMainWindow):
             logging.info(f"  Y param: {y_param} (idx={y_idx_param})")
             logging.info(f"  Mask pixels set: {np.count_nonzero(binary_mask)}/{binary_mask.size}")
 
-            # Remove any existing mask selections for the same parameters to avoid conflicts
-            # This prevents old masks from accumulating and interfering with new ones
-            existing_mask_selections = []
-            for i, sel in enumerate(self.plot_control._selections):
-                if isinstance(sel, MaskDataSelection) and sel.idx1 == x_idx_param and sel.idx2 == y_idx_param:
-                    existing_mask_selections.append(i)
-            
-            # Remove from internal list (in reverse to maintain indices)
-            for idx in reversed(existing_mask_selections):
-                removed = self.plot_control._selections.pop(idx)
-                logging.info(f"  Removed existing mask selection: {removed.name} (id={removed.selection_id})")
-            
-            # Remove from UI table
-            table = self.plot_control.tableWidget
-            rows_to_remove = []
-            for row in range(table.rowCount()):
-                item0 = table.item(row, 0)
-                if item0:
-                    # Check if this is a mask selection by metadata or text
-                    meta = None
-                    try:
-                        for role in [QtCore.Qt.UserRole, 32, QtCore.Qt.UserRole + 10]:
-                            meta_raw = item0.data(role)
-                            if meta_raw:
-                                try:
-                                    if isinstance(meta_raw, dict):
-                                        meta = meta_raw
-                                    else:
-                                        meta = json.loads(str(meta_raw))
-                                    if meta and isinstance(meta, dict) and "type" in meta:
-                                        break
-                                except Exception:
-                                    continue
-                    except Exception:
-                        pass
-                    
-                    is_mask = False
-                    if meta and meta.get("type") == "Mask":
-                        is_mask = True
-                    elif "Bitmap" in table.item(row, 1).text() if table.item(row, 1) else False:
-                        is_mask = True
-                    
-                    if is_mask:
-                        rows_to_remove.append(row)
-            
-            # Remove rows in reverse order
-            for row in reversed(rows_to_remove):
-                table.removeRow(row)
-                logging.info(f"  Removed mask selection UI row {row}")
+            # Note: We now support multiple bitmap selections, so we don't remove existing ones
+            # Each bitmap selection will be added as a separate selection item
 
             # 1. Create the actual selection object first
+            # Generate a unique name for multiple bitmap selections
+            existing_mask_count = sum(1 for sel in self.plot_control._selections 
+                                    if isinstance(sel, MaskDataSelection) and sel.idx1 == x_idx_param and sel.idx2 == y_idx_param)
+            mask_number = existing_mask_count + 1
+            selection_name = f"Bitmap {mask_number} ({x_param}, {y_param})"
+            
             selection = MaskDataSelection(
                 idx1=x_idx_param,
                 idx2=y_idx_param,
                 mask=binary_mask,
                 edges1=xedges,
                 edges2=yedges,
-                name=f"Mask ({x_param}, {y_param})"
+                name=selection_name
             )
             
             logging.info(f"  Created MaskDataSelection with id={selection.selection_id}")
@@ -1197,11 +1282,21 @@ class NDXplorer(QtWidgets.QMainWindow):
         """Open the Report Tool dialog."""
         logging.debug(f"onShowReportWizard")
         try:
-            from .report_tool import ReportWizard
+            from ndxplorer.report_tool import ReportWizard
             dlg = ReportWizard(parent=self)
             dlg.exec_()
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Report Tool Error", str(e))
+            
+    def onShowFixReportTool(self):
+        """Open the Fix Report Tool dialog."""
+        logging.debug(f"onShowFixReportTool")
+        try:
+            from ..fix_report_tool import FixReportTool
+            dlg = FixReportTool(parent=self)
+            dlg.exec_()
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Fix Report Tool Error", str(e))
 
     def on_take_screenshot(self):
         screenshot_helpers.take_screenshot(self)
@@ -1823,7 +1918,13 @@ class NDXplorer(QtWidgets.QMainWindow):
         This method is called periodically by a timer.
         """
         logging.debug("check_z_range_changes()")
+        # Only apply Z-range filtering when Z axis is enabled
+        z_enabled = hasattr(self, 'groupBox_3') and self.groupBox_3.isChecked()
         if not self._dynamic_selection or not hasattr(self, 'selection_z'):
+            return
+        
+        # If Z axis is disabled, don't apply Z-range filtering
+        if not z_enabled:
             return
 
         # Get the current Z selection range
@@ -1916,13 +2017,17 @@ class NDXplorer(QtWidgets.QMainWindow):
     def on_dynamic_selection_changed(self, state):
         """
         Handle changes to the dynamic selection checkbox.
+        Applies dynamic selection for X/Y histograms regardless of Z axis state,
+        but Z-range filtering only applies when Z axis is enabled.
 
         Args:
             state: The new state of the checkbox (Qt.Checked or Qt.Unchecked)
         """
         logging.debug(f"on_dynamic_selection_changed(state={state})")
+        
         self._dynamic_selection = bool(state)
         # Update histograms to reflect the new selection state
+        # Z-range filtering will be handled in the histogram computation logic
         self.update_histograms()
         # Update plots to display the new histograms
         self.update_plots(skip_clustering=True)
@@ -1930,14 +2035,21 @@ class NDXplorer(QtWidgets.QMainWindow):
     def on_dynamic_selection_toggled(self, checked: bool):
         """
         Enable/disable periodic Z-range change checks based on the dynamic selection toggle.
-        Only connects the timer to check_z_range_changes when enabled.
+        Only connects the timer to check_z_range_changes when enabled and Z axis is enabled.
 
         Args:
             checked: True if dynamic selection is enabled, False otherwise.
         """
         logging.debug(f"on_dynamic_selection_toggled(checked={checked})")
+        
+        # Only enable timer if both dynamic selection is checked AND Z axis is enabled
+        z_enabled = hasattr(self, 'groupBox_3') and self.groupBox_3.isChecked()
+        effective_checked = checked and z_enabled
+        
+        logging.debug(f"Effective timer state: {effective_checked} (dynamic: {checked}, z_enabled: {z_enabled})")
+        
         try:
-            if checked:
+            if effective_checked:
                 # Ensure the timer is connected once
                 if not getattr(self, '_z_timer_connected', False):
                     try:
