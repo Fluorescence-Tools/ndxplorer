@@ -93,7 +93,7 @@ def save_burst_ids(ndxplorer, folder: Optional[str] = None) -> None:
 
     if do_corr:
         try:
-            from chisurf.plugins.fcs_correlator.wizard import ChisurfFCSWizard
+            from chisurf.plugins.fcs.fcs_correlator.wizard import ChisurfFCSWizard
 
             root = Path(folder)
             bst_files = set()
