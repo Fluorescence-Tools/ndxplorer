@@ -569,32 +569,55 @@ def _process_burst_analysis_dir(
 
 
 def read_csv_sampling(filenames: List[str], sep: str = '\t') -> DataSource:
+    """
+    Read ChiSurf sampling files (.er4).
+    Multiple files (chains) are concatenated by rows to form a single distribution.
+    """
     if not filenames:
         return DataSource()
 
-    with open(filenames[0], "r", encoding="utf-8", errors="ignore") as fp:
-        pn = fp.readline().rstrip("\n").split("\t")
+    dfs = []
+    for fn in filenames:
+        try:
+            # ER4 files are tab-separated text files
+            df = pd.read_csv(fn, sep=sep, header=0, comment=None)
+            # Normalize column names (strip whitespace and leading #)
+            df.columns = [str(c).strip().lstrip('#').strip() for c in df.columns]
+            dfs.append(df)
+        except Exception as e:
+            logging.warning(f"Could not read sampling file {fn}: {e}")
 
-    base_df = pd.read_csv(filenames[0], sep=sep)
-    row_count = len(base_df)
+    if not dfs:
+        return DataSource()
 
-    if len(filenames) == 1:
-        return DataSource(data=base_df, parameter_names=pn)
+    # Concatenate all chains by rows (stacking samples)
+    combined_df = pd.concat(dfs, axis=0, ignore_index=True)
+    
+    # Ensure all columns are numeric (non-numeric become NaN)
+    combined_df = _best_effort_numeric(combined_df)
+    combined_df = _fill_missing(combined_df, FILL_MISSING_VALUE)
+    
+    return DataSource(data=combined_df)
 
-    combined_df = base_df.copy()
-    for fn in filenames[1:]:
-        df = pd.read_csv(fn, sep=sep)
-        if len(df) != row_count:
-            _safe_warning(
-                "Row Count Mismatch",
-                f"File {fn} has {len(df)} rows, expected {row_count}. Skipping."
-            )
-            continue
-        dup = set(combined_df.columns).intersection(df.columns)
-        df_unique = df.drop(columns=list(dup)) if dup else df
-        combined_df = pd.concat([combined_df, df_unique], axis=1)
 
-    return DataSource(data=combined_df, parameter_names=pn)
+def read_sampling_folder(path: str) -> DataSource:
+    """
+    Read a ChiSurf sampling folder. 
+    It expects a 'chains/' subfolder containing .er4 files.
+    """
+    p = pathlib.Path(path)
+    chains_dir = p / "chains"
+    
+    if not chains_dir.is_dir():
+        # Fallback: look for .er4 files in the folder itself
+        chains_dir = p
+        
+    er4_files = sorted(list(chains_dir.glob("*.er4")))
+    if not er4_files:
+        logging.warning(f"No .er4 files found in {chains_dir}")
+        return DataSource()
+
+    return read_csv_sampling([str(f) for f in er4_files])
 
 
 def read_mfd_hdf5(filenames: List[str]) -> DataSource:

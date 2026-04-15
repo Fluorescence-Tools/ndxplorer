@@ -71,10 +71,14 @@ class DataManager:
         logging.info(f"DataManager: Setting data source with {v.values.shape[1] if not v.empty else 0} data points")
         self._data_source = v
         self.cache.invalidate_all()
-        self._data_source.compute_columns(
-            constants=self.constants,
-            equations=self.equations
-        )
+        # Skip re-computation if already finalized in background
+        if not getattr(v, 'is_computed', False):
+            self._data_source.compute_columns(
+                constants=self.constants,
+                equations=self.equations
+            )
+        else:
+            logging.info("DataManager: Skipping re-computation, data source is already computed.")
         
     @property
     def is_empty(self) -> bool:
