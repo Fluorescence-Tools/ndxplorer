@@ -24,7 +24,7 @@ def install_working_path_drop(ndxplorer) -> None:
                 urls = mime.urls()
                 if urls:
                     path = Path(urls[0].toLocalFile())
-                    if path.exists() and (path.is_dir() or path.suffix.lower() in (".h5", ".hdf5", ".csv")):
+                    if path.exists() and (path.is_dir() or path.suffix.lower() in (".h5", ".hdf5", ".csv", ".er4")):
                         event.acceptProposedAction()
                         return
             event.ignore()
@@ -59,7 +59,16 @@ def install_working_path_drop(ndxplorer) -> None:
 
             files = [p for p in paths if p.exists() and p.is_file()]
             csvs = [str(p) for p in files if p.suffix.lower() == ".csv"]
+            er4s = [str(p) for p in files if p.suffix.lower() == ".er4"]
             h5s = [str(p) for p in files if p.suffix.lower() in (".h5", ".hdf5")]
+
+            if er4s:
+                event.acceptProposedAction()
+                try:
+                    ndxplorer.onOpenChiSurfSampling(filenames=er4s, append=False, merge_mode="columns")
+                except Exception as exc:
+                    logging.error("Failed to open .er4 from drop: %s", exc)
+                return
 
             if csvs:
                 event.acceptProposedAction()

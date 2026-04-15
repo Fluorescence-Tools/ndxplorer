@@ -299,12 +299,13 @@ def resolve_weights(ndxplorer: "NDXplorer", use_weights: bool, d1) -> Optional[n
     """Return weight array matching d1 length or None (float32 for memory efficiency)."""
     if not use_weights:
         return None
-    weight_param = ndxplorer.comboBoxWeight.currentText()
-    weight_idx = -1
-    if ndxplorer._data_source is not None and hasattr(ndxplorer._data_source, "parameter_names"):
-        param_names = ndxplorer._data_source.parameter_names
+    # Use the same data source as x_values and y_values to ensure consistency
+    data_source = ndxplorer.data_source
+    if data_source is not None and hasattr(data_source, "parameter_names"):
+        param_names = data_source.parameter_names
         if weight_param in param_names:
             weight_idx = param_names.index(weight_param)
+    
     if weight_idx < 0:
         logging.warning("Weight parameter '%s' not found in data source. Disabling weights.", weight_param)
         return None

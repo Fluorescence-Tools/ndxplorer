@@ -529,7 +529,12 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
         logging.info("update_plots: data/axes not ready, skipping histogram update")
 
     # Keep the NDxplorer background/logo visible whenever no usable data is present.
-    if getattr(ndxplorer, "_data_source", None) is None or getattr(ndxplorer._data_source, "empty", True):
+    # Use the public data_source accessor so data-manager-backed loads are handled correctly.
+    try:
+        ds_for_visibility = ndxplorer.data_source
+    except Exception:
+        ds_for_visibility = getattr(ndxplorer, "_data_source", None)
+    if ds_for_visibility is None or getattr(ds_for_visibility, "empty", True):
         if hasattr(ndxplorer, "_set_data_loaded"):
             ndxplorer._set_data_loaded(False)
         _show_background(ndxplorer)

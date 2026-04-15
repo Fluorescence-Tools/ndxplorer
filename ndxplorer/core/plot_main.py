@@ -1427,16 +1427,21 @@ class NDXplorer(QtWidgets.QMainWindow):
     def onOpenSmFRET(self, merge_mode: str = "columns"):
         open_smfret(self, merge_mode=merge_mode)
 
-    def update(self, *args, **kwargs):
-        logging.debug(f"update")
-        super(NDXplorer, self).update()
-        self.data_source.compute_columns(
-            constants=self.constants,
-            equations=self.equations
-        )
-        self.lineEditCountTotal.setText(str(self.data_source.size))
+    def update_ui_data(self, *args, **kwargs):
+        """
+        Refresh UI elements based on current data source, constants, and equations.
+        This includes re-computing columns and updating plots.
+        """
+        logging.debug(f"update_ui_data")
+        ds = self.data_source
+        if not getattr(ds, "is_computed", False):
+            ds.compute_columns(
+                constants=self.constants,
+                equations=self.equations
+            )
+        self.lineEditCountTotal.setText(str(ds.size))
         self.plot_control.update()  # plot_control.update() - also updates plots
-        # Keep UI enabled/disabled state in sync if someone calls update() directly
+        # Keep UI enabled/disabled state in sync
         try:
             self.update_ui_enabled_state()
         except Exception:
@@ -1453,7 +1458,9 @@ class NDXplorer(QtWidgets.QMainWindow):
         - When dataset present: enable everything.
         """
         try:
-            has_data = bool(getattr(self, "_data_source", None) is not None and not self._data_source.empty)
+            # Important: use public property to check BOTH internal field AND data_manager
+            ds = self.data_source
+            has_data = bool(ds is not None and not ds.empty)
         except Exception:
             has_data = False
 
