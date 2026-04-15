@@ -838,11 +838,17 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
             self.comboBoxSelZ.blockSignals(True)
             
             try:
-                # Only show columns that actually exist (computed successfully or present in the dataframe)
+                # Prefer dataframe columns, but fall back to parameter_names for loaders
+                # that provide names/values before a full dataframe-backed column map exists.
                 try:
                     pn = [str(c) for c in list(self.parent.data_source.data.columns)]
                 except Exception:
                     pn = []
+                if not pn:
+                    try:
+                        pn = [str(c) for c in list(self.parent.data_source.parameter_names)]
+                    except Exception:
+                        pn = []
                 self.comboBoxSelX.clear()
                 self.comboBoxSelY.clear()
                 self.comboBoxSelZ.clear()
@@ -1669,22 +1675,9 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self.checkBoxStackFrames.toggled.connect(self.on_frame_selection_changed)
         self.spinBoxFrameNumber.valueChanged.connect(self.on_frame_selection_changed)
         
-        # Make frame selection UI widgets visible
-        self.label_4.setVisible(True)  # "Frame" label
-        self.checkBoxStackFrames.setVisible(True)
-        self.spinBoxFrameNumber.setVisible(True)
-        self.labelFrameInfo.setVisible(True)
-        self.label_frame_nbr.setVisible(True)
-        
-        # Show playback controls if they exist
-        if hasattr(self, 'toolButtonStepBackward'):
-            self.toolButtonStepBackward.setVisible(True)
-        if hasattr(self, 'toolButtonPlayBackward'):
-            self.toolButtonPlayBackward.setVisible(True)
-        if hasattr(self, 'toolButtonPlayForward'):
-            self.toolButtonPlayForward.setVisible(True)
-        if hasattr(self, 'toolButtonStepForward'):
-            self.toolButtonStepForward.setVisible(True)
+        # Show image/frame controls as a single group for image datasets
+        if hasattr(self, 'groupBoxImage'):
+            self.groupBoxImage.setVisible(True)
         
         logging.info(f"Frame selection setup: {frame_param} with {n_frames} frames")
 
@@ -1694,9 +1687,15 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self._n_frames = 0
         self._frame_histogram_cache = {}
         self._stop_playback()
-        
-        # Don't hide any UI elements - keep everything visible for consistency
-        # Frame controls will remain visible but inactive when no frame stack is present
+
+        if hasattr(self, 'checkBoxStackFrames'):
+            self.checkBoxStackFrames.setChecked(True)
+        if hasattr(self, 'spinBoxFrameNumber'):
+            self.spinBoxFrameNumber.setValue(0)
+
+        # Hide image/frame controls as a single group for non-image datasets
+        if hasattr(self, 'groupBoxImage'):
+            self.groupBoxImage.setVisible(False)
 
     def on_frame_selection_changed(self):
         """Handle frame selection changes and trigger plot update."""

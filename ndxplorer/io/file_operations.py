@@ -17,7 +17,7 @@ if False:  # pragma: no cover - circular import safety for type checkers
 
 def _ensure_sequence(handles: Optional[Sequence[str]]) -> Sequence[str]:
     """Normalize Qt's return types (tuple/list) to a plain tuple."""
-    if handles is None:
+    if handles is None or isinstance(handles, bool):
         return ()
     if isinstance(handles, (list, tuple)):
         return tuple(handles)
@@ -59,42 +59,64 @@ def open_files(
 ) -> None:
     """Central entry point for all data-loading actions."""
     logging.info("NDXplorer: Opening files..")
-    logging.debug("File handles: %s", file_handles)
-    logging.debug("File type: %s", file_type)
-    logging.debug("Append mode: %s", append)
     logging.debug("Merge mode: %s", merge_mode)
+    
+    # Auto-detect sampling folder
+    file_handles_seq = _ensure_sequence(file_handles)
+    if not file_type and file_handles_seq and len(file_handles_seq) == 1:
+        p = Path(file_handles_seq[0])
+        if p.is_dir() and (p / "parameters.json").exists():
+            file_type = "sampling_folder"
 
     file_handles_seq = _ensure_sequence(file_handles)
     reader_input = file_handles_seq
     working_path = str(ndxplorer.working_path)
 
     # --- Sampling / ER4 ----------------------------------------------------
-    if file_type in {"cs_sampling", "er4"}:
+    if file_type == "cs_sampling":
+        if not file_handles_seq:
+            directory = QtWidgets.QFileDialog.getExistingDirectory(
+                ndxplorer, "Open sampling folder", working_path
+            )
+            file_handles_seq = (directory,) if directory else ()
+        
+        if file_handles_seq:
+            reader_input = str(file_handles_seq[0])
+            logging.info("Opening sampling folder: %s", reader_input)
+            data_reader = reader.read_sampling_folder
+            _update_working_path(ndxplorer, reader_input)
+        else:
+            reader_input = ()
+
+    elif file_type == "er4":
         if not file_handles_seq:
             file_handles_seq, _ = QtWidgets.QFileDialog.getOpenFileNames(
                 ndxplorer,
                 "ChiSurf sampling files",
                 working_path,
-                "Sampling files (*.*)",
+                "Sampling files (*.er4);;All files (*.*)",
             )
-        _update_working_path(ndxplorer, file_handles_seq[0] if file_handles_seq else None)
-        logging.info("Opening files (%s): %s", file_type, file_handles_seq)
-        data_reader = reader.read_csv_sampling
-
-    # --- Burst directories -------------------------------------------------
-    elif file_type == "burst_dir":
-        if not file_handles_seq:
-            directory = QtWidgets.QFileDialog.getExistingDirectory(
-                ndxplorer, "Open burst analysis folder", working_path
-            )
-            file_handles_seq = (directory,) if directory else ()
         if file_handles_seq:
-            selected_dir = file_handles_seq[0]
-            ndxplorer.working_path = str(selected_dir)
-            reader_input = selected_dir
+            _update_working_path(ndxplorer, file_handles_seq[0])
+            logging.info("Opening files (%s): %s", file_type, file_handles_seq)
+            data_reader = reader.read_csv_sampling
+            reader_input = file_handles_seq
         else:
             reader_input = ()
-        data_reader = reader.read_burst_analysis
+
+    # --- Sampling Folder (New Format) --------------------------------------
+    elif file_type == "sampling_folder":
+        if not file_handles_seq:
+            directory = QtWidgets.QFileDialog.getExistingDirectory(
+                ndxplorer, "Open sampling folder", working_path
+            )
+            file_handles_seq = (directory,) if directory else ()
+        
+        if file_handles_seq:
+            reader_input = file_handles_seq[0]
+            data_reader = reader.read_sampling_folder
+        else:
+            reader_input = ()
 
     # --- HDF5 / zipped HDF5 ------------------------------------------------
     elif file_type == "mfd_hdf5":
@@ -161,16 +183,35 @@ def open_files(
                 ndxplorer,
                 "Comma separated value files",
                 working_path,
-                "Text files (*.*)",
+                "Text files (*.csv *.dat *.er4 *.txt);;All files (*.*)",
             )
         _update_working_path(ndxplorer, file_handles_seq[0] if file_handles_seq else None)
-        data_reader = reader.read_csv
+        
+        # Auto-detect .er4 in generic loader
+        if any(str(f).lower().endswith(".er4") for f in file_handles_seq):
+            data_reader = reader.read_csv_sampling
+        else:
+            data_reader = reader.read_csv
+        reader_input = file_handles_seq
 
     if reader_input:
         logging.info("Opening files (%s): %s", file_type or "csv", file_handles_seq)
 
+        # Capture equations and constants to use in worker thread
+        # Important: do this BEFORE launching the thread to avoid main-thread access issues
+        equations = getattr(ndxplorer, "equations", [])
+        constants = getattr(ndxplorer, "constants", {})
+
         def load_callable():
-            return data_reader(reader_input)
+            # Perform initial raw data load
+            ds = data_reader(reader_input)
+            
+            # If successful and not empty, perform heavy column computations in background
+            if ds and not ds.empty:
+                logging.info(f"Background: Computing columns for {ds.size} rows")
+                ds.compute_columns(constants=constants, equations=equations)
+                logging.info("Background: Column computation complete.")
+            return ds
 
         _dispatch_data_load(
             ndxplorer,
@@ -262,7 +303,7 @@ def _finalize_loaded_data(
         else:
             # Normal data: use the setter which calls compute_columns
             ndxplorer.data_source = data_source
-            ndxplorer.update()
+            ndxplorer.update_ui_data()
         
         # Apply image settings if detected in raw data
         if has_image_data and image_dims:
@@ -279,11 +320,12 @@ def _finalize_loaded_data(
             try:
                 raw_param_names = list(data_source.parameter_names)
                 logging.info(f"Including {len(raw_param_names)} raw parameter names in combo boxes")
-            except:
+            except Exception:
                 pass
         
-        # After compute_columns, get the computed parameter names
-        computed_param_names = list(ndxplorer._data_source.parameter_names) if hasattr(ndxplorer, '_data_source') and ndxplorer._data_source else []
+        # After compute_columns, get the computed parameter names from the public data_source
+        active_ds = ndxplorer.data_source
+        computed_param_names = list(active_ds.parameter_names) if active_ds and not active_ds.empty else []
         
         # Combine raw and computed, preserving order and removing duplicates
         all_param_names = []
@@ -293,24 +335,26 @@ def _finalize_loaded_data(
                 all_param_names.append(name)
                 seen.add(name)
         
-        logging.info(f"Populating combo boxes with {len(all_param_names)} total parameters")
-        
-        for combo in [ndxplorer.plot_control.comboBoxSelX, 
-                      ndxplorer.plot_control.comboBoxSelY,
-                      ndxplorer.plot_control.comboBoxSelZ]:
-            combo.blockSignals(True)
-            combo.clear()
-            combo.addItems(all_param_names)
-            combo.blockSignals(False)
-        if hasattr(ndxplorer.plot_control, 'comboBoxWeight'):
-            ndxplorer.plot_control.comboBoxWeight.blockSignals(True)
-            ndxplorer.plot_control.comboBoxWeight.clear()
-            ndxplorer.plot_control.comboBoxWeight.addItems(all_param_names)
-            ndxplorer.plot_control.comboBoxWeight.blockSignals(False)
-    _apply_axes_and_refresh(ndxplorer)
+        # Only perform manual population if we actually have parameters to show,
+        # or if we are in the image data path where we skip the full update().
+        if all_param_names:
+            logging.info(f"Populating combo boxes with {len(all_param_names)} total parameters")
+            
+            for combo in [ndxplorer.plot_control.comboBoxSelX, 
+                          ndxplorer.plot_control.comboBoxSelY,
+                          ndxplorer.plot_control.comboBoxSelZ]:
+                combo.blockSignals(True)
+                combo.clear()
+                combo.addItems(all_param_names)
+                combo.blockSignals(False)
+            if hasattr(ndxplorer.plot_control, 'comboBoxWeight'):
+                ndxplorer.plot_control.comboBoxWeight.blockSignals(True)
+        else:
+            logging.warning("No parameters found to populate combo boxes.")
+    _apply_axes_and_refresh(ndxplorer, all_param_names)
 
 
-def _apply_axes_and_refresh(ndxplorer: "NDXplorer") -> None:
+def _apply_axes_and_refresh(ndxplorer: "NDXplorer", all_param_names: List[str]) -> None:
     """Shared tail for open operations: apply axes + refresh plots."""
     # Defer axis detection until AFTER comboboxes are fully populated
     # (plot_control.update() may take time to restore selections)
@@ -324,9 +368,20 @@ def _apply_axes_and_refresh(ndxplorer: "NDXplorer") -> None:
         """Run after combobox update completes."""
         logging.info("Running deferred image axis detection")
         
+        # Check if current axes are valid for the new data
+        # If not, pick sensible defaults
+        p1_name = ndxplorer.plot_control.comboBoxSelX.currentText()
+        p2_name = ndxplorer.plot_control.comboBoxSelY.currentText()
+        
+        needs_auto_axis = False
+        if p1_name not in all_param_names or p2_name not in all_param_names:
+            needs_auto_axis = True
+            logging.info(f"Current axes ({p1_name}, {p2_name}) not in new data. Selecting defaults.")
+            
         # Check if image dimensions were detected in raw data before compute_columns
         detected_dims = getattr(ndxplorer, '_detected_image_dims', None)
         image_axes_already_set = False
+        
         if detected_dims:
             x_pixels, y_pixels, x_pixel_param, y_pixel_param = detected_dims
             logging.info(f"Using pre-detected image dimensions: {x_pixels}x{y_pixels}")
@@ -344,20 +399,12 @@ def _apply_axes_and_refresh(ndxplorer: "NDXplorer") -> None:
                 if hasattr(ndxplorer.plot_control, 'spinBoxNYHist2D'):
                     ndxplorer.plot_control.spinBoxNYHist2D.setValue(y_pixels)
                 
-                # Set axes to X pixel and Y pixel (raw column names are preserved in combo boxes)
-                # The combo boxes were populated with ALL parameter names including raw columns
+                # Set axes to X pixel and Y pixel
                 logging.info(f"Setting axes to image parameters: X={x_pixel_param}, Y={y_pixel_param}")
                 x_set = ndxplorer.plot_control.set_axis_by_name("x", x_pixel_param, match_contains=False, block_signals=False)
                 y_set = ndxplorer.plot_control.set_axis_by_name("y", y_pixel_param, match_contains=False, block_signals=False)
-                
                 if x_set and y_set:
-                    logging.info("Successfully set X and Y axes to pixel parameters")
                     image_axes_already_set = True
-                else:
-                    logging.warning(f"Failed to set axes: x_set={x_set}, y_set={y_set}")
-                
-                logging.info(f"Set histogram bins to {x_pixels}x{y_pixels}")
-                
                 # Check for frame parameters in the raw data and setup frame selection
                 try:
                     param_names = list(ndxplorer.data_source.parameter_names)

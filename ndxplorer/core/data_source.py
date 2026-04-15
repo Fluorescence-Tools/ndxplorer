@@ -873,11 +873,12 @@ class DataSource:
     _parameter_names: List[str]
     _relevant_columns_cache: Optional[Tuple[Tuple[int, ...], np.ndarray]] = None
 
-    def __init__(self, parameter_names: Optional[List[str]] = None, data: Optional[pd.DataFrame | np.ndarray] = None):
+    def __init__(self, parameter_names: Optional[List[str]] = None, data: Optional[pd.DataFrame | np.ndarray] = None, is_computed: bool = False):
         # Performance optimization: initialize cache before data assignment
         self._column_cache = {}
         self._cache_valid = False
         self._cached_values_array = None
+        self.is_computed = is_computed
         
         if isinstance(data, np.ndarray):
             self.data = pd.DataFrame(data, columns=parameter_names)
@@ -947,6 +948,7 @@ class DataSource:
             equation_json_fn=equation_json_fn,
             engine=engine,
         )
+        self.is_computed = True
         # Ensure caches are refreshed
         self.data = self.data
 

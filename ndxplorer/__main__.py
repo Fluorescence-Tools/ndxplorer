@@ -56,6 +56,8 @@ def open_path_like_drop(ndxplorer, path_str):
         try:
             if suffix == ".csv":
                 ndxplorer.onOpenCsv(None, filenames=[str(path)], append=False, merge_mode="columns")
+            elif suffix == ".er4":
+                ndxplorer.onOpenChiSurfSampling(filenames=[str(path)], append=False, merge_mode="columns")
             elif suffix in (".h5", ".hdf5"):
                 ndxplorer.onOpenMfdHdf5(None, filenames=[str(path)], append=False, merge_mode="columns")
             elif suffix in (".bur", ".txt"):

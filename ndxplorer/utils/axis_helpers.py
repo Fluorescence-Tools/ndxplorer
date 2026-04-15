@@ -30,6 +30,10 @@ def check_and_set_image_axes(ndxplorer: "NDXplorer") -> bool:
 
     if not (has_x_pixel and has_y_pixel):
         logging.info("Image detection failed: X pixel or Y pixel columns not found")
+        try:
+            ndxplorer.plot_control.hide_frame_selection()
+        except Exception:
+            pass
         return False
 
     logging.info("Image data detected (X pixel and Y pixel columns found)")
