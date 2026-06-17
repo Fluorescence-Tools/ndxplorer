@@ -11,10 +11,7 @@ from typing import Optional, Dict, List, Tuple
 import numpy as np
 from pathlib import Path
 
-try:
-    from chisurf.gui import QtCore, QtWidgets
-except ImportError:
-    from qtpy import QtCore, QtWidgets
+from qtpy import QtCore, QtWidgets
 
 
 def load_mask_from_tiff(filename: str) -> Tuple[np.ndarray, List[int]]:

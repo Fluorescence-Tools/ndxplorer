@@ -10,11 +10,8 @@ from ..utils.lazy_imports import get_umap, get_kmeans, get_hdbscan
 
 from ..logging_config import logging
 
-try:
-    from chisurf.gui import QtGui, QtCore, QtWidgets
-except ImportError:
-    from qtpy import QtCore
-    from qtpy import QtGui, QtWidgets
+from qtpy import QtCore
+from qtpy import QtGui, QtWidgets
 
 from ..ui.column_selection_dialog import ColumnSelectionDialog
 from .feedback import ProgressPane, FriendlyErrorPresenter

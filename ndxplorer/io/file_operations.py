@@ -358,11 +358,7 @@ def _apply_axes_and_refresh(ndxplorer: "NDXplorer", all_param_names: List[str]) 
     """Shared tail for open operations: apply axes + refresh plots."""
     # Defer axis detection until AFTER comboboxes are fully populated
     # (plot_control.update() may take time to restore selections)
-    try:
-        from qtpy.QtCore import QTimer
-    except ImportError:
-        from chisurf.gui import QtCore
-        QTimer = QtCore.QTimer
+    from qtpy.QtCore import QTimer
     
     def _deferred_axis_detection():
         """Run after combobox update completes."""

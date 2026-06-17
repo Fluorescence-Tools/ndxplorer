@@ -4,10 +4,7 @@ Axis control mixin for X/Y/Z/Weight parameter selection.
 Extracts axis selection functionality from SurfacePlotWidget.
 """
 
-try:
-    from qtpy import QtCore
-except ImportError:
-    from chisurf.gui import QtCore
+from qtpy import QtCore
 
 
 class AxisControlMixin:

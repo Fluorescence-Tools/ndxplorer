@@ -35,9 +35,18 @@ except ImportError:
     pc = None
     HAVE_PYARROW = False
 
-from qtpy.QtWidgets import QApplication, QMessageBox
-from qtpy.QtCore import QCoreApplication, QThread
-from ..ui.progress_window import ProgressWindow
+try:
+    from qtpy.QtWidgets import QApplication, QMessageBox
+    from qtpy.QtCore import QCoreApplication, QThread
+    from ..ui.progress_window import ProgressWindow
+    _HAS_QT = True
+except Exception:
+    _HAS_QT = False
+    QApplication = None
+    QMessageBox = None
+    QCoreApplication = None
+    QThread = None
+    ProgressWindow = None
 
 # Import async loading components
 from .async_loader import DataLoadTask, DataLoadWorker, DataLoadResult, run_task_inline
@@ -75,6 +84,8 @@ _DEFAULT_BURST_EXTRA_ENDINGS: List[str] = ["bg4", "br4", "by4", "bv4", "td4"]
 
 def _in_gui_thread() -> bool:
     """Return True if we're running in the main GUI thread."""
+    if not _HAS_QT or QApplication is None:
+        return False
     app = QApplication.instance()
     if app is None:
         return False
@@ -86,7 +97,7 @@ def _in_gui_thread() -> bool:
 
 def _safe_warning(title: str, message: str) -> None:
     """Show a QMessageBox when in GUI thread, otherwise fall back to logging."""
-    if _in_gui_thread():
+    if _HAS_QT and QApplication is not None and _in_gui_thread():
         QMessageBox.warning(None, title, message)
     else:
         logging.warning("%s: %s", title, message)
@@ -287,8 +298,9 @@ def read_burst_analysis(
     - Auto-detects delimiters for .bur and extras (no hardcoded tab).
     - Concatenates macro time across files → seconds; column renamed to "Mean Macro Time (s)".
     """
-    # ensure a QApplication
-    app = QApplication.instance() or QApplication([])
+    # ensure a QApplication (skip when headless)
+    if QApplication is not None:
+        app = QApplication.instance() or QApplication([])
 
     base_path = pathlib.Path(base_path)
     if additional_endings is None:

@@ -30,6 +30,47 @@ def save_burst_ids(ndxplorer, folder: Optional[str] = None) -> None:
         data_source=ndxplorer.data_source,
     )
 
+    # Record selection analysis back to database if ZMQ client is active
+    if getattr(ndxplorer, "zmq_client", None) is not None and getattr(ndxplorer, "processed_data_id", None) is not None:
+        try:
+            selections = ndxplorer.plot_control.get_selections()
+            mask = ndxplorer.data_source.get_mask(selections=selections)
+            
+            gate_settings = {"gate": {}}
+            for sel in selections:
+                gate_settings["gate"][getattr(sel, "name", "selection")] = {
+                    "x_param": getattr(sel, "x_param", ""),
+                    "y_param": getattr(sel, "y_param", ""),
+                    "bounds": list(getattr(sel, "bounds", [])),
+                }
+
+            selection_mask_product = {
+                "product_type": "selection_mask",
+                "storage_mode": "embedded_json",
+                "data": {"mask": mask.tolist()},
+                "validation_status": "valid",
+            }
+            
+            logging.info("Recording ndxplorer selection analysis to ChiSurf database via ZMQ...")
+            res = ndxplorer.zmq_client.call(
+                "ndxplorer.record_analysis",
+                {
+                    "experiment_id": getattr(ndxplorer, "experiment_id", None) or "exp_1",
+                    "input_processed_data_ids": [ndxplorer.processed_data_id],
+                    "analysis_type": "selection",
+                    "settings": gate_settings,
+                    "products": [selection_mask_product],
+                    "software_version": "1.0.0",
+                }
+            )
+            if res.get("ok") or (isinstance(res.get("result"), dict) and res["result"].get("ok")):
+                logging.info("Successfully recorded selection analysis to database.")
+            else:
+                err = res.get("error", "Unknown error")
+                logging.error(f"Failed to record selection analysis: {err}")
+        except Exception as e:
+            logging.error(f"Error recording selection analysis to database: {e}")
+
     dialog = QtWidgets.QDialog(ndxplorer)
     dialog.setWindowTitle("Process Burst IDs")
     layout = QtWidgets.QVBoxLayout()
@@ -76,20 +117,11 @@ def save_burst_ids(ndxplorer, folder: Optional[str] = None) -> None:
         logging.error("Error reading setup information: %s", exc)
 
     if do_hist:
-        try:
-            from chisurf.plugins.microtime_histogram.wizard import MicrotimeHistogram
-
-            histogram = MicrotimeHistogram.get_instance()
-            histogram.show()
-            histogram.raise_()
-            histogram.load_bid_folder(folder, setup_name=setup_name)
-        except Exception as exc:  # pragma: no cover - plugin path
-            logging.error("Failed to launch microtime histogram plugin: %s", exc)
-            QtWidgets.QMessageBox.warning(
-                ndxplorer,
-                "Export Error",
-                f"Failed to open Microtime Histogram: {exc}",
-            )
+        QtWidgets.QMessageBox.information(
+            ndxplorer,
+            "Plugin Not Available",
+            "The Microtime Histogram plugin (chisurf) is not available in this standalone build.",
+        )
 
     if do_corr:
         try:
@@ -185,3 +217,42 @@ def save_clustering_data(ndxplorer, folder: Optional[str] = None) -> None:
         cluster_columns=dialog._cluster_columns,
         parameters=parameters,
     )
+
+    # Record clustering analysis back to database if ZMQ client is active
+    if getattr(ndxplorer, "zmq_client", None) is not None and getattr(ndxplorer, "processed_data_id", None) is not None:
+        try:
+            cluster_settings = {
+                "method": dialog._cluster_method,
+                "columns": list(dialog._cluster_columns),
+                "parameters": parameters,
+            }
+            
+            clustering_product = {
+                "product_type": "clustering_labels",
+                "storage_mode": "embedded_json",
+                "data": {
+                    "labels": ndxplorer._cluster_labels.tolist() if ndxplorer._cluster_labels is not None else [],
+                    "probabilities": ndxplorer._cluster_probabilities.tolist() if ndxplorer._cluster_probabilities is not None else [],
+                },
+                "validation_status": "valid",
+            }
+            
+            logging.info("Recording ndxplorer clustering analysis to ChiSurf database via ZMQ...")
+            res = ndxplorer.zmq_client.call(
+                "ndxplorer.record_analysis",
+                {
+                    "experiment_id": getattr(ndxplorer, "experiment_id", None) or "exp_1",
+                    "input_processed_data_ids": [ndxplorer.processed_data_id],
+                    "analysis_type": "gmm_clustering",
+                    "settings": cluster_settings,
+                    "products": [clustering_product],
+                    "software_version": "1.0.0",
+                }
+            )
+            if res.get("ok") or (isinstance(res.get("result"), dict) and res["result"].get("ok")):
+                logging.info("Successfully recorded clustering analysis to database.")
+            else:
+                err = res.get("error", "Unknown error")
+                logging.error(f"Failed to record clustering analysis: {err}")
+        except Exception as e:
+            logging.error(f"Error recording clustering analysis to database: {e}")

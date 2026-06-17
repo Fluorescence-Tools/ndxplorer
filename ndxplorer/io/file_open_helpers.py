@@ -56,13 +56,13 @@ def open_csv(ndxplorer, filenames: Optional[List[str]] = None, append: bool = Fa
     _open_with_merge_dialog(ndxplorer, filenames, "csv", "Open CSV Files", append, merge_mode)
 
 
-def open_chisurf_sampling(
+def open_sampling(
     ndxplorer,
     filenames: Optional[List[str]] = None,
     append: bool = False,
     merge_mode: str = "columns",
 ):
-    _open_with_merge_dialog(ndxplorer, filenames, "cs_sampling", "Open ChiSurf Sampling Files", append, merge_mode)
+    _open_with_merge_dialog(ndxplorer, filenames, "cs_sampling", "Open Sampling Files", append, merge_mode)
 
 
 def open_mfd_hdf5(

@@ -295,7 +295,7 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         
         # Settings file info
         settings_info = QtWidgets.QLabel(
-            "Settings are saved to: ~/.chisurf/ndxplorer/mfd.settings.json\n"
+            "Settings are saved to: ~/.ndxplorer/mfd.settings.json\n"
             "Values in settings file override environment variables."
         )
         settings_info.setWordWrap(True)

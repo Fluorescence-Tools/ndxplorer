@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-try:  # Prefer ChiSurf's Qt shim when available
-    from chisurf.gui import QtCore, QtWidgets
-except ImportError:  # Fallback to raw qtpy
-    from qtpy import QtCore, QtWidgets
+from qtpy import QtCore, QtWidgets
 
 
 class ProgressPane(QtWidgets.QFrame):

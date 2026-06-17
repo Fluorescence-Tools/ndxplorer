@@ -31,14 +31,11 @@ from .logging_config import logging
 
 # Qt imports (runtime optional)
 try:
-    from chisurf.gui import QtWidgets, QtCore, QtGui
+    from qtpy import QtWidgets, QtCore, QtGui  # type: ignore
 except Exception:
-    try:
-        from qtpy import QtWidgets, QtCore, QtGui  # type: ignore
-    except Exception:
-        QtWidgets = None  # type: ignore
-        QtCore = None  # type: ignore
-        QtGui = None  # type: ignore
+    QtWidgets = None  # type: ignore
+    QtCore = None  # type: ignore
+    QtGui = None  # type: ignore
 
 
 # ------------------------------

@@ -93,21 +93,14 @@ def _ensure_guiqwt():
         _QwtPlot = QwtPlot
         _QwtPlotCanvas = QwtPlotCanvas
 
-try:
-    from chisurf.plugins.misc.code_editor import CodeEditor
-except ImportError:
-    from ndxplorer.widgets.code_editor import CodeEditor
+from ndxplorer.widgets.code_editor import CodeEditor
 
 from .data_source import DataSource, RectangularDataSelection, MaskDataSelection
 from .data import DataManager
 
-try:
-    from chisurf.gui import QtGui, QtCore, uic, QtWidgets
-    from chisurf.gui.QtGui import QFont, QImage
-except ImportError:
-    from qtpy import QtCore, uic
-    from qtpy import QtGui, QtWidgets
-    from qtpy.QtGui import QFont, QImage
+from qtpy import QtCore, uic
+from qtpy import QtGui, QtWidgets
+from qtpy.QtGui import QFont, QImage
 
 from ..plotting.image_items import FixedImageItem
 from ..plotting.plot_helpers import (
@@ -126,7 +119,7 @@ from ..utils.histogram_export import (
 )
 from ..io.export_helpers import save_burst_ids, save_clustering_data
 from ..io.file_open_helpers import (
-    open_chisurf_sampling,
+    open_sampling,
     open_csv,
     open_files,
     open_mfd_hdf5,
@@ -1327,10 +1320,9 @@ class NDXplorer(QtWidgets.QMainWindow):
     def save_parameters(self):
         """
         Save the current parameters to a JSON file in the user's settings folder.
-        If chisurf module exists, parameters are saved in the user folder.
         """
         logging.debug(f"save_parameters")
-        # Get the settings path (this will use chisurf user folder if available)
+        # Get the settings path
         settings_path = get_settings_path()
         
         # Create the filename for the parameters
@@ -1413,7 +1405,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         append: bool = False,
         merge_mode: str = "columns",
     ):
-        open_chisurf_sampling(self, filenames, append, merge_mode)
+        open_sampling(self, filenames, append, merge_mode)
 
     def onOpenMfdHdf5(
         self,

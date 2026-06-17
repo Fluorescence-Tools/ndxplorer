@@ -5,10 +5,17 @@ from ..logging_config import logging
 import numpy as np
 import json
 import pandas as pd
-from qtpy.QtWidgets import QApplication
-from qtpy.QtCore import QCoreApplication
+try:
+    from qtpy.QtWidgets import QApplication
+    from qtpy.QtCore import QCoreApplication
+    from ..ui.progress_window import ProgressWindow
+    _HAS_QT = True
+except Exception:
+    QApplication = None
+    QCoreApplication = None
+    ProgressWindow = None
+    _HAS_QT = False
 from ..core.data_source import DataSource, DataSelection
-from ..ui.progress_window import ProgressWindow
 
 
 def save_burst_ids(
@@ -16,9 +23,9 @@ def save_burst_ids(
         selections: List[DataSelection],
         data_source: DataSource
 ):
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
+    if not _HAS_QT or QApplication is None:
+        raise RuntimeError("save_burst_ids requires Qt (not available in headless mode)")
+    app = QApplication.instance() or QApplication([])
 
     folder_path = Path(folder_name)
     folder_path.mkdir(parents=True, exist_ok=True)
@@ -75,9 +82,9 @@ def save_clustering_data(
         cluster_columns: Set of column names used for clustering
         parameters: Dictionary of clustering parameters
     """
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
+    if not _HAS_QT or QApplication is None:
+        raise RuntimeError("save_clustering_data requires Qt (not available in headless mode)")
+    app = QApplication.instance() or QApplication([])
 
     # Create the clustering folder
     folder_path = Path(folder_name)

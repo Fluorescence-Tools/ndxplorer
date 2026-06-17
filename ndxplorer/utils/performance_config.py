@@ -208,7 +208,7 @@ def _get_environment_overrides() -> dict:
         # Try to find and load the settings file
         settings_paths = [
             # User settings directory
-            Path.home() / ".chisurf" / "ndxplorer" / "mfd.settings.json",
+            Path.home() / ".ndxplorer" / "mfd.settings.json",
             # Module settings directory
             Path(__file__).parent.parent / "settings" / "mfd.settings.json",
             # Current directory

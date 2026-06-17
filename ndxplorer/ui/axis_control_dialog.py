@@ -618,8 +618,7 @@ class AxisControlDialog(QtWidgets.QDialog):
         Save the current axis label settings.
         
         This method gathers the current settings from the checkboxes and saves them
-        to the appropriate settings directory (user settings folder if chisurf is installed,
-        or default folder otherwise).
+        to the user settings directory (~/.ndxplorer/).
         """
         if not self.parent:
             logging.warning("Cannot save axis label settings: parent is None")

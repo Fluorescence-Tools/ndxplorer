@@ -9,37 +9,22 @@ settings folder.
 import os
 import pathlib
 import shutil
-import importlib.util
 
 def get_settings_path() -> pathlib.Path:
     """
     Get the path to the ndxplorer settings folder.
     
-    If chisurf is installed, this will be a subfolder of the user's chisurf
-    settings folder. Otherwise, it will be the default settings folder in the
-    ndxplorer module directory.
+    Uses a user-local settings directory at ~/.ndxplorer/, falling back to
+    the module directory if that cannot be created.
     
     Returns:
         pathlib.Path: Path to the ndxplorer settings folder
     """
-    # Check if chisurf is installed
-    chisurf_spec = importlib.util.find_spec("chisurf")
-    
-    if chisurf_spec is not None:
-        # chisurf is installed, use its settings path
-        try:
-            from chisurf.settings.path_utils import get_path
-            chisurf_settings_path = get_path('settings')
-            settings_path = chisurf_settings_path / 'ndxplorer'
-        except ImportError:
-            # Fall back to default path if there's an error importing chisurf
-            settings_path = pathlib.Path(__file__).parent
-    else:
-        # chisurf is not installed, use default path
+    try:
+        settings_path = pathlib.Path.home() / ".ndxplorer"
+        settings_path.mkdir(parents=True, exist_ok=True)
+    except Exception:
         settings_path = pathlib.Path(__file__).parent
-    
-    # Create the settings directory if it doesn't exist
-    settings_path.mkdir(parents=True, exist_ok=True)
     
     return settings_path
 

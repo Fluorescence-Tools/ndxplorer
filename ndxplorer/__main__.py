@@ -3,17 +3,8 @@ import os
 import click
 from pathlib import Path
 
-# Add the ndxplorer module to Python path for direct execution
+# Set the package name for direct execution
 if __name__ == "__main__" and __package__ is None:
-    # Get the parent directory of this file (ndxplorer package root)
-    current_dir = Path(__file__).parent
-    module_root = current_dir.parent.parent  # Go up to chisurf root
-    
-    # Add both the ndxplorer module and chisurf root to path
-    sys.path.insert(0, str(module_root))
-    sys.path.insert(0, str(current_dir.parent))
-    
-    # Set the package name
     __package__ = "ndxplorer"
 
 from qtpy.QtWidgets import QApplication

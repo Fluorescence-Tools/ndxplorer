@@ -5,10 +5,7 @@ and persist them in the ndxplorer user settings folder.
 """
 from typing import Optional, Dict, Any
 
-try:
-    from chisurf.gui import QtWidgets, QtCore
-except ImportError:
-    from qtpy import QtWidgets, QtCore
+from qtpy import QtWidgets, QtCore
 
 import json
 from ..logging_config import logging

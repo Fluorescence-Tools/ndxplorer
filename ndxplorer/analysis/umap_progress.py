@@ -10,10 +10,7 @@ import time
 
 import numpy as np
 
-try:
-    from chisurf.gui import QtCore, QtGui, QtWidgets
-except ImportError:  # pragma: no cover - chisurf not available
-    from qtpy import QtCore, QtGui, QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 
 
 class UMAPWorker(QtCore.QObject):

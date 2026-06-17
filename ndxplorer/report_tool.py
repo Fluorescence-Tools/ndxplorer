@@ -357,7 +357,7 @@ class ReportWizard(QtWidgets.QDialog):
     def _load_axis_settings(self) -> Dict:
         """
         Load axis settings from mfd.axis.json. Preference order:
-        1) User/chisurf ndxplorer settings folder
+        1) User ndxplorer settings folder (~/.ndxplorer/)
         2) Module settings folder
         Returns an empty dict if not found or on error.
         """

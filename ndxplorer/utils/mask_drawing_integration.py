@@ -6,10 +6,7 @@ Handles mouse events for drawing masks on the 2D histogram.
 from typing import Optional, Tuple
 import numpy as np
 
-try:
-    from chisurf.gui import QtCore, QtGui, QtWidgets
-except ImportError:
-    from qtpy import QtCore, QtGui, QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 
 from . import mask_helpers
 from ..widgets.mask_overlay_widget import MaskOverlayWidget
