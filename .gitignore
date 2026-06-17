@@ -1,6 +1,7 @@
 __pycache__
 .vscode
 *.pyc
+*.egg-info/
 .idea/misc.xml
 .idea/modules.xml
 .idea/ndxplorer.iml
