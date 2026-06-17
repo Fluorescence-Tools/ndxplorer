@@ -19,7 +19,7 @@ from .. import settings_helpers as settings_helpers
 
 try:  # pragma: no cover - optional GUI dependency
     from .colormap_helpers import *
-except ModuleNotFoundError as exc:  # pragma: no cover - warn but continue
+except Exception as exc:  # pragma: no cover - warn but continue
     warnings.warn(
         f"ndxplorer.utils.colormap_helpers unavailable: {exc}. "
         "Colormap customization features may be disabled.",

@@ -12,13 +12,13 @@ _IMAGE_IMPORT_ERROR: Optional[Exception] = None
 try:  # pragma: no cover - optional GUI dependency
     from .core.plot_main import NDXplorer as _NDXplorer  # type: ignore
     NDXplorer = _NDXplorer
-except ModuleNotFoundError as exc:  # pragma: no cover - fallback path
+except Exception as exc:  # pragma: no cover - fallback path
     _NDX_IMPORT_ERROR = exc
 
 try:  # pragma: no cover - optional GUI dependency
     from .plotting.image_items import FixedImageItem as _FixedImageItem  # type: ignore
     FixedImageItem = _FixedImageItem
-except ModuleNotFoundError as exc:  # pragma: no cover - fallback path
+except Exception as exc:  # pragma: no cover - fallback path
     _IMAGE_IMPORT_ERROR = exc
 
 

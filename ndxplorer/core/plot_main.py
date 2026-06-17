@@ -48,6 +48,28 @@ from ..ui.axis_control_dialog import AxisControlDialog
 # Import new modular plotting components
 from ..plotting import api as plotting_api
 from ..plotting import histograms as plot_histograms
+
+
+class StandaloneZmqClient:
+    """A lightweight ZMQ client for communicating with ChiSurf JSON-RPC server."""
+    
+    def __init__(self, cmd_port: int = 8765, host: str = "127.0.0.1"):
+        import zmq
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.REQ)
+        self.socket.connect(f"tcp://{host}:{cmd_port}")
+        self.request_id = 0
+
+    def call(self, method: str, params: Optional[dict] = None) -> dict:
+        self.request_id += 1
+        msg = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or {},
+            "id": self.request_id
+        }
+        self.socket.send_json(msg)
+        return self.socket.recv_json()
 from ..plotting import scatter as plot_scatter
 from ..plotting import colormaps as plot_colormaps
 from ..analysis.umap_progress import UMAPProgressDialog
@@ -513,10 +535,18 @@ class NDXplorer(QtWidgets.QMainWindow):
             data_source=None,  # type: DataSource
             settings_json_fn=None,  # type: str
             parent=None,
-            cmap: str = 'gist_earth'
+            cmap: str = 'gist_earth',
+            zmq_cmd_port: Optional[int] = None,
+            processed_data_id: Optional[str] = None,
+            experiment_id: Optional[str] = None,
     ) -> None:
         super(NDXplorer, self).__init__(parent=parent)
         
+        self.zmq_cmd_port = zmq_cmd_port
+        self.processed_data_id = processed_data_id
+        self.experiment_id = experiment_id
+        self.zmq_client = None
+
         # Set default window size
         self.resize(900, 630)
         
@@ -908,7 +938,48 @@ class NDXplorer(QtWidgets.QMainWindow):
                 logging.info("Rendered pending histograms after deferred init completion")
         except Exception as e:
             logging.debug(f"Could not render pending histograms: {e}")
+
+        # Connect to ZMQ and load database product if requested
+        if self.zmq_cmd_port is not None:
+            self._connect_and_load_zmq()
         
+    def _connect_and_load_zmq(self) -> None:
+        try:
+            logging.info(f"Connecting to ChiSurf ZMQ server on port {self.zmq_cmd_port}...")
+            self.zmq_client = StandaloneZmqClient(cmd_port=self.zmq_cmd_port)
+            logging.info("Connected to ZMQ server.")
+            
+            if self.processed_data_id:
+                logging.info(f"Loading database product {self.processed_data_id} via ZMQ RPC...")
+                res = self.zmq_client.call("ndxplorer.load_burst_product", {"processed_data_id": self.processed_data_id})
+                
+                # Unpack response
+                if res.get("ok") or (isinstance(res.get("result"), dict) and res["result"].get("ok")):
+                    result_data = res.get("result", res)
+                    param_names = result_data.get("parameter_names", [])
+                    raw_values = result_data.get("values")
+                    
+                    import numpy as np
+                    from ..core.data_source import DataSource
+                    from ..io.file_operations import _finalize_loaded_data
+                    
+                    if isinstance(raw_values, dict) and raw_values.get("__ndarray__"):
+                        values = np.array(raw_values["data"], dtype=raw_values["dtype"])
+                    else:
+                        values = np.array(raw_values, dtype=np.float32)
+                    
+                    ds = DataSource(parameter_names=param_names, data=values.T)
+                    _finalize_loaded_data(self, ds, append=False, merge_mode="columns")
+                    logging.info(f"Successfully loaded database product {self.processed_data_id} via ZMQ.")
+                    self.statusBar().showMessage(f"Loaded database product {self.processed_data_id} via ZMQ")
+                else:
+                    err = res.get("error", "Unknown error")
+                    logging.error(f"Failed to load database product: {err}")
+                    QtWidgets.QMessageBox.critical(self, "ZMQ Load Error", f"Failed to load database product:\n{err}")
+        except Exception as e:
+            logging.error(f"Error in ZMQ client initialization or loading: {e}")
+            QtWidgets.QMessageBox.critical(self, "ZMQ Connection Error", f"Failed to establish ZMQ connection:\n{e}")
+
     def _setup_mask_drawing(self):
         """Setup mask drawing integration with the 2D plot."""
         logging.debug("Starting mask drawing setup...")

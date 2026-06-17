@@ -89,8 +89,11 @@ class MutuallyExclusiveOption(click.Option):
 @click.option('--test-data', '-t', is_flag=True, cls=MutuallyExclusiveOption, 
               mutually_exclusive=['file', 'folder'], 
               help='Open with default test data path (E:\\eGFP_bad_background\\pxl_eGFP_bad_background)')
+@click.option('--processed-data-id', type=str, help='Database processed data ID')
+@click.option('--experiment-id', type=str, help='Database experiment ID')
+@click.option('--zmq-port', type=int, default=8765, help='ChiSurf ZMQ port')
 @click.option('--debug', is_flag=True, help='Enable debug logging')
-def main(file, folder, test_data, debug):
+def main(file, folder, test_data, processed_data_id, experiment_id, zmq_port, debug):
     """NDXplorer - Fluorescence Data Explorer
     
     Examples:
@@ -119,7 +122,11 @@ def main(file, folder, test_data, debug):
     np.random.seed(0)
     
     # Create main window
-    win = NDXplorer()
+    win = NDXplorer(
+        zmq_cmd_port=zmq_port if processed_data_id else None,
+        processed_data_id=processed_data_id,
+        experiment_id=experiment_id
+    )
     win.show()
     
     # Handle file/folder arguments using the same logic as file drops

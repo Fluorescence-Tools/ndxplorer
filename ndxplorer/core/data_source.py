@@ -202,9 +202,9 @@ def _fast_to_numeric(df: pd.DataFrame, use_float32: bool = True) -> pd.DataFrame
     
     # Target dtype for memory efficiency
     target_dtype = np.float32 if use_float32 else np.float64
-    pa_target = pa.float32() if use_float32 else pa.float64()
     
     if _HAVE_PYARROW:
+        pa_target = pa.float32() if use_float32 else pa.float64()
         try:
             # Convert to Arrow Table for fast processing
             table = pa.Table.from_pandas(df, preserve_index=False)
