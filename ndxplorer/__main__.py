@@ -7,6 +7,10 @@ from pathlib import Path
 if __name__ == "__main__" and __package__ is None:
     __package__ = "ndxplorer"
 
+# Check for subcommand before any PyQt imports to allow setting offscreen platform
+if len(sys.argv) > 1 and sys.argv[1] in ("filter", "image"):
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
 from qtpy.QtWidgets import QApplication
 from .core.plot_main import NDXplorer
 from .logging_config import logging
@@ -80,7 +84,7 @@ class MutuallyExclusiveOption(click.Option):
         return super().handle_parse_result(ctx, opts, args)
 
 
-@click.command()
+@click.group(invoke_without_command=True)
 @click.option('--file', '-f', type=click.Path(exists=True), cls=MutuallyExclusiveOption, 
               mutually_exclusive=['folder', 'test_data'], help='Open specific file (.bur, .csv, etc.)')
 @click.option('--folder', '-d', type=click.Path(exists=True, file_okay=False, dir_okay=True), 
@@ -93,7 +97,8 @@ class MutuallyExclusiveOption(click.Option):
 @click.option('--experiment-id', type=str, help='Database experiment ID')
 @click.option('--zmq-port', type=int, default=8765, help='ChiSurf ZMQ port')
 @click.option('--debug', is_flag=True, help='Enable debug logging')
-def main(file, folder, test_data, processed_data_id, experiment_id, zmq_port, debug):
+@click.pass_context
+def main(ctx, file, folder, test_data, processed_data_id, experiment_id, zmq_port, debug):
     """NDXplorer - Fluorescence Data Explorer
     
     Examples:
@@ -109,6 +114,10 @@ def main(file, folder, test_data, processed_data_id, experiment_id, zmq_port, de
       # Open empty application
       ndxplorer
     """
+    if ctx.invoked_subcommand is not None:
+        # A subcommand (filter, image) was invoked, let click handle it
+        return
+
     # Set up logging level
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -166,5 +175,12 @@ def main(file, folder, test_data, processed_data_id, experiment_id, zmq_port, de
     app.exec_()
 
 
+# Register subcommands from cli.py
+from .cli import filter_cmd, image_cmd
+main.add_command(filter_cmd, name="filter")
+main.add_command(image_cmd, name="image")
+
+
 if __name__ == "__main__":
     main()
+
