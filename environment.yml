@@ -13,6 +13,5 @@ dependencies:
   - pathlib2
   - typing-extensions
   - scipy
-  - guiqwt
   - hdbscan
   - scikit-learn

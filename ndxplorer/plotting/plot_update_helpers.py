@@ -7,13 +7,6 @@ from typing import Optional
 import numpy as np
 from qtpy import QtWidgets
 
-try:
-    from qwt.plot import QwtPlot
-    QWT_AVAILABLE = True
-except ImportError:
-    QWT_AVAILABLE = False
-    QwtPlot = None
-
 from ..logging_config import logging
 
 try:  # Optional dependency
@@ -60,7 +53,7 @@ def _compute_selection_hash(selections):
 
 
 def update_histograms(ndxplorer) -> None:
-    logging.info("update_histograms called")
+    logging.debug("update_histograms called")
     
     # Enhanced data loading check with multiple flags
     loading_flags = [
@@ -70,11 +63,11 @@ def update_histograms(ndxplorer) -> None:
     ]
     
     if any(loading_flags):
-        logging.info("Skipping update_histograms: data loading or computation in progress (flags=%s)", loading_flags)
+        logging.debug("Skipping update_histograms: data loading or computation in progress (flags=%s)", loading_flags)
         return
     
     data_ready = ndxplorer.is_data_ready()
-    logging.info(f"update_histograms: is_data_ready={data_ready}")
+    logging.debug(f"update_histograms: is_data_ready={data_ready}")
     if not data_ready:
         # Log why data isn't ready
         try:
@@ -84,14 +77,14 @@ def update_histograms(ndxplorer) -> None:
             logging.info(f"  p2 (Y axis): {p2}")
         except Exception as exc:
             logging.info(f"  Could not get axis info: {exc}")
-        logging.info("Skipping update_histograms: data/axes not ready")
+        logging.debug("Skipping update_histograms: data/axes not ready")
         return
 
     # Use the new background computation system if available
     has_bg_method = hasattr(ndxplorer.plot_control, 'compute_histograms_background')
     has_bg_enabled_flag = hasattr(ndxplorer.plot_control, '_background_computation_enabled')
     bg_enabled = getattr(ndxplorer.plot_control, '_background_computation_enabled', False)
-    logging.info(f"Background computation check: has_method={has_bg_method}, has_flag={has_bg_enabled_flag}, enabled={bg_enabled}")
+    logging.debug(f"Background computation check: has_method={has_bg_method}, has_flag={has_bg_enabled_flag}, enabled={bg_enabled}")
     
     if (hasattr(ndxplorer.plot_control, 'compute_histograms_background') and 
         hasattr(ndxplorer.plot_control, '_background_computation_enabled') and 
@@ -135,7 +128,7 @@ def update_histograms(ndxplorer) -> None:
             
             # Use background computation
             ndxplorer.plot_control.compute_histograms_background(histogram_params, weights)
-            logging.info("Successfully scheduled background histogram computation")
+            logging.debug("Successfully scheduled background histogram computation")
             return
             
         except Exception as e:
@@ -204,7 +197,7 @@ def _update_histograms_immediate(ndxplorer) -> None:
         density_x = ndxplorer.plot_control.normed_hist_x
         density_y = ndxplorer.plot_control.normed_hist_y
         density_z = ndxplorer.plot_control.normed_hist_z
-        logging.info(f"[HELPERS] Density settings - X: {density_x}, Y: {density_y}, Z: {density_z}")
+        logging.debug(f"[HELPERS] Density settings - X: {density_x}, Y: {density_y}, Z: {density_z}")
         
         # Compute 1D histograms using clean manager
         hist_x = manager.compute_histogram_1d(
@@ -232,7 +225,7 @@ def _update_histograms_immediate(ndxplorer) -> None:
                 if weight_param != z_param:
                     z_weights = weights
             
-            logging.info(f"[HELPERS] Computing Z histogram with density: {density_z}")
+            logging.debug(f"[HELPERS] Computing Z histogram with density: {density_z}")
             hist_z = manager.compute_histogram_1d(
                 d3, z_bins_1d, weights=z_weights,
                 density=density_z,
@@ -247,16 +240,12 @@ def _update_histograms_immediate(ndxplorer) -> None:
             d1, d2, x_bins_2d, y_bins_2d, weights=weights, params=params
         )
         
-        logging.info(f"[HELPERS] Freshly computed 2D histogram:")
-        logging.info(f"[HELPERS]   H shape: {hist_2d.H.shape}")
-        logging.info(f"[HELPERS]   x_edges: {len(hist_2d.x_edges)}, y_edges: {len(hist_2d.y_edges)}")
-        logging.info(f"[HELPERS]   Shape check: H[0]={hist_2d.H.shape[0]} vs y-1={len(hist_2d.y_edges)-1}, H[1]={hist_2d.H.shape[1]} vs x-1={len(hist_2d.x_edges)-1}")
-        logging.info(f"[HELPERS]   Validation: {hist_2d.validate()}")
+        logging.debug(f"[HELPERS] Freshly computed 2D histogram: H shape={hist_2d.H.shape}, validation={hist_2d.validate()}")
         
         # Store clean histogram
         ndxplorer._histogram["2d"] = hist_2d
         
-        logging.info(f"[HELPERS] Stored histogram in _histogram['2d']: shape {hist_2d.shape}")
+        logging.debug(f"[HELPERS] Stored histogram in _histogram['2d']: shape {hist_2d.shape}")
         
         # Update marginal plots after histogram computation
         _update_marginal_plots_from_cache(ndxplorer)
@@ -278,19 +267,19 @@ def _update_histograms_immediate(ndxplorer) -> None:
 
 def _update_marginal_plots_from_cache(ndxplorer) -> None:
     """Update marginal distribution plots from cached histogram data."""
-    logging.info("Starting marginal plot update")
+    logging.debug("Starting marginal plot update")
     
     # Check if deferred init is done and plot objects exist
     if not getattr(ndxplorer, "_deferred_init_done", False):
-        logging.info("Skipping marginal plot update: deferred init not done yet")
+        logging.debug("Skipping marginal plot update: deferred init not done yet")
         # Try to trigger deferred init if not done
         if hasattr(ndxplorer, '_deferred_init'):
             try:
                 ndxplorer._deferred_init()
-                logging.info("Triggered deferred init from marginal plot update")
+                logging.debug("Triggered deferred init from marginal plot update")
                 # Retry the update after init
                 if getattr(ndxplorer, "_deferred_init_done", False):
-                    logging.info("Deferred init completed, retrying marginal plot update")
+                    logging.debug("Deferred init completed, retrying marginal plot update")
                     return _update_marginal_plots_from_cache(ndxplorer)
             except Exception as e:
                 logging.warning(f"Failed to trigger deferred init: {e}")
@@ -304,8 +293,8 @@ def _update_marginal_plots_from_cache(ndxplorer) -> None:
     has_y_hist = hasattr(ndxplorer, 'g_yhist_m') and ndxplorer.g_yhist_m is not None
     has_z_hist = hasattr(ndxplorer, 'g_zhist_m') and ndxplorer.g_zhist_m is not None
     
-    logging.info(f"Marginal plot objects: x_plot={has_x_plot}, y_plot={has_y_plot}, z_plot={has_z_plot}")
-    logging.info(f"Marginal hist objects: x_hist={has_x_hist}, y_hist={has_y_hist}, z_hist={has_z_hist}")
+    logging.debug(f"Marginal plot objects: x_plot={has_x_plot}, y_plot={has_y_plot}, z_plot={has_z_plot}")
+    logging.debug(f"Marginal hist objects: x_hist={has_x_hist}, y_hist={has_y_hist}, z_hist={has_z_hist}")
     
     if not has_x_hist or not has_y_hist:
         logging.warning("Missing marginal histogram objects - cannot update marginals")
@@ -435,57 +424,55 @@ def _compute_count_upper(counts: np.ndarray) -> float:
     return max_val * 1.05
 
 
-def _autoscale_horizontal_hist(plot: QwtPlot, bin_edges: np.ndarray, counts: np.ndarray) -> None:
-    """Autoscale a horizontal histogram plot."""
-    if not QWT_AVAILABLE or QwtPlot is None:
-        logging.warning("QWT not available, skipping histogram autoscaling")
+def _set_plot_axis_range(plot, axis, min_val: float, max_val: float) -> None:
+    """Set a plot axis range for Qwt or compatibility-backed plots."""
+    if plot is None or not hasattr(plot, "setAxisScale"):
         return
-        
+    try:
+        plot.setAxisScale(axis, float(min_val), float(max_val))
+    except Exception as exc:
+        logging.debug("Could not autoscale axis %s: %s", axis, exc)
+
+
+def _autoscale_horizontal_hist(plot, bin_edges: np.ndarray, counts: np.ndarray) -> None:
     xmin, xmax = _compute_edge_range(bin_edges)
     ymax = _compute_count_upper(counts)
-    
-    # Validate axis ranges to prevent NaN crash in Qwt
+
     if not (np.isfinite(xmin) and np.isfinite(xmax)):
         logging.warning("Invalid X axis range (NaN/Inf detected), using default range")
         xmin, xmax = 0.0, 1.0
     if not np.isfinite(ymax):
         logging.warning("Invalid Y axis range (NaN/Inf detected), using default range")
         ymax = 1.0
-    
-    for axis in (QwtPlot.xBottom, QwtPlot.xTop):
-        plot.setAxisScale(axis, xmin, xmax)
-    for axis in (QwtPlot.yLeft, QwtPlot.yRight):
-        plot.setAxisScale(axis, 0.0, ymax)
+
+    for axis in ("bottom", "top"):
+        _set_plot_axis_range(plot, axis, xmin, xmax)
+    for axis in ("left", "right"):
+        _set_plot_axis_range(plot, axis, 0.0, ymax)
 
 
-def _autoscale_vertical_hist(plot: QwtPlot, bin_edges: np.ndarray, counts: np.ndarray) -> None:
-    """Autoscale a vertical histogram plot."""
-    if not QWT_AVAILABLE or QwtPlot is None:
-        logging.warning("QWT not available, skipping histogram autoscaling")
-        return
-        
+def _autoscale_vertical_hist(plot, bin_edges: np.ndarray, counts: np.ndarray) -> None:
     ymin, ymax = _compute_edge_range(bin_edges)
     xmax = _compute_count_upper(counts)
-    
-    # Validate axis ranges to prevent NaN crash in Qwt
+
     if not (np.isfinite(ymin) and np.isfinite(ymax)):
         logging.warning("Invalid Y axis range (NaN/Inf detected), using default range")
         ymin, ymax = 0.0, 1.0
     if not np.isfinite(xmax):
         logging.warning("Invalid X axis range (NaN/Inf detected), using default range")
         xmax = 1.0
-    
-    for axis in (QwtPlot.yLeft, QwtPlot.yRight):
-        plot.setAxisScale(axis, ymin, ymax)
-    for axis in (QwtPlot.xBottom, QwtPlot.xTop):
-        plot.setAxisScale(axis, 0.0, xmax)
+
+    for axis in ("left", "right"):
+        _set_plot_axis_range(plot, axis, ymin, ymax)
+    for axis in ("bottom", "top"):
+        _set_plot_axis_range(plot, axis, 0.0, xmax)
 
 
 def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidation: bool = False) -> None:
     if not getattr(ndxplorer, "_deferred_init_done", False) or ndxplorer.g_2dplot is None:
         logging.info("update_plots: deferred_init not done or g_2dplot is None")
         return
-    logging.info("update_plots(skip_clustering=%s, skip_cache_invalidation=%s)", skip_clustering, skip_cache_invalidation)
+    logging.debug("update_plots(skip_clustering=%s, skip_cache_invalidation=%s)", skip_clustering, skip_cache_invalidation)
     if not skip_cache_invalidation:
         ndxplorer.invalidate_values_cache()
 
@@ -493,7 +480,7 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
     data_source = ndxplorer.data_source
     is_empty = data_source.empty
     has_shape = data_source.values.shape[0] > 0 if hasattr(data_source.values, 'shape') else False
-    logging.info(f"update_plots: data_source.empty={is_empty}, has_data={has_shape}")
+    logging.debug(f"update_plots: data_source.empty={is_empty}, has_data={has_shape}")
     
     if data_source.empty or data_source.values.shape[0] == 0:
         logging.info("update_plots: Data source is empty, showing empty plots")
@@ -505,7 +492,7 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
     ndxplorer.update_parameter_names()
     ndxplorer.update_cmap()
 
-    logging.info(f"update_plots: Checking clustering: _use_clustering={ndxplorer._use_clustering}, skip_clustering={skip_clustering}")
+    logging.debug(f"update_plots: Checking clustering: _use_clustering={ndxplorer._use_clustering}, skip_clustering={skip_clustering}")
     if ndxplorer._use_clustering and ndxplorer._cluster_labels is None and not skip_clustering:
         global hdbscan  # noqa: PLW0603
         if hdbscan is None:
@@ -521,12 +508,12 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
             return
 
     data_ready = ndxplorer.is_data_ready()
-    logging.info(f"update_plots: data_ready={data_ready}")
+    logging.debug(f"update_plots: data_ready={data_ready}")
     if data_ready:
-        logging.info("Calling update_histograms from update_plots")
+        logging.debug("Calling update_histograms from update_plots")
         update_histograms(ndxplorer)
     else:
-        logging.info("update_plots: data/axes not ready, skipping histogram update")
+        logging.debug("update_plots: data/axes not ready, skipping histogram update")
 
     # Keep the NDxplorer background/logo visible whenever no usable data is present.
     # Use the public data_source accessor so data-manager-backed loads are handled correctly.
@@ -562,7 +549,7 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
         if plot_container is not None:
             plot_container.setVisible(True)
             plot_container.raise_()
-            logging.info("Made plot container visible and raised to front")
+            logging.debug("Made plot container visible and raised to front")
     except Exception as e:
         logging.debug(f"Could not make plot container visible: {e}")
 
@@ -571,17 +558,17 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
         if hasattr(ndxplorer, 'g_xplot') and ndxplorer.g_xplot:
             ndxplorer.g_xplot.setVisible(True)
             ndxplorer.g_xplot.raise_()
-            logging.info("Forced X marginal plot to be visible")
+            logging.debug("Forced X marginal plot to be visible")
         if hasattr(ndxplorer, 'g_yplot') and ndxplorer.g_yplot:
             ndxplorer.g_yplot.setVisible(True)
             ndxplorer.g_yplot.raise_()
-            logging.info("Forced Y marginal plot to be visible")
+            logging.debug("Forced Y marginal plot to be visible")
         if hasattr(ndxplorer, 'g_zplot') and ndxplorer.g_zplot:
             z_visible = ndxplorer.groupBox_3.isChecked() if hasattr(ndxplorer, 'groupBox_3') else True
             ndxplorer.g_zplot.setVisible(z_visible)
             if z_visible:
                 ndxplorer.g_zplot.raise_()
-            logging.info(f"Forced Z marginal plot visibility: {z_visible}")
+            logging.debug(f"Forced Z marginal plot visibility: {z_visible}")
     except Exception as e:
         logging.warning(f"Failed to force marginal plots visibility: {e}")
 
@@ -613,19 +600,17 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
 
     # Extract 1D histogram data (edges, counts)
     x_bin_edges, x_counts = x_hist
-    x_edges_for_plot = x_bin_edges[1:]
     
     # Update X marginal
-    ndxplorer.g_xhist_m.set_data(x_edges_for_plot, x_counts)
+    ndxplorer.g_xhist_m.set_data(x_bin_edges, x_counts)
     _autoscale_horizontal_hist(ndxplorer.g_xplot, x_bin_edges, x_counts)
     ndxplorer.g_xplot.replot()
 
     # Extract Y histogram data (edges, counts)
     y_bin_edges, y_counts = y_hist
-    y_edges_for_plot = y_bin_edges[1:]
     
     # Update Y marginal: counts on X-axis (horizontal), edges on Y-axis (vertical)
-    ndxplorer.g_yhist_m.set_data(y_counts, y_edges_for_plot)
+    ndxplorer.g_yhist_m.set_data(y_counts, y_bin_edges)
     _autoscale_vertical_hist(ndxplorer.g_yplot, y_bin_edges, y_counts)
     ndxplorer.g_yplot.replot()
 
@@ -638,8 +623,7 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
         and is_valid_histogram(z_hist)
     ):
         z_bin_edges, z_counts = z_hist
-        z_edges_for_plot = z_bin_edges[1:]
-        ndxplorer.g_zhist_m.set_data(z_edges_for_plot, z_counts)
+        ndxplorer.g_zhist_m.set_data(z_bin_edges, z_counts)
         _autoscale_horizontal_hist(ndxplorer.g_zplot, z_bin_edges, z_counts)
         ndxplorer.g_zplot.replot()
 
@@ -663,38 +647,29 @@ def update_plots(ndxplorer, skip_clustering: bool = False, skip_cache_invalidati
             if z_visible:
                 ndxplorer.g_zplot.raise_()
                 ndxplorer.g_zplot.replot()
-        logging.info("Final marginal plot visibility and replot completed")
+        logging.debug("Final marginal plot visibility and replot completed")
     except Exception as e:
         logging.warning(f"Failed in final marginal plot update: {e}")
 
 
 def _show_empty_plots(ndxplorer):
     """Show empty placeholder plots when no data is available."""
-    if not QWT_AVAILABLE or QwtPlot is None:
-        logging.warning("QWT not available, skipping empty plot setup")
-        return
-        
     ndxplorer.g_xhist_m.set_data([0, 1], [0, 0])
     ndxplorer.g_yhist_m.set_data([0, 0], [0, 1])
     ndxplorer.g_zhist_m.set_data([0, 1], [0, 0])
     ndxplorer.cax.set_data(np.zeros((1, 1)))
     _show_background(ndxplorer)
     
-    # Handle both backends for axis scales
-    if getattr(ndxplorer, '_use_simple_backend', True):
-        ndxplorer.g_2dplot.set_axis_scale('xBottom', 0, 1)
-        ndxplorer.g_2dplot.set_axis_scale('yLeft', 0, 1)
-    else:
-        ndxplorer.g_2dplot.setAxisScale(QwtPlot.xBottom, 0, 1)
-        ndxplorer.g_2dplot.setAxisScale(QwtPlot.yLeft, 0, 1)
-    ndxplorer.g_xplot.setAxisScale(QwtPlot.xBottom, 0, 1)
-    ndxplorer.g_xplot.setAxisScale(QwtPlot.xTop, 0, 1)
-    ndxplorer.g_xplot.setAxisScale(QwtPlot.yLeft, 0, 1)
-    ndxplorer.g_yplot.setAxisScale(QwtPlot.yLeft, 0, 1)
-    ndxplorer.g_yplot.setAxisScale(QwtPlot.yRight, 0, 1)
-    ndxplorer.g_yplot.setAxisScale(QwtPlot.xBottom, 0, 1)
-    ndxplorer.g_zplot.setAxisScale(QwtPlot.xBottom, 0, 1)
-    ndxplorer.g_zplot.setAxisScale(QwtPlot.yLeft, 0, 1)
+    ndxplorer.g_2dplot.set_axis_scale('xBottom', 0, 1)
+    ndxplorer.g_2dplot.set_axis_scale('yLeft', 0, 1)
+    ndxplorer.g_xplot.setAxisScale("bottom", 0, 1)
+    ndxplorer.g_xplot.setAxisScale("top", 0, 1)
+    ndxplorer.g_xplot.setAxisScale("left", 0, 1)
+    ndxplorer.g_yplot.setAxisScale("left", 0, 1)
+    ndxplorer.g_yplot.setAxisScale("right", 0, 1)
+    ndxplorer.g_yplot.setAxisScale("bottom", 0, 1)
+    ndxplorer.g_zplot.setAxisScale("bottom", 0, 1)
+    ndxplorer.g_zplot.setAxisScale("left", 0, 1)
     ndxplorer.g_xplot.replot()
     ndxplorer.g_yplot.replot()
     ndxplorer.g_zplot.replot()

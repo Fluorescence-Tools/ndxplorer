@@ -12,8 +12,6 @@ from qtpy import QtCore, QtGui, QtWidgets
 
 from ..logging_config import logging
 
-from qwt.plot import QwtPlot
-
 # Import settings functions
 from ..settings import get_settings_path
 from .feedback import FriendlyErrorPresenter
@@ -382,47 +380,41 @@ class AxisControlDialog(QtWidgets.QDialog):
 
         try:
             # X Plot
-            self.x_plot_bottom.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.xBottom))
-            self.x_plot_top.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.xTop))
-            self.x_plot_left.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.yLeft))
-            self.x_plot_right.setChecked(self.parent.g_xplot.axisEnabled(QwtPlot.yRight))
+            self.x_plot_bottom.setChecked(self.parent.g_xplot.axisEnabled("bottom"))
+            self.x_plot_top.setChecked(self.parent.g_xplot.axisEnabled("top"))
+            self.x_plot_left.setChecked(self.parent.g_xplot.axisEnabled("left"))
+            self.x_plot_right.setChecked(self.parent.g_xplot.axisEnabled("right"))
 
             # Y Plot
-            self.y_plot_bottom.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.xBottom))
-            self.y_plot_top.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.xTop))
-            self.y_plot_left.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.yLeft))
-            self.y_plot_right.setChecked(self.parent.g_yplot.axisEnabled(QwtPlot.yRight))
+            self.y_plot_bottom.setChecked(self.parent.g_yplot.axisEnabled("bottom"))
+            self.y_plot_top.setChecked(self.parent.g_yplot.axisEnabled("top"))
+            self.y_plot_left.setChecked(self.parent.g_yplot.axisEnabled("left"))
+            self.y_plot_right.setChecked(self.parent.g_yplot.axisEnabled("right"))
 
             # Z Plot
             if hasattr(self.parent, 'groupBox_3'):
                 self.z_plot_enable.setChecked(self.parent.groupBox_3.isChecked())
 
             if hasattr(self.parent, 'g_zplot'):
-                self.z_plot_bottom.setChecked(self.parent.g_zplot.axisEnabled(QwtPlot.xBottom))
-                self.z_plot_left.setChecked(self.parent.g_zplot.axisEnabled(QwtPlot.yLeft))
+                self.z_plot_bottom.setChecked(self.parent.g_zplot.axisEnabled("bottom"))
+                self.z_plot_left.setChecked(self.parent.g_zplot.axisEnabled("left"))
 
                 # Enable/disable Z plot axis checkboxes based on Z plot visibility
                 self.z_plot_bottom.setEnabled(self.z_plot_enable.isChecked())
                 self.z_plot_left.setEnabled(self.z_plot_enable.isChecked())
 
-            # 2D Plot - handle both backends
-            if getattr(self.parent, '_use_simple_backend', True):
-                self.plot_2d_bottom.setChecked(self.parent.g_2dplot.axis_enabled('xBottom'))
-                self.plot_2d_top.setChecked(self.parent.g_2dplot.axis_enabled('xTop'))
-                self.plot_2d_left.setChecked(self.parent.g_2dplot.axis_enabled('yLeft'))
-                self.plot_2d_right.setChecked(self.parent.g_2dplot.axis_enabled('yRight'))
-            else:
-                self.plot_2d_bottom.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.xBottom))
-                self.plot_2d_top.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.xTop))
-                self.plot_2d_left.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.yLeft))
-                self.plot_2d_right.setChecked(self.parent.g_2dplot.axisEnabled(QwtPlot.yRight))
+            # 2D Plot
+            self.plot_2d_bottom.setChecked(self.parent.g_2dplot.axis_enabled('xBottom'))
+            self.plot_2d_top.setChecked(self.parent.g_2dplot.axis_enabled('xTop'))
+            self.plot_2d_left.setChecked(self.parent.g_2dplot.axis_enabled('yLeft'))
+            self.plot_2d_right.setChecked(self.parent.g_2dplot.axis_enabled('yRight'))
 
             # Overlay Plot
             if hasattr(self.parent, 'overlay_plot'):
-                self.overlay_plot_bottom.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.xBottom))
-                self.overlay_plot_top.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.xTop))
-                self.overlay_plot_left.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.yLeft))
-                self.overlay_plot_right.setChecked(self.parent.overlay_plot.axisEnabled(QwtPlot.yRight))
+                self.overlay_plot_bottom.setChecked(self.parent.overlay_plot.axisEnabled("bottom"))
+                self.overlay_plot_top.setChecked(self.parent.overlay_plot.axisEnabled("top"))
+                self.overlay_plot_left.setChecked(self.parent.overlay_plot.axisEnabled("left"))
+                self.overlay_plot_right.setChecked(self.parent.overlay_plot.axisEnabled("right"))
 
             # Load axis label settings
             if hasattr(self.parent, 'axis_label_settings'):
@@ -526,40 +518,33 @@ class AxisControlDialog(QtWidgets.QDialog):
             return
 
         try:
-            self.parent.g_xplot.enableAxis(QwtPlot.xBottom, self.x_plot_bottom.isChecked())
-            self.parent.g_xplot.enableAxis(QwtPlot.xTop, self.x_plot_top.isChecked())
-            self.parent.g_xplot.enableAxis(QwtPlot.yLeft, self.x_plot_left.isChecked())
-            self.parent.g_xplot.enableAxis(QwtPlot.yRight, self.x_plot_right.isChecked())
+            self.parent.g_xplot.enableAxis("bottom", self.x_plot_bottom.isChecked())
+            self.parent.g_xplot.enableAxis("top", self.x_plot_top.isChecked())
+            self.parent.g_xplot.enableAxis("left", self.x_plot_left.isChecked())
+            self.parent.g_xplot.enableAxis("right", self.x_plot_right.isChecked())
 
-            self.parent.g_yplot.enableAxis(QwtPlot.xBottom, self.y_plot_bottom.isChecked())
-            self.parent.g_yplot.enableAxis(QwtPlot.xTop, self.y_plot_top.isChecked())
-            self.parent.g_yplot.enableAxis(QwtPlot.yLeft, self.y_plot_left.isChecked())
-            self.parent.g_yplot.enableAxis(QwtPlot.yRight, self.y_plot_right.isChecked())
+            self.parent.g_yplot.enableAxis("bottom", self.y_plot_bottom.isChecked())
+            self.parent.g_yplot.enableAxis("top", self.y_plot_top.isChecked())
+            self.parent.g_yplot.enableAxis("left", self.y_plot_left.isChecked())
+            self.parent.g_yplot.enableAxis("right", self.y_plot_right.isChecked())
 
             if hasattr(self.parent, 'groupBox_3'):
                 self.parent.groupBox_3.setChecked(self.z_plot_enable.isChecked())
 
             if hasattr(self.parent, 'g_zplot'):
-                self.parent.g_zplot.enableAxis(QwtPlot.xBottom, self.z_plot_bottom.isChecked())
-                self.parent.g_zplot.enableAxis(QwtPlot.yLeft, self.z_plot_left.isChecked())
+                self.parent.g_zplot.enableAxis("bottom", self.z_plot_bottom.isChecked())
+                self.parent.g_zplot.enableAxis("left", self.z_plot_left.isChecked())
 
-            # Handle both backends
-            if getattr(self.parent, '_use_simple_backend', True):
-                self.parent.g_2dplot.enable_axis('xBottom', self.plot_2d_bottom.isChecked())
-                self.parent.g_2dplot.enable_axis('xTop', self.plot_2d_top.isChecked())
-                self.parent.g_2dplot.enable_axis('yLeft', self.plot_2d_left.isChecked())
-                self.parent.g_2dplot.enable_axis('yRight', self.plot_2d_right.isChecked())
-            else:
-                self.parent.g_2dplot.enableAxis(QwtPlot.xBottom, self.plot_2d_bottom.isChecked())
-                self.parent.g_2dplot.enableAxis(QwtPlot.xTop, self.plot_2d_top.isChecked())
-                self.parent.g_2dplot.enableAxis(QwtPlot.yLeft, self.plot_2d_left.isChecked())
-                self.parent.g_2dplot.enableAxis(QwtPlot.yRight, self.plot_2d_right.isChecked())
+            self.parent.g_2dplot.enable_axis('xBottom', self.plot_2d_bottom.isChecked())
+            self.parent.g_2dplot.enable_axis('xTop', self.plot_2d_top.isChecked())
+            self.parent.g_2dplot.enable_axis('yLeft', self.plot_2d_left.isChecked())
+            self.parent.g_2dplot.enable_axis('yRight', self.plot_2d_right.isChecked())
 
             if hasattr(self.parent, 'overlay_plot'):
-                self.parent.overlay_plot.enableAxis(QwtPlot.xBottom, self.overlay_plot_bottom.isChecked())
-                self.parent.overlay_plot.enableAxis(QwtPlot.xTop, self.overlay_plot_top.isChecked())
-                self.parent.overlay_plot.enableAxis(QwtPlot.yLeft, self.overlay_plot_left.isChecked())
-                self.parent.overlay_plot.enableAxis(QwtPlot.yRight, self.overlay_plot_right.isChecked())
+                self.parent.overlay_plot.enableAxis("bottom", self.overlay_plot_bottom.isChecked())
+                self.parent.overlay_plot.enableAxis("top", self.overlay_plot_top.isChecked())
+                self.parent.overlay_plot.enableAxis("left", self.overlay_plot_left.isChecked())
+                self.parent.overlay_plot.enableAxis("right", self.overlay_plot_right.isChecked())
 
             if hasattr(self.parent, 'axis_label_settings'):
                 settings = {

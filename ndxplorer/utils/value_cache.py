@@ -96,7 +96,7 @@ def get_value_mask(ndxplorer: "NDXplorer", use_bitfield: bool = False) -> np.nda
         return ndxplorer._cached_values
 
     logging.debug("Cache invalid, computing fresh data using column-filtered mask")
-    logging.info(f"get_value_mask: Retrieved {len(selections)} selections from plot_control")
+    logging.debug(f"get_value_mask: Retrieved {len(selections)} selections from plot_control")
     for i, sel in enumerate(selections):
         sel_type = type(sel).__name__
         sel_name = getattr(sel, 'name', 'unnamed')

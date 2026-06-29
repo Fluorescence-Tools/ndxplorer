@@ -176,6 +176,25 @@ def open_files(
         logging.debug("Handled mfd_hdf5; returning before generic loader.")
         return
 
+    # --- Burst analysis folder (bi4_bur/*.bur) -----------------------------
+    elif file_type == "burst_dir":
+        if not file_handles_seq:
+            folder = QtWidgets.QFileDialog.getExistingDirectory(
+                ndxplorer, "Burst analysis folder", working_path
+            )
+            file_handles_seq = [folder] if folder else []
+        if not file_handles_seq:
+            return
+        _update_working_path(ndxplorer, file_handles_seq[0])
+        # read_burst_analysis takes a single base path containing bi4_bur/ (or
+        # bur/). Route it through the shared async loader so the result is
+        # finalized via the data_source property (data_manager) like every other
+        # reader — previously burst_dir fell through to the CSV loader, which
+        # tried to read the directory itself ("Is a directory") and loaded zero
+        # bursts, leaving the bundled example data on screen.
+        data_reader = reader.read_burst_analysis
+        reader_input = str(file_handles_seq[0])
+
     # --- Generic CSV loader ------------------------------------------------
     else:
         if not file_handles_seq:
@@ -186,7 +205,7 @@ def open_files(
                 "Text files (*.csv *.dat *.er4 *.txt);;All files (*.*)",
             )
         _update_working_path(ndxplorer, file_handles_seq[0] if file_handles_seq else None)
-        
+
         # Auto-detect .er4 in generic loader
         if any(str(f).lower().endswith(".er4") for f in file_handles_seq):
             data_reader = reader.read_csv_sampling
@@ -205,11 +224,19 @@ def open_files(
         def load_callable():
             # Perform initial raw data load
             ds = data_reader(reader_input)
-            
+
+            # Re-read equations/constants at execution time (not just the values
+            # captured above): when a viewer is opened right after construction the
+            # settings — and thus the equations that derive Sg/Sr/Proximity ratio/
+            # FRET etc. — may still be loading in deferred init, so the captured
+            # copies can be stale/empty.
+            eqs = getattr(ndxplorer, "equations", None) or equations
+            cs = getattr(ndxplorer, "constants", None) or constants
+
             # If successful and not empty, perform heavy column computations in background
-            if ds and not ds.empty:
+            if ds is not None and not ds.empty:
                 logging.info(f"Background: Computing columns for {ds.size} rows")
-                ds.compute_columns(constants=constants, equations=equations)
+                ds.compute_columns(constants=cs, equations=eqs)
                 logging.info("Background: Column computation complete.")
             return ds
 

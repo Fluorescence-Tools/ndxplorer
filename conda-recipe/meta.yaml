@@ -42,8 +42,6 @@ requirements:
     - typing-extensions
     - matplotlib
     - scipy
-    - guidata 3.0.*
-    - guiqwt
     - umap-learn
     - pyarrow
     - boost-histogram

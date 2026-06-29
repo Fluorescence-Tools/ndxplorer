@@ -6,6 +6,7 @@ from .column_selection_dialog import ColumnSelectionDialog
 from .gaussian_settings_dialog import GaussianSettingsDialog
 from .parameter_editor import ParameterEditor
 from .feedback import ProgressPane, FriendlyErrorPresenter
+from .dataframe_editor import DataFrameEditor
 
 __all__ = [
     'AxisControlDialog',
@@ -14,5 +15,6 @@ __all__ = [
     'GaussianSettingsDialog',
     'ParameterEditor',
     'ProgressPane',
-    'FriendlyErrorPresenter'
+    'FriendlyErrorPresenter',
+    'DataFrameEditor',
 ]

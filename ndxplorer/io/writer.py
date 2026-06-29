@@ -61,6 +61,37 @@ def save_burst_ids(
     progress_window.close()
 
 
+def save_burst_ids_headless(
+        folder_name: str,
+        selections: List[DataSelection],
+        data_source: DataSource
+):
+    """Headless version of save_burst_ids that does not require Qt/GUI components."""
+    folder_path = Path(folder_name)
+    folder_path.mkdir(parents=True, exist_ok=True)
+    logging.info(f"Saving burst IDs to {folder_path}")
+
+    df = data_source.data
+    mask = data_source.get_mask(selections=selections)
+
+    mask_flat = np.sum(mask, axis=0).astype(bool)
+    mas = np.broadcast_to(mask_flat, (df.shape[1], df.shape[0]))
+    dm = df.mask(mas.T)
+
+    dm = dm.loc[dm['First File'] == dm['Last File']]
+    grouped = dm.groupby('First File')
+
+    for filename, g in grouped:
+        fn = Path(filename).name
+        ext = Path(filename).suffix
+        bst_file = folder_path / f"{fn}.bst"
+
+        a = np.vstack([g["First Photon"], g["Last Photon"]]).astype(int)
+        np.savetxt(bst_file, a.T, fmt='%i', delimiter='\t')
+        logging.info(f"Saved burst ID file: {bst_file}")
+
+
+
 def save_clustering_data(
         folder_name: str,
         data_source: DataSource,

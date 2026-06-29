@@ -49,7 +49,7 @@ class PerformanceConfig:
     histogram_threads : int
         Number of threads for boost-histogram (-1 for auto-detect, 0 or 1 for single-threaded, default: -1)
     plot_backend : str
-        Plotting backend to use ('guiqwt', 'matplotlib', 'pyqtgraph', default: 'guiqwt')
+        Plotting backend to use ('pyqtgraph', 'matplotlib', default: 'pyqtgraph')
     """
     
     use_bitfield_masks: bool = True
@@ -63,7 +63,7 @@ class PerformanceConfig:
     parallel_histogram: bool = True
     aggressive_caching: bool = True
     histogram_threads: int = -1
-    plot_backend: str = "guiqwt"
+    plot_backend: str = "pyqtgraph"
     
     @classmethod
     def from_environment(cls) -> "PerformanceConfig":
@@ -80,7 +80,7 @@ class PerformanceConfig:
             parallel_histogram=_get_env_with_settings_override("NDXPLORER_PARALLEL_HISTOGRAM", True),
             aggressive_caching=_get_env_with_settings_override("NDXPLORER_AGGRESSIVE_CACHING", True),
             histogram_threads=_get_int_env_with_settings_override("NDXPLORER_HISTOGRAM_THREADS", -1),
-            plot_backend=_get_str_env_with_settings_override("NDXPLORER_PLOT_BACKEND", "guiqwt"),
+            plot_backend=_get_str_env_with_settings_override("NDXPLORER_PLOT_BACKEND", "pyqtgraph"),
         )
     
     @classmethod
@@ -98,9 +98,9 @@ class PerformanceConfig:
             parallel_histogram=True,
             aggressive_caching=True,
             histogram_threads=-1,
-            plot_backend="guiqwt",
+            plot_backend="pyqtgraph",
         )
-    
+
     @classmethod
     def low_memory(cls) -> "PerformanceConfig":
         """Configuration optimized for low memory usage."""
@@ -116,7 +116,6 @@ class PerformanceConfig:
             parallel_histogram=False,
             aggressive_caching=False,
             histogram_threads=1,
-            plot_backend="guiqwt",
         )
     
     @classmethod

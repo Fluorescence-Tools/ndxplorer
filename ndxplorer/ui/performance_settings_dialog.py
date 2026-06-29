@@ -180,15 +180,14 @@ class PerformanceSettingsDialog(QtWidgets.QDialog):
         backend_label = QtWidgets.QLabel("Plot Backend:")
         backend_label.setToolTip(
             "Choose the plotting backend for 2D plots and visualizations:\n"
-            "• guiqwt: Fast, lightweight (default, recommended)\n"
+            "• pyqtgraph: Fast interactive plots (default)\n"
             "• matplotlib: Feature-rich, widely used\n"
-            "• pyqtgraph: Fast interactive plots\n"
             "Changes require restarting ndxplorer to take effect."
         )
         self.backend_combo = QtWidgets.QComboBox()
-        self.backend_combo.addItems(["guiqwt", "matplotlib", "pyqtgraph"])
+        self.backend_combo.addItems(["pyqtgraph", "matplotlib"])
         self.backend_combo.setToolTip(
-            "Select plotting backend. guiqwt is recommended for best performance."
+            "Select plotting backend. pyqtgraph is recommended for best performance."
         )
         backend_layout.addWidget(backend_label)
         backend_layout.addWidget(self.backend_combo)

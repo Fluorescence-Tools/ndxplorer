@@ -18,8 +18,6 @@ umap = None
 from qtpy import QtCore
 from qtpy import QtGui, QtWidgets
 
-import matplotlib.pyplot as plt
-
 try:
     import pyqtgraph as pg
     PYQTGRAPH_AVAILABLE = True
@@ -245,7 +243,8 @@ def create_2d_umap_plot(parent, embedding, mask, cluster_labels=None):
         unique_labels = np.unique(filtered_cluster_labels)
 
         # Create a colormap
-        colors = plt.cm.viridis(np.linspace(0, 1, len(unique_labels)))
+        cmap = pg.colormap.get("viridis")
+        colors = cmap.map(np.linspace(0, 1, len(unique_labels)), mode="float")
 
         # Create a legend
         legend = pg.LegendItem(offset=(70, 30))
@@ -338,7 +337,8 @@ def create_3d_umap_plot(parent, embedding, mask, cluster_labels=None):
         unique_labels = np.unique(filtered_cluster_labels)
 
         # Create a colormap
-        colors = plt.cm.viridis(np.linspace(0, 1, len(unique_labels)))
+        cmap = pg.colormap.get("viridis")
+        colors = cmap.map(np.linspace(0, 1, len(unique_labels)), mode="float")
 
         # Create a scatter plot for each cluster
         for i, label in enumerate(unique_labels):

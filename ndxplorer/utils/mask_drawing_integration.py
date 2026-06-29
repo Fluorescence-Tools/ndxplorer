@@ -375,45 +375,16 @@ class MaskDrawingIntegration(QtCore.QObject):
             
             logging.info(f"overlay_plot exists: {self.parent.overlay_plot}")
             
-            # Determine the backend and get the appropriate canvas/widget
-            use_simple = getattr(self.parent, '_use_simple_backend', True)
-            
-            if use_simple:
-                # Simple backend: use the overlay widget directly
-                overlay_widget = self.parent.overlay_plot
-                logging.info(f"Using simple backend, overlay_widget: {overlay_widget}")
-                
-                if overlay_widget is None:
-                    logging.error("overlay_widget is None")
-                    return
-                
-                # Remove the rectangular selection event filter if it exists
-                if hasattr(self.parent, 'mouse_event_filter') and self.parent.mouse_event_filter is not None:
-                    logging.info("Removing mouse_event_filter from overlay widget")
-                    overlay_widget.removeEventFilter(self.parent.mouse_event_filter)
-                
-                # Install our drawing event filter on the overlay widget
-                logging.info(f"Installing event filter {self} on overlay widget")
-                overlay_widget.installEventFilter(self)
-                logging.info("Event filter installed successfully")
-            else:
-                # guiqwt backend: use the canvas
-                overlay_canvas = self.parent.overlay_plot.canvas()
-                logging.info(f"Using guiqwt backend, overlay_canvas: {overlay_canvas}")
-                
-                if overlay_canvas is None:
-                    logging.error("overlay_canvas is None")
-                    return
-                
-                # Remove the rectangular selection event filter if it exists
-                if hasattr(self.parent, 'mouse_event_filter') and self.parent.mouse_event_filter is not None:
-                    logging.info("Removing mouse_event_filter from overlay canvas")
-                    overlay_canvas.removeEventFilter(self.parent.mouse_event_filter)
-                
-                # Install our drawing event filter on the overlay canvas
-                logging.info(f"Installing event filter {self} on overlay canvas")
-                overlay_canvas.installEventFilter(self)
-                logging.info("Event filter installed successfully")
+            overlay_widget = self.parent.overlay_plot
+            if overlay_widget is None:
+                logging.error("overlay_widget is None")
+                return
+
+            if hasattr(self.parent, 'mouse_event_filter') and self.parent.mouse_event_filter is not None:
+                overlay_widget.removeEventFilter(self.parent.mouse_event_filter)
+
+            overlay_widget.installEventFilter(self)
+            logging.info("Event filter installed on overlay widget")
             
             # Ensure cursor overlay is visible when drawing mode is enabled
             if self._mask_overlay_widget is not None:
@@ -434,31 +405,12 @@ class MaskDrawingIntegration(QtCore.QObject):
                 # Hide the mask overlay when drawing mode is disabled
                 self._mask_overlay_widget.clear_mask()
             
-            # Determine the backend and get the appropriate canvas/widget
-            use_simple = getattr(self.parent, '_use_simple_backend', True)
-            
-            if use_simple:
-                # Simple backend: use the overlay widget directly
-                if hasattr(self.parent, 'overlay_plot'):
-                    overlay_widget = self.parent.overlay_plot
-                    if overlay_widget is not None:
-                        # Remove our drawing event filter from overlay widget
-                        overlay_widget.removeEventFilter(self)
-                        
-                        # Re-enable rectangular selection if mouse_event_filter exists
-                        if hasattr(self.parent, 'mouse_event_filter') and self.parent.mouse_event_filter is not None:
-                            overlay_widget.installEventFilter(self.parent.mouse_event_filter)
-            else:
-                # guiqwt backend: use the canvas
-                if hasattr(self.parent, 'overlay_plot'):
-                    overlay_canvas = self.parent.overlay_plot.canvas()
-                    if overlay_canvas is not None:
-                        # Remove our drawing event filter from overlay canvas
-                        overlay_canvas.removeEventFilter(self)
-                        
-                        # Re-enable rectangular selection if mouse_event_filter exists
-                        if hasattr(self.parent, 'mouse_event_filter') and self.parent.mouse_event_filter is not None:
-                            overlay_canvas.installEventFilter(self.parent.mouse_event_filter)
+            if hasattr(self.parent, 'overlay_plot'):
+                overlay_widget = self.parent.overlay_plot
+                if overlay_widget is not None:
+                    overlay_widget.removeEventFilter(self)
+                    if hasattr(self.parent, 'mouse_event_filter') and self.parent.mouse_event_filter is not None:
+                        overlay_widget.installEventFilter(self.parent.mouse_event_filter)
             
             from ..logging_config import logging
             logging.info("Mask drawing mode disabled (rectangular selection enabled, draw overlays hidden)")

@@ -135,3 +135,47 @@
 # with D in µm²/s and the result expressed in nm.
 - Rh_nm_from_D: >-
     ('KB' * 'T_K' * 1.0e21) / (18.84955592153876 * 'eta_Pa_s' * 'D_um2_s_from_td')
+
+# =====================================================================
+# FRET-line transformations of E and <tauD(A)>F  (Barth et al., J. Chem.
+# Phys. 156, 141501 (2022) — "Theory of FRET-lines").
+#
+# These build the alternative representations of the two FRET observables
+# used in the variance plot (Fig. 3) and the moment plot (1-E)*E_tau vs E
+# (Fig. 8 / Eq. 44–45). They reuse the already-defined columns:
+#   'FRET efficiency'  = E              (intensity-based FRET efficiency)
+#   'Tau (green)'      = <tauD(A)>F     (fluorescence-weighted donor lifetime)
+#   '<tauD(A)>x'       = (1-E)*tauD0    (species-weighted lifetime, Eq. 22)
+#   'Var_tauD(A))'     = Var(tauD(A))   (= <tauD(A)>F*<tauD(A)>x - <tauD(A)>x^2, Eq. 34)
+# and the constant 'tauD0' = tauD(0).
+# (Columns referencing a missing input are silently skipped, so non-lifetime
+#  data sets are unaffected.)
+
+# Intensity-weighted FRET efficiency from the fluorescence-weighted lifetime
+#   E_tau = 1 - <tauD(A)>F / tauD(0)            (Eq. 35)
+- E_tau: >-
+    1. - 'Tau (green)' / 'tauD0'
+
+# Variance of the FRET-efficiency distribution from the lifetime moments
+#   Var(E) = Var(tauD(A)) / tauD(0)^2           (Eq. 36)
+#          = (1-E) * (E - E_tau)                (equivalent closed form, Eq. 34)
+# This is the lifetime-based analogue of the BVA variance (Fig. 3).
+- Var(E): >-
+    'Var_tauD(A))' / 'tauD0'**2.0
+
+# Standard deviation of E (BVA-comparable y-axis of Fig. 3, top panels).
+# Magnitude of Var(E); bursts below the static line (Var(E)<0 from noise)
+# are mapped to their absolute value before the square root.
+- sigma_E: >-
+    abs('Var(E)')**0.5
+
+# Moment-difference representation Gamma = (1-E) * E_tau   (Eq. 44; y-axis of Fig. 8)
+#   Gamma = (1-E) * (1 - <tauD(A)>F/tauD0) = (1-E) * E_tau
+- (1-E)*E_tau: >-
+    (1. - 'FRET efficiency') * 'E_tau'
+
+# Static reference line in the moment representation:
+#   Gamma_static = (1-E) * E                    (Eq. 45)
+# A burst with no sub-burst dynamics (E_tau == E) falls on this parabola.
+- (1-E)*E: >-
+    (1. - 'FRET efficiency') * 'FRET efficiency'

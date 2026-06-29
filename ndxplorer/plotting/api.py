@@ -69,7 +69,16 @@ def plot_scatter(
     elif plot_type == "density":
         return scatter.create_density_scatter(ndxplorer, x_data, y_data, **kwargs)
     else:
-        return scatter.create_scatter_plot(ndxplorer, x_data, y_data, color_data, weights, **kwargs)
+        size_data = kwargs.pop("size_data", None)
+        return scatter.create_scatter_plot(
+            ndxplorer,
+            x_data,
+            y_data,
+            color_data,
+            size_data,
+            weights,
+            **kwargs,
+        )
 
 
 def apply_colormap(
@@ -128,7 +137,7 @@ def update_plots(
         histograms.update_histogram_display(ndxplorer, **kwargs)
     
     if update_colormap:
-        colormaps.update_guiqwt_colormap(ndxplorer, **kwargs)
+        colormaps.update_colormap(ndxplorer, **kwargs)
 
 
 def get_plot_statistics(
@@ -187,7 +196,7 @@ def export_plot_data(
         if dimension is None:
             raise ValueError("Dimension required for histogram export")
         
-        hist_data, _ = histograms.plot_histogram(ndxplorer, dimension, **kwargs)
+        hist_data, bin_edges = histograms.plot_histogram(ndxplorer, dimension, **kwargs)
         
         if dimension == "2d":
             # 2D histogram export
@@ -218,14 +227,14 @@ def export_plot_data(
             # 1D histogram export
             if format == "numpy":
                 if filename:
-                    np.savez(filename, histogram=hist_data[0], bins=hist_data[1])
+                    np.savez(filename, histogram=hist_data, bins=bin_edges)
                     return None
                 else:
-                    return {"histogram": hist_data[0], "bins": hist_data[1]}
+                    return {"histogram": hist_data, "bins": bin_edges}
             else:
                 if format == "csv":
-                    csv_data = "count,bin_start,bin_end\n"
-                    for count, bin_start, bin_end in zip(hist_data[0], hist_data[1][:-1], hist_data[1][1:]):
+                    csv_data = "counts,bin_start,bin_end\n"
+                    for count, bin_start, bin_end in zip(hist_data, bin_edges[:-1], bin_edges[1:]):
                         csv_data += f"{count},{bin_start},{bin_end}\n"
                     if filename:
                         with open(filename, 'w') as f:
@@ -244,7 +253,7 @@ def export_plot_data(
 def create_custom_plot(
     ndxplorer: "NDXplorer",
     plot_type: str,
-    data: np.ndarray,
+    data: Optional[np.ndarray] = None,
     **kwargs
 ) -> Any:
     """
@@ -259,6 +268,12 @@ def create_custom_plot(
     Returns:
         Plot result
     """
+    known_plot_types = {"custom_histogram", "custom_scatter", "custom_colormap"}
+    if plot_type not in known_plot_types:
+        raise ValueError(f"Unknown custom plot type: {plot_type}")
+    if data is None:
+        raise ValueError("Data required for custom plot")
+
     if plot_type == "custom_histogram":
         return histograms.compute_1d_histogram(ndxplorer, data, **kwargs)
     elif plot_type == "custom_scatter":
@@ -268,8 +283,6 @@ def create_custom_plot(
             raise ValueError("Scatter data must be 2D with at least 2 columns")
     elif plot_type == "custom_colormap":
         return colormaps.apply_colormap_to_data(data, **kwargs)
-    else:
-        raise ValueError(f"Unknown custom plot type: {plot_type}")
 
 
 # Convenience functions for common operations

@@ -74,47 +74,6 @@ from ..plotting import scatter as plot_scatter
 from ..plotting import colormaps as plot_colormaps
 from ..analysis.umap_progress import UMAPProgressDialog
 
-# Defer guiqwt imports to reduce startup time
-_guiqwt_signals = None
-_guiqwt_plot = None
-_guiqwt_image = None
-_guiqwt_curve = None
-_guiqwt_styles = None
-_guiqwt_colormap_list = None
-_CurveDialog = None
-_make = None
-_DataFrameEditor = None
-_QwtPlot = None
-_QwtPlotCanvas = None
-
-def _ensure_guiqwt():
-    """Lazy-load guiqwt modules on first use."""
-    global _guiqwt_signals, _guiqwt_plot, _guiqwt_image, _guiqwt_curve, _guiqwt_styles
-    global _guiqwt_colormap_list, _CurveDialog, _make, _DataFrameEditor, _QwtPlot, _QwtPlotCanvas
-    if _guiqwt_signals is None:
-        import guiqwt.signals
-        import guiqwt.plot
-        import guiqwt.image
-        import guiqwt.curve
-        import guiqwt.styles
-        from guiqwt.colormap import get_colormap_list
-        from guiqwt.plot import CurveDialog
-        from guiqwt.builder import make
-        from guidata.widgets.dataframeeditor import DataFrameEditor
-        from qwt.plot import QwtPlot
-        from qwt.plot_canvas import QwtPlotCanvas
-        _guiqwt_signals = guiqwt.signals
-        _guiqwt_plot = guiqwt.plot
-        _guiqwt_image = guiqwt.image
-        _guiqwt_curve = guiqwt.curve
-        _guiqwt_styles = guiqwt.styles
-        _guiqwt_colormap_list = get_colormap_list
-        _CurveDialog = CurveDialog
-        _make = make
-        _DataFrameEditor = DataFrameEditor
-        _QwtPlot = QwtPlot
-        _QwtPlotCanvas = QwtPlotCanvas
-
 from ndxplorer.widgets.code_editor import CodeEditor
 
 from .data_source import DataSource, RectangularDataSelection, MaskDataSelection
@@ -124,7 +83,6 @@ from qtpy import QtCore, uic
 from qtpy import QtGui, QtWidgets
 from qtpy.QtGui import QFont, QImage
 
-from ..plotting.image_items import FixedImageItem
 from ..plotting.plot_helpers import (
     configure_dynamic_selection_controls,
     setup_histogram_plots,
@@ -233,6 +191,21 @@ class NDXplorer(QtWidgets.QMainWindow):
                 plot_update_helpers._show_background(self)
         except Exception:
             pass
+
+    def _setup_axis_toolbar_actions(self) -> None:
+        """Hide the consolidated axis toolbar row.
+
+        The Set/Auto axis controls now live as per-axis buttons next to each axis
+        (restored in ``PlotControl``), so the single consolidated "Axis | Set X |
+        Auto X | …" toolbar row is no longer needed. Hide the toolbar rather than
+        populate it.
+        """
+        toolbar = getattr(self, "toolBar", None)
+        if toolbar is None:
+            return
+        toolbar.setObjectName("ndxplorerMainToolbar")
+        toolbar.clear()
+        toolbar.setVisible(False)
 
     @property
     def x_values(self) -> np.ndarray:
@@ -469,7 +442,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def update_cmap(self, cmap_name=None):
         """Update colormap using new colormaps module."""
-        plot_colormaps.update_guiqwt_colormap(self, cmap_name)
+        plot_colormaps.update_colormap(self, cmap_name)
 
     def populate_colormap_combobox(self):
         """Populate colormap combobox using new colormaps module."""
@@ -631,6 +604,7 @@ class NDXplorer(QtWidgets.QMainWindow):
         self.verticalLayout_3.addWidget(self.plot_control)
         self.verticalLayout_15.addWidget(self.equation_editor)
         self.verticalLayout_10.addWidget(self.curve_overlay_widget)
+        self._setup_axis_toolbar_actions()
 
         # Connect screenshot tool button if present
         try:
@@ -1076,7 +1050,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             x_idx_param = -1
             y_idx_param = -1
             
-            for i, name in enumerate(self._data_source.parameter_names):
+            for i, name in enumerate(self.data_source.parameter_names):
                 if name == x_param:
                     x_idx_param = i
                 if name == y_param:
@@ -1157,26 +1131,27 @@ class NDXplorer(QtWidgets.QMainWindow):
             )
 
     def show_dataframe_editor(self):
-        """
-        Show the data in the data source using DataFrameEditor.
-        """
+        """Open the DataFrameEditor for the current data source."""
         logging.debug("show_dataframe_editor")
-        if self._data_source.empty:
+        data_source = self.data_source
+        if data_source.empty:
             QtWidgets.QMessageBox.warning(
                 self, "No Data", "No data loaded—nothing to show."
             )
             return
 
-        _ensure_guiqwt()
-        dlg = _DataFrameEditor(self)
-        # Set up the editor on the current DataFrame
-        if not dlg.setup_and_check(self._data_source.data, title="Data Source"):
-            return
+        from ..ui.dataframe_editor import DataFrameEditor
 
+        dlg = DataFrameEditor(data_source.data.copy(), self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            # User hit OK: grab the possibly-modified DataFrame back
-            self._data_source.data = dlg.get_value()
-            # Refresh the plots
+            edited = dlg.dataframe
+            # Update in-place so the data_source retains its object identity.
+            data_source.data.update(edited)
+            # Apply any new columns or structural changes.
+            for col in edited.columns:
+                if col not in data_source.data.columns:
+                    data_source.data[col] = edited[col]
+            # Drop columns removed by the user (not supported yet, but safe).
             self.update_plots()
 
     def clear_plots(self):
@@ -1198,6 +1173,13 @@ class NDXplorer(QtWidgets.QMainWindow):
                 pass
 
         # 1. Clear the user data => empty => fallback to _default_data_source
+        # Must clear through data_manager when it exists, otherwise the
+        # data_source property returns data_manager.data_source which is a
+        # different object from self._data_source.
+        if hasattr(self, 'data_manager') and self.data_manager is not None:
+            ds = self.data_manager.data_source
+            if ds is not None:
+                ds.clear()
         self._data_source.clear()
 
         # 2. Clear the selection table so no old mask references remain
@@ -1249,7 +1231,7 @@ class NDXplorer(QtWidgets.QMainWindow):
 
         # 3. Update once so 'plot_control.update()' sees empty _data_source =>
         #    repopulates combo boxes with the default dataset columns
-        self.update()
+        self.plot_control.update()
 
         # 4. Force combo box indices to match the default columns.
         #    Example: we want [ "Tau (green)", "Proximity ratio", "r Experimental (green)" ]
@@ -2064,8 +2046,8 @@ class NDXplorer(QtWidgets.QMainWindow):
             self.comboBoxWeight.clear()
 
             # Get parameter names from data source
-            if self._data_source is not None and hasattr(self._data_source, 'parameter_names'):
-                param_names = self._data_source.parameter_names
+            if self.data_source is not None and hasattr(self.data_source, 'parameter_names'):
+                param_names = self.data_source.parameter_names
                 for name in param_names:
                     self.comboBoxWeight.addItem(name)
 
@@ -2167,12 +2149,12 @@ class NDXplorer(QtWidgets.QMainWindow):
         """Reload axis combobox contents while keeping current selections."""
         if (
             not hasattr(self, "plot_control")
-            or self._data_source is None
-            or getattr(self._data_source, "parameter_names", None) is None
+            or self.data_source is None
+            or getattr(self.data_source, "parameter_names", None) is None
         ):
             return
 
-        pn = self._data_source.parameter_names
+        pn = self.data_source.parameter_names
         combos = [
             getattr(self.plot_control, "comboBoxSelX", None),
             getattr(self.plot_control, "comboBoxSelY", None),
@@ -2224,7 +2206,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             parent=self,
             columns=columns,
             params=params,
-            data_source=self._data_source,
+            data_source=self.data_source,
             x_values=self.x_values,
             y_values=self.y_values,
             z_values=self.z_values,
@@ -2235,14 +2217,14 @@ class NDXplorer(QtWidgets.QMainWindow):
         """
         Update the 2D histogram plot using clean histogram objects.
         """
-        logging.info("[DISPLAY] update_2d_plot() called")
+        logging.debug("[DISPLAY] update_2d_plot() called")
         try:
             hist_2d = self._histogram.get("2d")
             if hist_2d is None:
                 logging.debug("[DISPLAY] No 2D histogram available yet")
                 return
             
-            logging.info(f"[DISPLAY] Retrieved hist_2d type={type(hist_2d)}, has H attr={hasattr(hist_2d, 'H')}")
+            logging.debug(f"[DISPLAY] Retrieved hist_2d type={type(hist_2d)}, has H attr={hasattr(hist_2d, 'H')}")
             
             # Extract data from 2D histogram (handle both old tuple and new clean formats)
             if hasattr(hist_2d, 'H'):
@@ -2250,14 +2232,14 @@ class NDXplorer(QtWidgets.QMainWindow):
                 H = hist_2d.H
                 x_edges = hist_2d.x_edges
                 y_edges = hist_2d.y_edges
-                logging.info(f"[DISPLAY] Extracted from Histogram2D: H shape={H.shape}, dtype={H.dtype}")
-                logging.info(f"[DISPLAY] H contiguous={H.flags['C_CONTIGUOUS']}, min={np.min(H)}, max={np.max(H)}, sum={np.sum(H)}")
+                logging.debug(f"[DISPLAY] Extracted from Histogram2D: H shape={H.shape}, dtype={H.dtype}")
+                logging.debug(f"[DISPLAY] H contiguous={H.flags['C_CONTIGUOUS']}, min={np.min(H)}, max={np.max(H)}, sum={np.sum(H)}")
             elif isinstance(hist_2d, tuple) and len(hist_2d) == 3:
                 # Old tuple format (H, x_edges, y_edges)
                 H, x_edges, y_edges = hist_2d
-                logging.info(f"[DISPLAY] Extracted from tuple: H shape={H.shape}, dtype={H.dtype}")
-                logging.info(f"[DISPLAY] H contiguous={H.flags['C_CONTIGUOUS']}, min={np.min(H)}, max={np.max(H)}, sum={np.sum(H)}")
-                logging.info(f"[DISPLAY] x_edges length={len(x_edges)}, y_edges length={len(y_edges)}")
+                logging.debug(f"[DISPLAY] Extracted from tuple: H shape={H.shape}, dtype={H.dtype}")
+                logging.debug(f"[DISPLAY] H contiguous={H.flags['C_CONTIGUOUS']}, min={np.min(H)}, max={np.max(H)}, sum={np.sum(H)}")
+                logging.debug(f"[DISPLAY] x_edges length={len(x_edges)}, y_edges length={len(y_edges)}")
             else:
                 logging.error("[DISPLAY] Invalid 2D histogram format")
                 return
@@ -2280,7 +2262,7 @@ class NDXplorer(QtWidgets.QMainWindow):
             # Set mask shape to match TRANSPOSED/DISPLAYED image: (ny_bins, nx_bins)
             mask_shape = (ny_bins, nx_bins)
             self.plot_control.mask_widget.set_mask_shape(mask_shape)
-            logging.info(f"Set mask shape to {mask_shape} (ny={ny_bins}, nx={nx_bins}) for TRANSPOSED display, histogram shape {H.shape}, edges: x={len(x_edges)}, y={len(y_edges)}")
+            logging.debug(f"Set mask shape to {mask_shape} (ny={ny_bins}, nx={nx_bins}) for TRANSPOSED display, histogram shape {H.shape}, edges: x={len(x_edges)}, y={len(y_edges)}")
         
         # Optional log counts (safe for zeros)
         data = H.copy()
@@ -2296,71 +2278,52 @@ class NDXplorer(QtWidgets.QMainWindow):
         # H is already in (ny, nx) shape, no transpose needed for display
         img = np.ascontiguousarray(data)
         
-        logging.info(f"[DISPLAY] Final image data before set_data():")
-        logging.info(f"[DISPLAY]   Original H shape: {H.shape}, data shape: {data.shape}, img shape: {img.shape}")
-        logging.info(f"[DISPLAY]   Expected img shape: ({len(y_edges)-1}, {len(x_edges)-1})")
-        logging.info(f"[DISPLAY]   Shape match: {img.shape == (len(y_edges)-1, len(x_edges)-1)}")
-        logging.info(f"[DISPLAY]   img dtype: {img.dtype}, contiguous: {img.flags['C_CONTIGUOUS']}")
+        logging.debug(f"[DISPLAY] Final image data before set_data():")
+        logging.debug(f"[DISPLAY]   Original H shape: {H.shape}, data shape: {data.shape}, img shape: {img.shape}")
+        logging.debug(f"[DISPLAY]   Expected img shape: ({len(y_edges)-1}, {len(x_edges)-1})")
+        logging.debug(f"[DISPLAY]   Shape match: {img.shape == (len(y_edges)-1, len(x_edges)-1)}")
+        logging.debug(f"[DISPLAY]   img dtype: {img.dtype}, contiguous: {img.flags['C_CONTIGUOUS']}")
         logging.debug(f"update_2d_plot: H min={np.min(H)}, max={np.max(H)}, data min={np.min(data)}, max={np.max(data)}")
         try:
             self.cax.set_data(img)
-            logging.info(f"[DISPLAY] Successfully set image data to cax widget")
+            logging.debug(f"[DISPLAY] Successfully set image data to cax widget")
         except Exception as e:
             # Fallback to a trivial image if anything goes wrong
             logging.error(f"[DISPLAY] Failed to set image data: {e}")
             self.cax.set_data(np.zeros((1, 1)))
 
-        # Apply colormap/contrast - handle both backends
-        if getattr(self, '_use_simple_backend', True):
-            # SimpleImageWidget uses set_colormap
-            try:
-                self.cax.set_colormap(self.cax._colormap_name, self.vmin, self.vmax)
-            except Exception:
-                pass
-        else:
-            # guiqwt uses set_lut_range
-            try:
-                self.cax.set_lut_range([self.vmin, self.vmax])
-            except Exception:
-                pass
+        # Apply colormap/contrast
+        try:
+            self.cax.set_colormap(self.cax._colormap_name, self.vmin, self.vmax)
+        except Exception:
+            pass
 
-        # Set axis scales - handle both backends
-        if getattr(self, '_use_simple_backend', True):
-            self.g_2dplot.set_axis_scale('xBottom', 0, len(x_edges)-1)
-            self.g_2dplot.set_axis_scale('yLeft', 0, len(y_edges)-1)
-            
-            # Synchronize overlay plot axis scales with SimpleImageWidget
-            if hasattr(self, 'overlay_plot') and self.overlay_plot is not None:
-                self.overlay_plot.setAxisScale(0, 0, len(x_edges)-1)  # xBottom
-                self.overlay_plot.setAxisScale(1, 0, len(y_edges)-1)  # yLeft
-                
-                # Update margins to match SimpleImageWidget
-                margin_left = 50 if self.g_2dplot.axis_enabled('yLeft') else 0
-                margin_right = 50 if self.g_2dplot.axis_enabled('yRight') else 0
-                margin_top = 30 if self.g_2dplot.axis_enabled('xTop') else 0
-                margin_bottom = 30 if self.g_2dplot.axis_enabled('xBottom') else 0
-                self.overlay_plot.set_margins(margin_left, margin_right, margin_top, margin_bottom)
-                
-                self.overlay_plot.replot()
-        else:
-            _ensure_guiqwt()
-            self.g_2dplot.setAxisScale(_QwtPlot.xBottom, 0, len(x_edges)-1)
-            self.g_2dplot.setAxisScale(_QwtPlot.yLeft, 0, len(y_edges)-1)
+        # Set axis scales
+        self.g_2dplot.set_axis_scale('xBottom', 0, len(x_edges)-1)
+        self.g_2dplot.set_axis_scale('yLeft', 0, len(y_edges)-1)
+
+        # Synchronize overlay plot axis scales
+        if hasattr(self, 'overlay_plot') and self.overlay_plot is not None:
+            self.overlay_plot.setAxisScale(0, 0, len(x_edges)-1)
+            self.overlay_plot.setAxisScale(1, 0, len(y_edges)-1)
+
+            margin_left = 50 if self.g_2dplot.axis_enabled('yLeft') else 0
+            margin_right = 50 if self.g_2dplot.axis_enabled('yRight') else 0
+            margin_top = 30 if self.g_2dplot.axis_enabled('xTop') else 0
+            margin_bottom = 30 if self.g_2dplot.axis_enabled('xBottom') else 0
+            self.overlay_plot.set_margins(margin_left, margin_right, margin_top, margin_bottom)
+
+            self.overlay_plot.replot()
 
         # Replot
-        if getattr(self, '_use_simple_backend', True):
-            logging.info(f"[DISPLAY] Calling g_2dplot.replot() (simple backend)")
-            self.g_2dplot.replot()
-            # Ensure widget is visible and updated
-            if hasattr(self.g_2dplot, 'show'):
-                self.g_2dplot.show()
-            if hasattr(self.g_2dplot, 'update'):
-                self.g_2dplot.update()
-        else:
-            logging.info(f"[DISPLAY] Calling g_2dplot.replot() (guiqwt backend)")
-            self.g_2dplot.replot()
+        logging.debug(f"[DISPLAY] Calling g_2dplot.replot()")
+        self.g_2dplot.replot()
+        if hasattr(self.g_2dplot, 'show'):
+            self.g_2dplot.show()
+        if hasattr(self.g_2dplot, 'update'):
+            self.g_2dplot.update()
         
-        logging.info(f"[DISPLAY] Completed 2D plot update: H shape={H.shape}, edges: x={len(x_edges)}, y={len(y_edges)}")
+        logging.debug(f"[DISPLAY] Completed 2D plot update: H shape={H.shape}, edges: x={len(x_edges)}, y={len(y_edges)}")
 
     def bin_to_value(self, bin_idx, edges):
         """Convert a bin index to a value (center of the bin).
@@ -2593,14 +2556,30 @@ class NDXplorer(QtWidgets.QMainWindow):
 
     def resizeEvent(self, event):
         """
-        Trigger a 2D plot update on window resize to prevent orientation issues.
-        Use a zero-timeout singleShot to run after layout has applied new sizes.
-        Debounce scheduling to avoid flooding during continuous resizing.
+        Rescale/redraw the 2D plot on window resize.
+
+        Resize must NOT recompute the histograms (BUGS #14): re-binning/re-counting
+        on every resize event caused heavy CPU load and laggy interaction. The
+        histogram data is computed once and cached in ``self._histogram``; on
+        resize we only redraw that cached data (``update_2d_plot``), which fixes
+        orientation issues without any recomputation. A zero-timeout singleShot
+        runs the redraw after layout has applied the new sizes.
         """
         logging.debug("resizeEvent()")
         # First perform the default resize handling
         super(NDXplorer, self).resizeEvent(event)
-        # Then schedule an update of the 2D plot
-        def _do_update():
-            self.update_plots()
-        QtCore.QTimer.singleShot(0, _do_update)
+
+        # Debounce: coalesce bursts of resize events into a single redraw.
+        if getattr(self, "_resize_redraw_pending", False):
+            return
+        self._resize_redraw_pending = True
+
+        def _do_redraw():
+            self._resize_redraw_pending = False
+            try:
+                # Redraw the cached histogram only — no recompute.
+                self.update_2d_plot()
+            except Exception:
+                logging.debug("resize redraw via update_2d_plot failed", exc_info=True)
+
+        QtCore.QTimer.singleShot(0, _do_redraw)

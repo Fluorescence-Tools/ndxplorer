@@ -39,19 +39,19 @@ class HistogramComputationManager(QtCore.QObject):
         weights: Optional[np.ndarray] = None
     ) -> None:
         """Compute histograms in background thread using QThread."""
-        logging.info("[BG WORKER] compute_histograms called")
+        logging.debug("[BG WORKER] compute_histograms called")
         if self._cancelled:
-            logging.info("[BG WORKER] Worker cancelled, skipping")
+            logging.debug("[BG WORKER] Worker cancelled, skipping")
             return
             
         # Clean up any existing thread
         if self._thread and self._thread.isRunning():
-            logging.info("[BG WORKER] Cleaning up existing thread")
+            logging.debug("[BG WORKER] Cleaning up existing thread")
             self._thread.quit()
             self._thread.wait()
             
         # Create new thread and worker
-        logging.info("[BG WORKER] Creating new thread and worker")
+        logging.debug("[BG WORKER] Creating new thread and worker")
         self._thread = QtCore.QThread()
         self._worker = HistogramComputationWorker(
             data_source, histogram_params, weights
@@ -59,32 +59,32 @@ class HistogramComputationManager(QtCore.QObject):
         self._worker.moveToThread(self._thread)
         
         # Connect signals
-        logging.info("[BG WORKER] Connecting signals")
+        logging.debug("[BG WORKER] Connecting signals")
         self._worker.finished.connect(self._on_worker_finished)
         self._worker.error.connect(self._on_worker_error)
         self._worker.progress.connect(self._on_worker_progress)
         self._thread.started.connect(self._worker.run)
         
         # Emit started signal
-        logging.info("[BG WORKER] Emitting started signal")
+        logging.debug("[BG WORKER] Emitting started signal")
         self.computation_started.emit()
         
         # Start the thread
-        logging.info("[BG WORKER] Starting thread")
+        logging.debug("[BG WORKER] Starting thread")
         self._thread.start()
-        logging.info("[BG WORKER] Thread started")
+        logging.debug("[BG WORKER] Thread started")
     
     def _on_worker_finished(self, result):
         """Handle worker completion."""
-        logging.info(f"[BG MANAGER] _on_worker_finished called with {len(result)} result items")
+        logging.debug(f"[BG MANAGER] _on_worker_finished called with {len(result)} result items")
         if self._thread:
             self._thread.quit()
             self._thread.wait()
         if not self._cancelled:
-            logging.info("[BG MANAGER] Emitting computation_complete signal")
+            logging.debug("[BG MANAGER] Emitting computation_complete signal")
             self.computation_complete.emit(result)
         else:
-            logging.info("[BG MANAGER] Cancelled, not emitting completion signal")
+            logging.debug("[BG MANAGER] Cancelled, not emitting completion signal")
     
     def _on_worker_error(self, error_msg):
         """Handle worker error."""
@@ -129,16 +129,16 @@ class HistogramComputationWorker(QtCore.QObject):
     
     def run(self):
         """Run the computation."""
-        logging.info("[BG WORKER RUN] Worker run() called")
+        logging.debug("[BG WORKER RUN] Worker run() called")
         try:
-            logging.info("[BG WORKER RUN] Starting histogram computation")
+            logging.debug("[BG WORKER RUN] Starting histogram computation")
             result = self._do_compute_histograms()
-            logging.info(f"[BG WORKER RUN] Computation complete, result keys: {list(result.keys())}")
+            logging.debug(f"[BG WORKER RUN] Computation complete, result keys: {list(result.keys())}")
             if not self._cancelled:
-                logging.info("[BG WORKER RUN] Emitting finished signal")
+                logging.debug("[BG WORKER RUN] Emitting finished signal")
                 self.finished.emit(result)
             else:
-                logging.info("[BG WORKER RUN] Worker was cancelled, not emitting")
+                logging.debug("[BG WORKER RUN] Worker was cancelled, not emitting")
         except Exception as e:
             logging.error(f"[BG WORKER RUN] Error during computation: {e}")
             import traceback
@@ -311,9 +311,9 @@ class HistogramComputationWorker(QtCore.QObject):
                             h2d.fill(x_data, y_data)
                         # CRITICAL: boost-histogram returns H with shape (nx, ny) but Histogram2D expects (ny, nx)
                         H_boost = h2d.values()
-                        logging.info(f"[BG] boost-histogram 2D: H shape before transpose={H_boost.shape}")
+                        logging.debug(f"[BG] boost-histogram 2D: H shape before transpose={H_boost.shape}")
                         result['2d'] = (H_boost.T, h2d.axes[0].edges, h2d.axes[1].edges)
-                        logging.info(f"[BG] boost-histogram 2D: H shape after transpose={H_boost.T.shape}, x_edges={len(h2d.axes[0].edges)}, y_edges={len(h2d.axes[1].edges)}")
+                        logging.debug(f"[BG] boost-histogram 2D: H shape after transpose={H_boost.T.shape}, x_edges={len(h2d.axes[0].edges)}, y_edges={len(h2d.axes[1].edges)}")
                         
                 except ImportError:
                     logging.warning("boost-histogram not available, falling back to numpy")
@@ -362,9 +362,9 @@ class HistogramComputationWorker(QtCore.QObject):
                         weights=self.weights
                     )
                     # CRITICAL: np.histogram2d returns H with shape (nx, ny) but Histogram2D expects (ny, nx)
-                    logging.info(f"[BG] numpy histogram2d: H shape before transpose={H.shape}")
+                    logging.debug(f"[BG] numpy histogram2d: H shape before transpose={H.shape}")
                     result['2d'] = (H.T, x_edges, y_edges)
-                    logging.info(f"[BG] numpy histogram2d: H shape after transpose={H.T.shape}, x_edges={len(x_edges)}, y_edges={len(y_edges)}")
+                    logging.debug(f"[BG] numpy histogram2d: H shape after transpose={H.T.shape}, x_edges={len(x_edges)}, y_edges={len(y_edges)}")
             
             # Add metadata
             result['_count'] = len(x_data)
@@ -379,11 +379,7 @@ class HistogramComputationWorker(QtCore.QObject):
             # Final shape validation before returning
             if '2d' in result:
                 H, x_e, y_e = result['2d']
-                logging.info(f"[BG FINAL] Returning 2D histogram:")
-                logging.info(f"[BG FINAL]   H shape: {H.shape}, dtype: {H.dtype}")
-                logging.info(f"[BG FINAL]   x_edges: {len(x_e)}, y_edges: {len(y_e)}")
-                logging.info(f"[BG FINAL]   Shape check: H[0]={H.shape[0]} vs y-1={len(y_e)-1}, H[1]={H.shape[1]} vs x-1={len(x_e)-1}")
-                logging.info(f"[BG FINAL]   Valid: {H.shape[0] == len(y_e)-1 and H.shape[1] == len(x_e)-1}")
+                logging.debug(f"[BG FINAL] Returning 2D histogram: H shape={H.shape}, x_edges={len(x_e)}, y_edges={len(y_e)}")
             
             logging.debug(f"Background histogram computation completed in {result['_computation_time']:.3f}s")
             return result
@@ -451,7 +447,7 @@ class EnhancedHistogramCache:
                 x_edges=x_edges,
                 y_edges=y_edges
             )
-            logging.info("[CACHE GET] Converted 2D histogram tuple to Histogram2D object")
+            logging.debug("[CACHE GET] Converted 2D histogram tuple to Histogram2D object")
         
         return cached_data
     

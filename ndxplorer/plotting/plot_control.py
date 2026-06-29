@@ -263,6 +263,29 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
 
         uic.loadUi(str(ui_file.as_posix()), self)
 
+        self.actionUpdate_x_axis_settings.setText("Set X")
+        self.actionAuto_range_x.setText("Auto X")
+        self.actionUpdate_y_axis_settings.setText("Set Y")
+        self.actionAuto_range_y.setText("Auto Y")
+        self.actionUpdate_z_axis_settings.setText("Set Z")
+        self.actionAuto_range_z.setText("Auto Z")
+
+        # Keep the per-axis Set/Auto buttons next to their corresponding axis
+        # controls (they are wired in the .ui to the same axis actions). They were
+        # previously hidden in favour of a single consolidated "Axis" toolbar row;
+        # restoring them here puts the controls back beside each axis as before.
+        for widget_name in (
+            "toolButtonSetXAxis",
+            "toolButtonAutoX",
+            "toolButtonSetYAxis",
+            "toolButtonAutoY",
+            "toolButtonSetZAxis",
+            "toolButtonAutoZ",
+        ):
+            widget = getattr(self, widget_name, None)
+            if widget is not None:
+                widget.setVisible(True)
+
         # Expose the clustering button on the parent (NDXplorer) for legacy wiring.
         clustering_btn = getattr(self, "pushButtonShowClusteringDialog", None)
         if clustering_btn is not None and self.parent is not None:
@@ -439,7 +462,8 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         self.actionLoad_selection.triggered.connect(self.onLoad_selection)
         self.actionClear_Selection.triggered.connect(self.onClearSelection)
         self.actionAdd_Selection.triggered.connect(self.onAddSelection)
-        self.actionSave_Burst_IDs.triggered.connect(self.parent.onSaveBurstIDs)
+        if self.parent is not None and hasattr(self.parent, "onSaveBurstIDs"):
+            self.actionSave_Burst_IDs.triggered.connect(self.parent.onSaveBurstIDs)
         
         # Connect toolButtonClearSelection to clear selection action
         if hasattr(self, 'toolButtonClearSelection'):
@@ -507,7 +531,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         
         # Setup playback controls (hidden by default)
         self._setup_playback_controls()
-        
+
         # Initialize frame selection widgets as hidden
         self.hide_frame_selection()
 
@@ -764,10 +788,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         # Trigger full update like the main update button
         self.parent.update_plots()
         
-        # Add another update click at the end to ensure final refresh
-        QtCore.QTimer.singleShot(50, lambda: self.parent.update_plots())
-        
-        logging.log(0, "Normalization change handled - full plot update triggered with final refresh")
+        logging.log(0, "Normalization change handled - full plot update triggered")
 
     def update_axis_scales(self):
         """Update all axis scales based on current settings and refresh plots"""
@@ -796,10 +817,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         # Trigger full update like the main update button
         self.parent.update_plots()
         
-        # Add another update click at the end to ensure final refresh
-        QtCore.QTimer.singleShot(50, lambda: self.parent.update_plots())
-        
-        logging.log(0, "Axis scales updated and full plot update triggered with final refresh")
+        logging.log(0, "Axis scales updated and full plot update triggered")
 
     # Keep the old method name for backward compatibility
     onUpdate_axis_scales = update_axis_scales
@@ -1001,11 +1019,20 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
     def onSelectionTableClicked(self):
         logging.log(0, "onSelectionTableClicked")
         row = self.tableWidget.currentRow()
+        if row < 0:
+            return
         self.tableWidget.removeRow(row)
         # Clear frame histogram cache when selections change
         self.clear_frame_histogram_cache()
         self.clear_histogram_cache()
-        self.parent.request_plot_update(skip_clustering=True)
+        # Redraw immediately (matching the selection-edit path) so removing a
+        # selection updates the plot right away. The debounced request_plot_update
+        # could leave the plot showing the removed selection until the next event.
+        try:
+            self.parent._preserve_contrast = True
+            self.parent.update_plots(skip_clustering=True)
+        finally:
+            self.parent._preserve_contrast = False
 
     def addSelection(self, idx, xmin, xmax, invert=False, enabled=True, name=""):
         # Clear frame histogram cache when selections change
@@ -1536,6 +1563,9 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         for r in rows:
             if 0 <= r < table.rowCount():
                 table.removeRow(r)
+        # Invalidate cached histograms so the redraw reflects the removed selection.
+        self.clear_frame_histogram_cache()
+        self.clear_histogram_cache()
         # Preserve contrast during selection operations
         self.parent._preserve_contrast = True
         self.parent.update_plots()
@@ -1972,7 +2002,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
     
     def compute_histograms_background(self, histogram_params: dict, weights: Optional[np.ndarray] = None):
         """Compute histograms in background thread if enabled, otherwise compute immediately."""
-        logging.info(f"compute_histograms_background called, enabled={self._background_computation_enabled}")
+        logging.debug(f"compute_histograms_background called, enabled={self._background_computation_enabled}")
         if not self._background_computation_enabled:
             logging.debug("Background computation disabled, using immediate computation")
             return self._compute_histograms_immediate(histogram_params, weights)
@@ -1983,7 +2013,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         
         # Check if computation is already pending
         if self._background_computation_pending:
-            logging.info("Background computation already pending, skipping duplicate request")
+            logging.debug("Background computation already pending, skipping duplicate request")
             return
         
         # Initialize worker if needed
@@ -1992,12 +2022,16 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         # Always do live computation (no caching)
         # Schedule background computation
         try:
-            logging.info("Starting background histogram computation")
-            logging.info(f"  data_source: {self.parent.data_source}")
-            logging.info(f"  histogram_params keys: {list(histogram_params.keys())}")
-            logging.info(f"  weights shape: {weights.shape if weights is not None else None}")
-            logging.info(f"  BIN SETTINGS: x_bins_2d={histogram_params.get('x_bins_2d')}, y_bins_2d={histogram_params.get('y_bins_2d')}")
-            logging.info(f"  BIN ARRAYS: x_bins_2d_arr length={len(histogram_params.get('x_bins_2d_arr', []))}, y_bins_2d_arr length={len(histogram_params.get('y_bins_2d_arr', []))}")
+            logging.debug("Starting background histogram computation")
+            # NOTE: keep these at DEBUG — they run on every (re)compute and the
+            # data_source repr stringifies the entire burst table, which is a
+            # major slowdown at INFO level during interactive use.
+            if logging.getLogger().isEnabledFor(logging.DEBUG):
+                logging.debug(f"  data_source: {self.parent.data_source}")
+                logging.debug(f"  histogram_params keys: {list(histogram_params.keys())}")
+                logging.debug(f"  weights shape: {weights.shape if weights is not None else None}")
+                logging.debug(f"  BIN SETTINGS: x_bins_2d={histogram_params.get('x_bins_2d')}, y_bins_2d={histogram_params.get('y_bins_2d')}")
+                logging.debug(f"  BIN ARRAYS: x_bins_2d_arr length={len(histogram_params.get('x_bins_2d_arr', []))}, y_bins_2d_arr length={len(histogram_params.get('y_bins_2d_arr', []))}")
             # Set flag to prevent immediate computation fallback
             self._background_computation_pending = True
             self._histogram_worker.compute_histograms(
@@ -2005,7 +2039,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
                 histogram_params,
                 weights
             )
-            logging.info("Background computation scheduled successfully")
+            logging.debug("Background computation scheduled successfully")
         except Exception as e:
             logging.error(f"Failed to schedule background histogram computation: {e}")
             logging.info("Falling back to immediate computation")
@@ -2031,23 +2065,13 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
     def _on_histograms_computed(self, histogram_data: dict):
         """Handle completion of histogram computation (background or immediate)."""
         try:
-            logging.info(f"[UI HANDLER] _on_histograms_computed called with {len(histogram_data)} items")
-            logging.info("Background histogram computation completed - updating UI")
-            
-            # Log 2D histogram shape from background
-            if '2d' in histogram_data:
-                hist_2d = histogram_data['2d']
-                if isinstance(hist_2d, tuple) and len(hist_2d) == 3:
-                    H, x_edges, y_edges = hist_2d
-                    logging.info(f"[UI] Received 2D histogram from background: H shape={H.shape}, x_edges={len(x_edges)}, y_edges={len(y_edges)}")
-                    logging.info(f"[UI] H dtype={H.dtype}, contiguous={H.flags['C_CONTIGUOUS']}, min={np.min(H)}, max={np.max(H)}, sum={np.sum(H)}")
+            logging.debug(f"[UI HANDLER] _on_histograms_computed called with {len(histogram_data)} items")
             
             # Clear background computation pending flag
             self._background_computation_pending = False
             
             # Update the parent's histogram data
             self.parent._histogram = histogram_data
-            logging.info(f"[UI] Stored histogram in parent._histogram")
             
             # Update the UI
             if '_count' in histogram_data:
@@ -2057,15 +2081,6 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
             if hasattr(self.parent, 'statusBar') and self.parent.statusBar():
                 self.parent.statusBar().showMessage("Ready", 2000)
 
-            # Update 2D plot and apply auto-contrast
-            if hasattr(self.parent, 'update_2d_plot'):
-                logging.info("[UI] Calling update_2d_plot to display histogram")
-                self.parent.update_2d_plot()
-            
-            if hasattr(self.parent, 'on_auto_contrast'):
-                logging.info("[UI] Applying auto-contrast")
-                self.parent.on_auto_contrast()
-            
             # Ensure plots repaint immediately (background path otherwise may only refresh on resize)
             try:
                 from . import plot_update_helpers
@@ -2081,7 +2096,8 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
                     plot_update_helpers._autoscale_horizontal_hist(self.parent.g_zplot, z_edges, z_counts)
 
                 # Refresh 2D image and replot all
-                self.parent.update_2d_plot()
+                if hasattr(self.parent, 'update_2d_plot'):
+                    self.parent.update_2d_plot()
                 self.parent.g_xplot.replot()
                 self.parent.g_yplot.replot()
                 if hasattr(self.parent, 'g_zplot'):
@@ -2089,6 +2105,9 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
                 self.parent.g_2dplot.replot()
             except Exception as exc:
                 logging.debug("Could not force replot after histogram computation: %s", exc)
+
+            if hasattr(self.parent, 'on_auto_contrast'):
+                self.parent.on_auto_contrast()
             
             # No frame caching - always compute live
             
@@ -2119,13 +2138,13 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
         try:
             # Update 2D histogram
             if '2d' in histogram_data:
-                logging.info("[UI] Updating 2D histogram display from background computation")
+                logging.debug("[UI] Updating 2D histogram display from background computation")
                 # The 2D histogram is already stored in parent._histogram by _on_histograms_computed
                 # Call update_2d_plot to properly render it
                 if hasattr(self.parent, 'update_2d_plot'):
                     try:
                         self.parent.update_2d_plot()
-                        logging.info("[UI] Called update_2d_plot to render 2D histogram")
+                        logging.debug("[UI] Called update_2d_plot to render 2D histogram")
                     except Exception as e:
                         logging.debug(f"Could not update 2D plot: {e}")
                 
@@ -2133,24 +2152,22 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
                 if hasattr(self.parent, 'g_2dplot'):
                     try:
                         self.parent.g_2dplot.replot()
-                        logging.info("[UI] Replotted 2D histogram")
+                        logging.debug("[UI] Replotted 2D histogram")
                     except Exception as e:
                         logging.debug(f"Could not replot 2D histogram: {e}")
             
             # Update X histogram
             if 'x' in histogram_data and hasattr(self.parent, 'g_xhist_m'):
                 x_bin_edges, x_counts = histogram_data['x']
-                x_edges_for_plot = x_bin_edges[1:]
-                self.parent.g_xhist_m.set_data(x_edges_for_plot, x_counts)
+                self.parent.g_xhist_m.set_data(x_bin_edges, x_counts)
                 if hasattr(self.parent, 'g_xplot'):
                     self.parent.g_xplot.replot()
             
             # Update Y histogram
             if 'y' in histogram_data and hasattr(self.parent, 'g_yhist_m'):
                 y_bin_edges, y_counts = histogram_data['y']
-                y_edges_for_plot = y_bin_edges[1:]
                 # For Y marginal: counts on X-axis (horizontal), edges on Y-axis (vertical)
-                self.parent.g_yhist_m.set_data(y_counts, y_edges_for_plot)
+                self.parent.g_yhist_m.set_data(y_counts, y_bin_edges)
                 if hasattr(self.parent, 'g_yplot'):
                     self.parent.g_yplot.replot()
             
@@ -2158,8 +2175,7 @@ class SurfacePlotWidget(ScaleControlMixin, AxisControlMixin, HistogramControlMix
             if ('z' in histogram_data and hasattr(self.parent, 'g_zhist_m') and 
                 hasattr(self.parent, 'groupBox_3') and self.parent.groupBox_3.isChecked()):
                 z_bin_edges, z_counts = histogram_data['z']
-                z_edges_for_plot = z_bin_edges[1:]
-                self.parent.g_zhist_m.set_data(z_edges_for_plot, z_counts)
+                self.parent.g_zhist_m.set_data(z_bin_edges, z_counts)
                 if hasattr(self.parent, 'g_zplot'):
                     self.parent.g_zplot.replot()
                 

@@ -38,6 +38,37 @@ def apply_fonts(ndxplorer: "NDXplorer") -> None:
                 pass
 
 
+def _set_axis_title(plot, axis: str, title: str) -> None:
+    """Set an axis title on guiqwt or pyqtgraph-backed plots."""
+    if plot is None:
+        return
+    if hasattr(plot, "set_axis_title"):
+        plot.set_axis_title(axis, title)
+        return
+    if hasattr(plot, "setAxisTitle"):
+        plot.setAxisTitle(axis, title)
+        return
+    if hasattr(plot, "setLabel"):
+        plot.setLabel(axis, text=title or "")
+        return
+    plot_item = None
+    if hasattr(plot, "getPlotItem"):
+        try:
+            plot_item = plot.getPlotItem()
+        except Exception:
+            plot_item = None
+    if plot_item is None and hasattr(plot, "plot_widget") and hasattr(plot.plot_widget, "getPlotItem"):
+        try:
+            plot_item = plot.plot_widget.getPlotItem()
+        except Exception:
+            plot_item = None
+    if plot_item is not None:
+        try:
+            plot_item.getAxis(axis).setLabel(text=title or "")
+        except Exception:
+            pass
+
+
 def arrange_docks_preserving_geometry(ndxplorer: "NDXplorer") -> None:
     """Tabify the primary docks while ensuring the window size stays unchanged."""
     try:
@@ -103,17 +134,17 @@ def update_parameter_names(ndxplorer: "NDXplorer") -> None:
         x_cfg = labels_cfg.get("x_plot", {})
         z_cfg = labels_cfg.get("z_plot", {})
 
-        ndxplorer.g_yplot.set_axis_title("top", fmt(p2_name) if (enable_all or y_cfg.get("top", True)) else "")
-        ndxplorer.g_yplot.set_axis_title("right", fmt(p2_name) if (enable_all or y_cfg.get("right", True)) else "")
-        ndxplorer.g_xplot.set_axis_title("top", fmt(p1_name) if (enable_all or x_cfg.get("top", True)) else "")
+        _set_axis_title(ndxplorer.g_yplot, "top", fmt(p2_name) if (enable_all or y_cfg.get("top", True)) else "")
+        _set_axis_title(ndxplorer.g_yplot, "right", fmt(p2_name) if (enable_all or y_cfg.get("right", True)) else "")
+        _set_axis_title(ndxplorer.g_xplot, "top", fmt(p1_name) if (enable_all or x_cfg.get("top", True)) else "")
 
         if getattr(ndxplorer, "g_zplot", None) is not None:
-            ndxplorer.g_zplot.set_axis_title("bottom", fmt(p3_name) if (enable_all or z_cfg.get("bottom", True)) else "")
-            ndxplorer.g_zplot.set_axis_title("left", fmt(p3_name) if (enable_all or z_cfg.get("left", True)) else "")
+            _set_axis_title(ndxplorer.g_zplot, "bottom", fmt(p3_name) if (enable_all or z_cfg.get("bottom", True)) else "")
+            _set_axis_title(ndxplorer.g_zplot, "left", fmt(p3_name) if (enable_all or z_cfg.get("left", True)) else "")
     else:
-        ndxplorer.g_yplot.set_axis_title("top", fmt(p2_name))
-        ndxplorer.g_yplot.set_axis_title("right", fmt(p2_name))
-        ndxplorer.g_xplot.set_axis_title("top", fmt(p1_name))
+        _set_axis_title(ndxplorer.g_yplot, "top", fmt(p2_name))
+        _set_axis_title(ndxplorer.g_yplot, "right", fmt(p2_name))
+        _set_axis_title(ndxplorer.g_xplot, "top", fmt(p1_name))
         if getattr(ndxplorer, "g_zplot", None) is not None:
-            ndxplorer.g_zplot.set_axis_title("bottom", fmt(p3_name))
-            ndxplorer.g_zplot.set_axis_title("left", fmt(p3_name))
+            _set_axis_title(ndxplorer.g_zplot, "bottom", fmt(p3_name))
+            _set_axis_title(ndxplorer.g_zplot, "left", fmt(p3_name))

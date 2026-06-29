@@ -129,6 +129,172 @@
     num_points: [100, 1000]
 
 
+- name: "WLC FRET Line (Worm-Like Chain)"
+  function: |
+    def wlc_fret_line(tau_d0=4.0, forster_radius=52.0, kappa2=0.667, chain_length=80.0, persistence_length=60.0, sweep_lc=1.0, lc_min=40.0, lc_max=200.0, num_points=100):
+        import numpy as np
+        import chisurf.core.fitting.fit as fit_mod
+        from chisurf.core.data import DataCurve
+        from chisurf.core.models.tcspc.fret import WormLikeChainModel
+        from chisurf.core.fluorescence.fret.fret_line import FRETLineGenerator
+        t = np.linspace(0, 25, 256)
+        data = DataCurve(x=t, y=np.ones(len(t)))
+        f = fit_mod.Fit(model_class=WormLikeChainModel, data=data)
+        wm = f.model
+        wm.fret_parameters.forster_radius = forster_radius
+        wm.fret_parameters.tauD0 = tau_d0
+        wm.fret_parameters.kappa2 = kappa2
+        wm.fret_parameters.xDOnly = 0.0
+        wm.donor.lifetimes = [tau_d0]
+        wm.donor.amplitudes = [1.0]
+        wm.chain_length = chain_length
+        wm.persistence_length = persistence_length
+        wm.find_parameters()
+        param_name = 'l' if bool(sweep_lc) else 'lp'
+        fl = FRETLineGenerator(n_points=int(num_points))
+        fl.fit = f
+        fl._model = wm
+        fl.parameter_range = (lc_min, lc_max)
+        fl.update(parameter_name=param_name)
+        return fl.fluorescence_averaged_lifetimes, fl.fret_efficiencies
+  parameters:
+    tau_d0: 4.0
+    forster_radius: 52.0
+    kappa2: 0.667
+    chain_length: 80.0
+    persistence_length: 60.0
+    sweep_lc: 1.0
+    lc_min: 40.0
+    lc_max: 200.0
+    num_points: 100
+  ranges:
+    tau_d0: [0.5, 10.0]
+    forster_radius: [20.0, 100.0]
+    kappa2: [0.0, 4.0]
+    chain_length: [10.0, 500.0]
+    persistence_length: [1.0, 200.0]
+    sweep_lc: [0.0, 1.0]
+    lc_min: [1.0, 500.0]
+    lc_max: [10.0, 1000.0]
+    num_points: [20, 500]
+
+
+- name: "Mixture FRET Line (Gaussian + WLC)"
+  function: |
+    def mixture_fret_line(tau_d0=4.0, forster_radius=52.0, kappa2=0.667, gauss_r=35.0, gauss_sigma=4.0, wlc_lc=80.0, wlc_lp=60.0, num_points=100):
+        import numpy as np
+        import chisurf.core.fitting.fit as fit_mod
+        from chisurf.core.data import DataCurve
+        from chisurf.core.models.tcspc.fret import GaussianModel, WormLikeChainModel
+        from chisurf.core.models.tcspc.lifetime import LifetimeMixtureModel
+        t = np.linspace(0, 25, 256)
+
+        def make_fit(cls):
+            return fit_mod.Fit(model_class=cls, data=DataCurve(x=t.copy(), y=np.ones(len(t))))
+
+        def set_fret(m):
+            m.fret_parameters.forster_radius = forster_radius
+            m.fret_parameters.tauD0 = tau_d0
+            m.fret_parameters.kappa2 = kappa2
+            m.fret_parameters.xDOnly = 0.0
+            m.donor.lifetimes = [tau_d0]
+            m.donor.amplitudes = [1.0]
+
+        gf = make_fit(GaussianModel)
+        gm = gf.model
+        set_fret(gm)
+        while len(gm.gaussians) > 0:
+            gm.gaussians.pop()
+        gm.gaussians.append(mean=gauss_r, sigma=gauss_sigma, x=1.0)
+
+        wf = make_fit(WormLikeChainModel)
+        wm = wf.model
+        set_fret(wm)
+        wm.chain_length = wlc_lc
+        wm.persistence_length = wlc_lp
+
+        mf = make_fit(LifetimeMixtureModel)
+        mm = mf.model
+        mm.append_model(gm, name='folded')
+        mm.append_model(wm, name='unfolded')
+
+        n = int(num_points)
+        fracs = np.linspace(0.0, 1.0, n)
+        tau_f_arr = np.zeros(n)
+        e_arr = np.zeros(n)
+        for i, frac in enumerate(fracs):
+            mm.fractions = [1.0 - frac, frac]
+            lt = mm.lifetime_spectrum
+            amps, taus = lt[::2], lt[1::2]
+            s = amps.sum()
+            if s > 0:
+                tx = float(np.dot(amps, taus) / s)
+                denom = tx if tx > 0 else 1.0
+                tf = float(np.dot(amps, taus**2) / s / denom)
+            else:
+                tx = tf = 0.0
+            tau_f_arr[i] = tf
+            e_arr[i] = 1.0 - tx / tau_d0
+        return tau_f_arr, e_arr
+  parameters:
+    tau_d0: 4.0
+    forster_radius: 52.0
+    kappa2: 0.667
+    gauss_r: 35.0
+    gauss_sigma: 4.0
+    wlc_lc: 80.0
+    wlc_lp: 60.0
+    num_points: 100
+  ranges:
+    tau_d0: [0.5, 10.0]
+    forster_radius: [20.0, 100.0]
+    kappa2: [0.0, 4.0]
+    gauss_r: [5.0, 150.0]
+    gauss_sigma: [0.5, 30.0]
+    wlc_lc: [10.0, 500.0]
+    wlc_lp: [1.0, 200.0]
+    num_points: [20, 500]
+
+
+- name: "Dynamic FRET Line (2-state Gaussian)"
+  function: |
+    def dynamic_fret_line(tau_d0=4.0, forster_radius=52.0, kappa2=0.667, r1=40.0, sigma1=6.0, r2=80.0, sigma2=6.0, num_points=100):
+        import numpy as np
+        from chisurf.core.fluorescence.fret.fret_line import DynamicFRETLine
+        fl = DynamicFRETLine(
+            distance_1=r1, distance_2=r2,
+            sigma_1=sigma1, sigma_2=sigma2,
+            n_points=int(num_points), parameter_range=(0.0, 1.0),
+        )
+        fl.model.fret_parameters.forster_radius = forster_radius
+        fl.model.fret_parameters.tauD0 = tau_d0
+        fl.model.fret_parameters.kappa2 = kappa2
+        fl.model.fret_parameters.xDOnly = 0.0
+        fl.model.donor.lifetimes = [tau_d0]
+        fl.model.donor.amplitudes = [1.0]
+        fl.model.find_parameters()
+        fl.update()
+        return fl.fluorescence_averaged_lifetimes, fl.fret_efficiencies
+  parameters:
+    tau_d0: 4.0
+    forster_radius: 52.0
+    kappa2: 0.667
+    r1: 40.0
+    sigma1: 6.0
+    r2: 80.0
+    sigma2: 6.0
+    num_points: 100
+  ranges:
+    tau_d0: [0.5, 10.0]
+    forster_radius: [20.0, 100.0]
+    kappa2: [0.0, 4.0]
+    r1: [5.0, 200.0]
+    sigma1: [0.5, 30.0]
+    r2: [5.0, 200.0]
+    sigma2: [0.5, 30.0]
+    num_points: [20, 500]
+
+
 - name: "Circle"
   function: |
     def circle(radius=1.0, center_x=0.0, center_y=0.0, t_start=0.0, t_end=6.28, num_points=100):

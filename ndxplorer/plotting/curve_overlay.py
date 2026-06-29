@@ -337,9 +337,8 @@ class CurveOverlayWidget(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.curves = []  # List to store curve widgets
-        self.predefined_equations = []  # List to store predefined equations
-        self.curve_items = []  # List to store curve items on the plot
+        self.curves = []
+        self.predefined_equations = []
         self._last_x_edges = None  # Cache latest x edges used for computation
         self._last_y_edges = None  # Cache latest y edges used for computation
         self._last_plot_control = None  # Cache latest plot control for scale info
@@ -534,9 +533,6 @@ class CurveOverlayWidget(QtWidgets.QWidget):
         # Clear the list
         self.curves.clear()
 
-        # Clear the curve items list (though this is also done in update_curve_overlays)
-        self.curve_items.clear()
-
         # Emit signal to update the plot
         self.curvesChanged.emit()
 
@@ -564,44 +560,22 @@ class CurveOverlayWidget(QtWidgets.QWidget):
             curve_evaluator: Class for evaluating curve equations
             value_to_bin_func: Function to convert values to bin indices
         """
-        # Check if using PyQt overlay or guiqwt overlay
-        is_pyqt_overlay = hasattr(overlay_plot, 'add_curve')
-        
-        if is_pyqt_overlay:
-            # Clear existing curves for PyQt overlay
-            overlay_plot.clear_curves()
-        else:
-            # Remove existing curve items for guiqwt overlay
-            from qwt.plot import QwtPlot
-            for curve_item in self.curve_items:
-                overlay_plot.del_item(curve_item)
-            self.curve_items = []
+        overlay_plot.clear_curves()
 
         try:
-            # Get the 2D histogram data and edges
             _, x_edges, y_edges = histogram_data
         except (ValueError, TypeError):
             return
 
-        # Cache latest edges and plot control for export
         self._last_x_edges = x_edges
         self._last_y_edges = y_edges
         self._last_plot_control = plot_control
 
-        # Get visible curves from the overlay widget
         visible_curves = self.get_visible_curves()
-
-        # Get the number of points to use for curve computation
         num_points = self.get_num_points()
 
-        # Synchronize the overlay plot's axes with the main plot
-        if is_pyqt_overlay:
-            overlay_plot.setAxisScale(0, 0, len(x_edges) - 1)  # xBottom
-            overlay_plot.setAxisScale(1, 0, len(y_edges) - 1)  # yLeft
-        else:
-            from qwt.plot import QwtPlot
-            overlay_plot.setAxisScale(QwtPlot.xBottom, 0, len(x_edges) - 1)
-            overlay_plot.setAxisScale(QwtPlot.yLeft, 0, len(y_edges) - 1)
+        overlay_plot.setAxisScale(0, 0, len(x_edges) - 1)
+        overlay_plot.setAxisScale(1, 0, len(y_edges) - 1)
 
         for equation, parameters, color in visible_curves:
             # Create x values array with the specified number of points
@@ -668,28 +642,13 @@ class CurveOverlayWidget(QtWidgets.QWidget):
             if not x_coords:
                 continue  # Skip if no valid points
 
-            # Add curve to overlay
-            if is_pyqt_overlay:
-                # Use PyQt overlay's add_curve method
-                overlay_plot.add_curve(
-                    np.array(x_coords),
-                    np.array(y_coords),
-                    color=color,
-                    width=2
-                )
-            else:
-                # Create a guiqwt curve item
-                import guiqwt.styles
-                import guiqwt.curve
-                curveparam = guiqwt.styles.CurveParam()
-                curveparam.line.color = color  # Use the selected color
-                curveparam.line.width = 2.0
-                curve_item = guiqwt.curve.CurveItem(curveparam=curveparam)
-                curve_item.set_data(x_coords, y_coords)
-                overlay_plot.add_item(curve_item)
-                self.curve_items.append(curve_item)
+            overlay_plot.add_curve(
+                np.array(x_coords),
+                np.array(y_coords),
+                color=color,
+                width=2
+            )
 
-        # Redraw the overlay plot to update the display
         overlay_plot.replot()
 
     def _compute_curve_points(self, equation, parameters, num_points, x_edges, y_edges, plot_control, curve_evaluator):

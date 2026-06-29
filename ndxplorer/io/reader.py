@@ -563,8 +563,13 @@ def _process_burst_analysis_dir(
         # Use ignore_index=True and optimize dtypes before concatenation
         for i, df in enumerate(pieces):
             if not df.empty:
-                # Downcast numeric columns to save memory
-                pieces[i] = df.apply(pd.to_numeric, errors='coerce').convert_dtypes(convert_integer=False, convert_floating=True)
+                # Downcast only non-filename columns to save memory
+                cols_to_convert = [col for col in df.columns if not any(keyword in str(col).lower() for keyword in ['file', 'path', 'name', 'directory'])]
+                if cols_to_convert:
+                    converted = df[cols_to_convert].apply(pd.to_numeric, errors='coerce').convert_dtypes(convert_integer=False, convert_floating=True)
+                    for col in cols_to_convert:
+                        df[col] = converted[col]
+                pieces[i] = df
         
         # Concatenate with optimized memory settings
         final_df = pd.concat(pieces, ignore_index=True, copy=False)

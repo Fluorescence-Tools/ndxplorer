@@ -149,7 +149,7 @@ class TestPlottingAPI:
         ndxplorer = Mock()
         
         with patch('ndxplorer.plotting.histograms.update_histogram_display') as mock_hist:
-            with patch('ndxplorer.plotting.colormaps.update_guiqwt_colormap') as mock_cmap:
+            with patch('ndxplorer.plotting.colormaps.update_colormap') as mock_cmap:
                 api.update_plots(ndxplorer, update_histograms=True, update_colormap=True)
                 
                 mock_hist.assert_called_once_with(ndxplorer)
@@ -168,7 +168,7 @@ class TestPlottingAPI:
         """Test updating only colormap through API."""
         ndxplorer = Mock()
         
-        with patch('ndxplorer.plotting.colormaps.update_guiqwt_colormap') as mock_cmap:
+        with patch('ndxplorer.plotting.colormaps.update_colormap') as mock_cmap:
             api.update_plots(ndxplorer, update_histograms=False, update_colormap=True)
             
             mock_cmap.assert_called_once_with(ndxplorer)
